@@ -1,0 +1,30 @@
+#Virtual Environment
+/python-venv/
+
+#Prototyping
+/python/
+
+#Binarys
+/rust/target/
+*.pyc
+*.spv
+
+#IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+#OS
+.DS_Store
+Thumbs.db
+*.ini
+
+#User Configs
+user-settings.toml
+
+#Code Playground
+*.dev.*
+
+#Rust
+Cargo.lock

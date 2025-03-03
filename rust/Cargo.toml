@@ -1,0 +1,11 @@
+[package]
+name = "RustyWhip"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ash = "0.38"
+vk-mem = "0.4"
+raw-window-handle = "0.6"  # Updated to 0.6.2
+winit = "0.30.9"
+ash-window = "0.13"        # Updated to 0.13.0

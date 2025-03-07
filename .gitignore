@@ -28,9 +28,3 @@ user-settings.toml
 
 #Rust
 Cargo.lock
-
-rust/src/renderer.rs
-
-rust/src/vulkan.rs
-
-rust/src/window.rs

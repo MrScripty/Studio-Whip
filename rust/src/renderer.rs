@@ -2,12 +2,11 @@ use ash::vk;
 use ash::khr::swapchain;
 use std::marker::PhantomData;
 use vk_mem::Alloc;
-use crate::{Vertex, application::App};
+use crate::{Vertex, Platform, Scene};
 use std::fs;
 
-// Updated load_shader with corrected path
 fn load_shader(device: &ash::Device, filename: &str) -> vk::ShaderModule {
-    let shader_path = format!("../shaders/{}", filename); // Changed from "shaders/{}" to "../shaders/{}"
+    let shader_path = format!("../shaders/{}", filename);
     let shader_code = fs::read(&shader_path).expect(&format!("Failed to read shader file: {}", shader_path));
     let shader_module_info = vk::ShaderModuleCreateInfo {
         s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
@@ -21,15 +20,15 @@ fn load_shader(device: &ash::Device, filename: &str) -> vk::ShaderModule {
         .expect(&format!("Failed to create shader module from: {}", filename))
 }
 
-pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
-    let instance = app.instance.as_ref().unwrap();
-    let device = app.device.as_ref().unwrap();
-    let surface = app.surface.unwrap();
-    let surface_loader = app.surface_loader.as_ref().unwrap();
-    let physical_device = unsafe { instance.enumerate_physical_devices().unwrap() }[0]; // Simplified
+pub fn setup_renderer(platform: &mut Platform, extent: vk::Extent2D, scene: &Scene) {
+    let instance = platform.instance.as_ref().unwrap();
+    let device = platform.device.as_ref().unwrap();
+    let surface = platform.surface.unwrap();
+    let surface_loader = platform.surface_loader.as_ref().unwrap();
+    let physical_device = unsafe { instance.enumerate_physical_devices().unwrap() }[0];
 
     let swapchain_loader = swapchain::Device::new(instance, device);
-    app.swapchain_loader = Some(swapchain_loader.clone());
+    platform.swapchain_loader = Some(swapchain_loader.clone());
 
     let surface_formats = unsafe {
         surface_loader
@@ -63,10 +62,10 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
         let images = unsafe { swapchain_loader.get_swapchain_images(swapchain).unwrap() };
         (swapchain, images)
     };
-    app.swapchain = Some(swapchain);
-    app.images = images;
+    platform.swapchain = Some(swapchain);
+    platform.images = images;
 
-    app.image_views = app
+    platform.image_views = platform
         .images
         .iter()
         .map(|&image| {
@@ -91,11 +90,7 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
         })
         .collect();
 
-    let vertices = vec![
-        Vertex { position: [-0.5, -0.5] },
-        Vertex { position: [0.0, 0.5] },
-        Vertex { position: [0.5, -0.25] },
-    ];
+    let vertices = &scene.render_objects[0].vertices; // Single object for now
     let (vertex_buffer, vertex_allocation) = {
         let buffer_info = vk::BufferCreateInfo {
             s_type: vk::StructureType::BUFFER_CREATE_INFO,
@@ -114,18 +109,18 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
             ..Default::default()
         };
         let (buffer, mut allocation) = unsafe {
-            app.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info)
+            platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info)
         }
         .unwrap();
-        let data_ptr = unsafe { app.allocator.as_ref().unwrap().map_memory(&mut allocation) }
+        let data_ptr = unsafe { platform.allocator.as_ref().unwrap().map_memory(&mut allocation) }
             .unwrap()
             .cast::<Vertex>();
         unsafe { data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len()) };
-        unsafe { app.allocator.as_ref().unwrap().unmap_memory(&mut allocation) };
+        unsafe { platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation) };
         (buffer, allocation)
     };
-    app.vertex_buffer = Some(vertex_buffer);
-    app.vertex_allocation = Some(vertex_allocation);
+    platform.vertex_buffer = Some(vertex_buffer);
+    platform.vertex_allocation = Some(vertex_allocation);
 
     let render_pass = {
         let attachment = vk::AttachmentDescription {
@@ -170,9 +165,9 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
         };
         unsafe { device.create_render_pass(&render_pass_info, None) }.unwrap()
     };
-    app.render_pass = Some(render_pass);
+    platform.render_pass = Some(render_pass);
 
-    app.framebuffers = app
+    platform.framebuffers = platform
         .image_views
         .iter()
         .map(|&view| {
@@ -192,18 +187,16 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
         })
         .collect();
 
-    // Shader loading calls remain unchanged
-    let vertex_shader = load_shader(device, "test_shader.vert.spv"); // New vertex shader for triangle
-    app.vertex_shader = Some(vertex_shader);
-
-    let fragment_shader = load_shader(device, "background.frag.spv"); // Reusing background fragment shader
-    app.fragment_shader = Some(fragment_shader);
+    let vertex_shader = load_shader(device, &scene.render_objects[0].vertex_shader_filename);
+    platform.vertex_shader = Some(vertex_shader);
+    let fragment_shader = load_shader(device, &scene.render_objects[0].fragment_shader_filename);
+    platform.fragment_shader = Some(fragment_shader);
 
     let pipeline_layout = unsafe {
         device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default(), None)
     }
     .unwrap();
-    app.pipeline_layout = Some(pipeline_layout);
+    platform.pipeline_layout = Some(pipeline_layout);
 
     let pipeline = {
         let vertex_stage = vk::PipelineShaderStageCreateInfo {
@@ -363,7 +356,7 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
                 .unwrap()[0]
         }
     };
-    app.pipeline = Some(pipeline);
+    platform.pipeline = Some(pipeline);
 
     let queue_family_index = unsafe {
         instance
@@ -377,7 +370,7 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
                     .position(|qf| qf.queue_flags.contains(vk::QueueFlags::GRAPHICS))
                     .map(|index| index as u32)
             })
-            .unwrap() // Simplified
+            .unwrap()
     };
     let command_pool = unsafe {
         device.create_command_pool(
@@ -392,15 +385,15 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
         )
     }
     .unwrap();
-    app.command_pool = Some(command_pool);
+    platform.command_pool = Some(command_pool);
 
-    app.command_buffers = {
+    platform.command_buffers = {
         let alloc_info = vk::CommandBufferAllocateInfo {
             s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
             p_next: std::ptr::null(),
             command_pool,
             level: vk::CommandBufferLevel::PRIMARY,
-            command_buffer_count: app.framebuffers.len() as u32,
+            command_buffer_count: platform.framebuffers.len() as u32,
             _marker: PhantomData,
         };
         unsafe { device.allocate_command_buffers(&alloc_info) }.unwrap()
@@ -416,7 +409,7 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue { float32: [0.0, 0.0, 1.0, 1.0] },
     }];
-    for (&command_buffer, &framebuffer) in app.command_buffers.iter().zip(app.framebuffers.iter()) {
+    for (&command_buffer, &framebuffer) in platform.command_buffers.iter().zip(platform.framebuffers.iter()) {
         let render_pass_begin_info = vk::RenderPassBeginInfo {
             s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
             p_next: std::ptr::null(),
@@ -436,15 +429,15 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
             device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
             device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
             device.cmd_bind_vertex_buffers(command_buffer, 0, &[vertex_buffer], &[0]);
-            device.cmd_draw(command_buffer, 3, 1, 0, 0);
+            device.cmd_draw(command_buffer, vertices.len() as u32, 1, 0, 0);
             device.cmd_end_render_pass(command_buffer);
             device.end_command_buffer(command_buffer).unwrap();
         }
     }
 
-    app.image_available_semaphore = Some(unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap());
-    app.render_finished_semaphore = Some(unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap());
-    app.fence = Some(unsafe {
+    platform.image_available_semaphore = Some(unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap());
+    platform.render_finished_semaphore = Some(unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap());
+    platform.fence = Some(unsafe {
         device.create_fence(
             &vk::FenceCreateInfo {
                 s_type: vk::StructureType::FENCE_CREATE_INFO,
@@ -458,56 +451,57 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
     .unwrap());
 }
 
-pub fn cleanup_renderer(app: &mut App) {
-    let device = app.device.as_ref().unwrap();
-    let swapchain_loader = app.swapchain_loader.take().unwrap();
+pub fn cleanup_renderer(platform: &mut Platform) {
+    let device = platform.device.as_ref().unwrap();
+    let swapchain_loader = platform.swapchain_loader.take().unwrap();
 
     unsafe {
-        device.destroy_semaphore(app.image_available_semaphore.take().unwrap(), None);
-        device.destroy_semaphore(app.render_finished_semaphore.take().unwrap(), None);
-        device.destroy_fence(app.fence.take().unwrap(), None);
+        device.destroy_semaphore(platform.image_available_semaphore.take().unwrap(), None);
+        device.destroy_semaphore(platform.render_finished_semaphore.take().unwrap(), None);
+        device.destroy_fence(platform.fence.take().unwrap(), None);
 
-        let command_pool = app.command_pool.take().unwrap();
-        device.free_command_buffers(command_pool, &app.command_buffers);
+        let command_pool = platform.command_pool.take().unwrap();
+        device.free_command_buffers(command_pool, &platform.command_buffers);
         device.destroy_command_pool(command_pool, None);
 
-        device.destroy_pipeline(app.pipeline.take().unwrap(), None);
-        device.destroy_pipeline_layout(app.pipeline_layout.take().unwrap(), None);
-        device.destroy_shader_module(app.vertex_shader.take().unwrap(), None);
-        device.destroy_shader_module(app.fragment_shader.take().unwrap(), None);
+        device.destroy_pipeline(platform.pipeline.take().unwrap(), None);
+        device.destroy_pipeline_layout(platform.pipeline_layout.take().unwrap(), None);
+        device.destroy_shader_module(platform.vertex_shader.take().unwrap(), None);
+        device.destroy_shader_module(platform.fragment_shader.take().unwrap(), None);
 
-        for &framebuffer in &app.framebuffers {
+        for &framebuffer in &platform.framebuffers {
             device.destroy_framebuffer(framebuffer, None);
         }
-        device.destroy_render_pass(app.render_pass.take().unwrap(), None);
+        device.destroy_render_pass(platform.render_pass.take().unwrap(), None);
 
-        app.allocator
+        platform
+            .allocator
             .as_ref()
             .unwrap()
-            .destroy_buffer(app.vertex_buffer.take().unwrap(), &mut app.vertex_allocation.take().unwrap());
+            .destroy_buffer(platform.vertex_buffer.take().unwrap(), &mut platform.vertex_allocation.take().unwrap());
 
-        swapchain_loader.destroy_swapchain(app.swapchain.take().unwrap(), None);
-        for &view in &app.image_views {
+        swapchain_loader.destroy_swapchain(platform.swapchain.take().unwrap(), None);
+        for &view in &platform.image_views {
             device.destroy_image_view(view, None);
         }
     }
 }
 
-pub fn render(app: &mut App) {
+pub fn render(platform: &mut Platform) {
     if let (
         Some(device),
         Some(queue),
         Some(swapchain_loader),
         Some(swapchain),
     ) = (
-        app.device.as_ref(),
-        app.queue,
-        app.swapchain_loader.as_ref(),
-        app.swapchain,
+        platform.device.as_ref(),
+        platform.queue,
+        platform.swapchain_loader.as_ref(),
+        platform.swapchain,
     ) {
-        let image_available_semaphore = app.image_available_semaphore.unwrap();
-        let render_finished_semaphore = app.render_finished_semaphore.unwrap();
-        let fence = app.fence.unwrap();
+        let image_available_semaphore = platform.image_available_semaphore.unwrap();
+        let render_finished_semaphore = platform.render_finished_semaphore.unwrap();
+        let fence = platform.fence.unwrap();
 
         unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }.unwrap();
         unsafe { device.reset_fences(&[fence]) }.unwrap();
@@ -516,7 +510,7 @@ pub fn render(app: &mut App) {
             swapchain_loader.acquire_next_image(swapchain, u64::MAX, image_available_semaphore, vk::Fence::null())
         }
         .unwrap();
-        app.current_image = image_index as usize;
+        platform.current_image = image_index as usize;
 
         let submit_info = vk::SubmitInfo {
             s_type: vk::StructureType::SUBMIT_INFO,
@@ -525,7 +519,7 @@ pub fn render(app: &mut App) {
             p_wait_semaphores: &image_available_semaphore,
             p_wait_dst_stage_mask: &vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT as *const _,
             command_buffer_count: 1,
-            p_command_buffers: &app.command_buffers[app.current_image],
+            p_command_buffers: &platform.command_buffers[platform.current_image],
             signal_semaphore_count: 1,
             p_signal_semaphores: &render_finished_semaphore,
             _marker: PhantomData,
@@ -539,7 +533,7 @@ pub fn render(app: &mut App) {
             p_wait_semaphores: &render_finished_semaphore,
             swapchain_count: 1,
             p_swapchains: &swapchain,
-            p_image_indices: &(app.current_image as u32),
+            p_image_indices: &(platform.current_image as u32),
             p_results: std::ptr::null_mut(),
             _marker: PhantomData,
         };

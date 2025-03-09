@@ -4,13 +4,13 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 1. `application.rs`
-- **Purpose**: Defines the core `App` struct, which serves as the central state container for the Vulkan application. It holds Vulkan objects, window references, buffers, shaders, and synchronization primitives.
+## 1. `platform.rs` (Previously `application.rs`)
+- **Purpose**: Defines the core `Platform` struct, the central state container for Vulkan and window management. It holds Vulkan objects, window references, buffers, shaders, and synchronization primitives.
 - **Key Components**:
-  - `App` struct: Contains fields like `instance`, `device`, `swapchain`, `vertex_buffer`, etc., initialized as `None` or empty via `new()`.
+  - `Platform` struct: Contains fields like `instance`, `device`, `swapchain`, `vertex_buffer`, etc., initialized as `None` or empty via `new()`.
 - **Relationships**:
-  - Used by `main.rs` as the main application instance.
-  - Extended via `window_management.rs` (implements `ApplicationHandler` for `App`).
+  - Used by `main.rs` as the main platform instance.
+  - Extended via `window_management.rs` (via `PlatformHandler` implementing `ApplicationHandler`).
   - Modified by `vulkan_core.rs` and `renderer.rs` to set up and manage Vulkan resources.
 
 ---
@@ -18,102 +18,94 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ## 2. `lib.rs`
 - **Purpose**: The library root, declaring public modules and a `Vertex` struct for shader input.
 - **Key Components**:
-  - Exports `application`, `vulkan_core`, `renderer`, and `window_management` modules.
+  - Exports `platform`, `vulkan_core`, `renderer`, `window_management`, and `scene` modules.
   - `Vertex` struct: Defines a 2D position (`[f32; 2]`) for rendering.
 - **Relationships**:
   - Ties all modules together, providing a public API for the `rusty_whip` crate.
-  - `Vertex` is used in `renderer.rs` for vertex buffer creation.
+  - `Vertex` is used in `renderer.rs` and `scene.rs` for vertex data.
 
 ---
 
 ## 3. `main.rs`
-- **Purpose**: The entry point of the application, setting up the `winit` event loop and running the `App`.
+- **Purpose**: The entry point, setting up the `winit` event loop, initializing `Platform` and `Scene`, and running them via `winit`’s `run_app`.
 - **Key Components**:
-  - Creates an `EventLoop`, initializes `App`, and runs it with `run_app`.
+  - Creates an `EventLoop`, initializes `Platform` and `Scene` (with a triangle `RenderObject`), and runs them with a `PlatformHandler` via `winit run_app`.
 - **Relationships**:
-  - Depends on `application.rs` for the `App` struct.
-  - Relies on `window_management.rs` to handle events via `ApplicationHandler`.
+  - Depends on `platform.rs` for `Platform` and `scene.rs` for `Scene`.
+  - Uses `window_management.rs` to handle events via `PlatformHandler`.
 
 ---
 
 ## 4. `renderer.rs`
-- **Purpose**: Manages the Vulkan rendering pipeline, including swapchain setup, vertex buffers, shaders, and rendering commands.
+- **Purpose**: Manages the Vulkan rendering pipeline, including swapchain setup, vertex buffers, shaders, and rendering commands, using data from `Scene`.
 - **Key Components**:
-  - `load_shader`: Dynamically loads SPIR-V shader files from `../shaders/` at runtime.
-  - `setup_renderer`: Initializes rendering resources, loading `test_shader.vert.spv` for the triangle’s vertex shader and `background.frag.spv` for the fragment shader using `load_shader`.
+  - `load_shader`: Loads SPIR-V shaders from `../shaders/` at runtime.
+  - `setup_renderer`: Initializes rendering resources using `Scene`’s `RenderObject` data (e.g., vertices, shaders).
   - `cleanup_renderer`: Destroys rendering resources.
-  - `render`: Executes the draw loop using semaphores and fences for synchronization.
+  - `render`: Executes the draw loop.
 - **Relationships**:
-  - Operates on `App` from `application.rs`, populating its fields.
-  - Uses `Vertex` from `lib.rs` for vertex data.
-  - Relies on `shaders/` directory, linked via `build.rs` symlink.
+  - Operates on `Platform` from `platform.rs`, populating its fields.
+  - Uses `Vertex` from `lib.rs` and `Scene` from `scene.rs`.
 
 ---
 
 ## 5. `vulkan_core.rs`
-- **Purpose**: Handles Vulkan initialization, including instance creation, surface setup, device selection, and memory allocation.
+- **Purpose**: Handles Vulkan initialization (instance, surface, device, etc.) for `Platform`.
 - **Key Components**:
-  - `setup_vulkan`: Creates Vulkan entry, instance, surface, device, queue, and allocator.
+  - `setup_vulkan`: Sets up Vulkan essentials.
   - `cleanup_vulkan`: Tears down Vulkan resources.
 - **Relationships**:
-  - Modifies `App` from `application.rs` with Vulkan essentials.
-  - Called by `window_management.rs` during window creation.
+  - Modifies `Platform` from `platform.rs`.
 
 ---
 
 ## 6. `window_management.rs`
-- **Purpose**: Implements `ApplicationHandler` for `App`, managing window lifecycle and events.
+- **Purpose**: Defines `PlatformHandler` to manage window lifecycle and events, integrating `Platform` and `Scene`.
 - **Key Components**:
-  - `resumed`: Creates the window and triggers Vulkan and renderer setup.
-  - `window_event`: Handles close requests and redraws, calling rendering and cleanup functions.
+  - `PlatformHandler`: Wraps `Platform` and `Scene`, implementing `ApplicationHandler`.
+  - `resumed`: Creates the window, triggers Vulkan and renderer setup.
+  - `window_event`: Handles close requests and redraws.
 - **Relationships**:
-  - Extends `App` from `application.rs`.
-  - Calls `vulkan_core.rs` and `renderer.rs` functions for setup and rendering.
+  - Uses `Platform` from `platform.rs` and `Scene` from `scene.rs`.
+  - Calls `vulkan_core.rs` and `renderer.rs` functions.
 
 ---
 
-## 7. `Cargo.toml`
-- **Purpose**: Project configuration file specifying dependencies, metadata, and build instructions.
+## 7. `scene.rs`
+- **Purpose**: Defines `Scene` and `RenderObject` for scene management, holding renderable object data.
 - **Key Components**:
-  - Defines `rusty_whip` crate with dependencies (`ash`, `vk-mem`, `winit`, `ash-window`).
-  - Specifies `build = "build.rs"` to invoke the build script.
+  - `RenderObject`: Stores vertices and shader filenames (e.g., `test_shader.vert.spv`).
+  - `Scene`: Manages a collection of `RenderObject`s.
 - **Relationships**:
-  - Governs the build process, including `build.rs` for shader compilation and symlinking.
+  - Initialized in `main.rs`.
+  - Used by `renderer.rs` via `window_management.rs`.
 
 ---
 
-## 8. `build.rs`
-- **Purpose**: Build script that compiles GLSL shaders to SPIR-V and creates a cross-platform symlink to the `shaders/` directory.
-- **Key Components**:
-  - `compile_shaders`: Uses `glslc` to compile `.vert` and `.frag` files in `shaders/` to `.spv` files (e.g., `test_shader.vert.spv`).
-  - `create_shaders_symlink`: Links `target/debug/shaders` to `rust/shaders/` (Unix symlink on Linux, directory junction on Windows).
+## 8. `Cargo.toml`
+- **Purpose**: Project configuration file (unchanged).
 - **Relationships**:
-  - Invoked by `Cargo.toml` during build.
+  - Governs the build process, including `build.rs`.
+
+---
+
+## 9. `build.rs`
+- **Purpose**: Build script for shader compilation and symlinking (unchanged).
+- **Relationships**:
   - Ensures `renderer.rs` can load shaders from `../shaders/`.
 
 ---
 
-## 9. `shaders/` Directory
-- **Purpose**: Contains GLSL shader source files (`.vert`, `.frag`) and their compiled SPIR-V binaries (`.spv`).
-- **Key Components**:
-  - Example files: `background.vert`, `background.vert.spv`, `background.frag`, `background.frag.spv`, `test_shader.vert`, `test_shader.vert.spv`.
-  - Compiled to `.spv` by `build.rs` using `glslc`.
+## 10. `shaders/` Directory
+- **Purpose**: Contains GLSL shaders and compiled SPIR-V binaries (unchanged).
 - **Relationships**:
-  - Loaded dynamically in `renderer.rs` via `load_shader` from `../shaders/`.
-  - Managed by `build.rs`, which compiles shaders and symlinks the directory to `target/debug/shaders`.
+  - Loaded by `renderer.rs`, managed by `build.rs`.
 
 ---
 
 ## Project Overview
-This Rust project, named `rusty_whip`, is a Vulkan-based graphics application forming the base of a custom GUI system. It renders a simple triangle using dynamic shader loading. Key features:
-- **Vulkan** (`ash`, `vk-mem`) for low-level graphics programming.
-- **Winit** for cross-platform windowing and event handling.
-- **Modular Design**:
-  - `application.rs` holds the state.
-  - `vulkan_core.rs` initializes Vulkan.
-  - `renderer.rs` sets up and executes the rendering pipeline, dynamically loading shaders from `../shaders/`.
-  - `window_management.rs` ties it to the windowing system.
-  - `main.rs` starts the application.
-  - `build.rs` automates shader compilation (GLSL to SPIR-V via `glslc`) and symlinks `shaders/` to `target/debug/shaders` for cross-platform compatibility (Linux and Windows).
-- **Shaders**: GLSL source files in `shaders/` are compiled to SPIR-V at build time by `build.rs`, then loaded dynamically by `renderer.rs`.
-The flow begins in `main.rs`, running the `winit` event loop with `App`. During build, `build.rs` compiles shaders and sets up the symlink. `window_management.rs` creates a window, triggering Vulkan setup (`vulkan_core.rs`) and renderer initialization (`renderer.rs`). The render loop in `renderer.rs` draws continuously until the window closes, followed by cleanup.
+`rusty_whip` is a Vulkan-based graphics application forming a GUI framework. It renders a triangle using dynamic shader loading, with a layered architecture:
+- **Platform** (`platform.rs`): Manages Vulkan and window state.
+- **Scene** (`scene.rs`): Handles renderable objects (e.g., a triangle).
+- **Renderer** (`renderer.rs`): Executes Vulkan rendering.
+- Flow: `main.rs` initializes `Platform` and `Scene`, runs them via `PlatformHandler` in `window_management.rs`, which triggers Vulkan setup (`vulkan_core.rs`) and rendering (`renderer.rs`).

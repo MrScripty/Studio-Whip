@@ -6,6 +6,7 @@ pub mod scene;
 
 pub use platform::Platform;
 pub use scene::{Scene, RenderObject};
+pub use renderer::Renderer;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]

@@ -3,6 +3,23 @@ use ash::khr::swapchain;
 use std::marker::PhantomData;
 use vk_mem::Alloc;
 use crate::{Vertex, application::App};
+use std::fs;
+
+// Updated load_shader with corrected path
+fn load_shader(device: &ash::Device, filename: &str) -> vk::ShaderModule {
+    let shader_path = format!("../shaders/{}", filename); // Changed from "shaders/{}" to "../shaders/{}"
+    let shader_code = fs::read(&shader_path).expect(&format!("Failed to read shader file: {}", shader_path));
+    let shader_module_info = vk::ShaderModuleCreateInfo {
+        s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
+        p_next: std::ptr::null(),
+        flags: vk::ShaderModuleCreateFlags::empty(),
+        code_size: shader_code.len(),
+        p_code: shader_code.as_ptr() as *const u32,
+        _marker: PhantomData,
+    };
+    unsafe { device.create_shader_module(&shader_module_info, None) }
+        .expect(&format!("Failed to create shader module from: {}", filename))
+}
 
 pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
     let instance = app.instance.as_ref().unwrap();
@@ -175,39 +192,11 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
         })
         .collect();
 
-    let vertex_shader_spirv = include_bytes!("../shaders/background.vert.spv");
-    let fragment_shader_spirv = include_bytes!("../shaders/background.frag.spv");
-
-    let vertex_shader = unsafe {
-        device.create_shader_module(
-            &vk::ShaderModuleCreateInfo {
-                s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
-                p_next: std::ptr::null(),
-                flags: vk::ShaderModuleCreateFlags::empty(),
-                code_size: vertex_shader_spirv.len(),
-                p_code: vertex_shader_spirv.as_ptr() as *const u32,
-                _marker: PhantomData,
-            },
-            None,
-        )
-    }
-    .unwrap();
+    // Shader loading calls remain unchanged
+    let vertex_shader = load_shader(device, "test_shader.vert.spv"); // New vertex shader for triangle
     app.vertex_shader = Some(vertex_shader);
 
-    let fragment_shader = unsafe {
-        device.create_shader_module(
-            &vk::ShaderModuleCreateInfo {
-                s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
-                p_next: std::ptr::null(),
-                flags: vk::ShaderModuleCreateFlags::empty(),
-                code_size: fragment_shader_spirv.len(),
-                p_code: fragment_shader_spirv.as_ptr() as *const u32,
-                _marker: PhantomData,
-            },
-            None,
-        )
-    }
-    .unwrap();
+    let fragment_shader = load_shader(device, "background.frag.spv"); // Reusing background fragment shader
     app.fragment_shader = Some(fragment_shader);
 
     let pipeline_layout = unsafe {
@@ -407,7 +396,7 @@ pub fn setup_renderer(app: &mut App, extent: vk::Extent2D) {
 
     app.command_buffers = {
         let alloc_info = vk::CommandBufferAllocateInfo {
-            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO, // Fixed to correct StructureType
+            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
             p_next: std::ptr::null(),
             command_pool,
             level: vk::CommandBufferLevel::PRIMARY,

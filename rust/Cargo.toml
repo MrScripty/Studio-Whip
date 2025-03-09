@@ -1,10 +1,11 @@
 [package]
-name = "rusty_whip"  # Changed from RustyWhip
+name = "rusty_whip"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs" 
 
 [lib]
-name = "rusty_whip"  # Changed from RustyWhip
+name = "rusty_whip"
 
 [dependencies]
 ash = "0.38"

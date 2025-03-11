@@ -27,6 +27,9 @@ pub struct Renderable {
     fragment_shader: vk::ShaderModule,
     pipeline: vk::Pipeline,
     vertex_count: u32,
+    depth: f32,                    // For depth sorting
+    on_window_resize_scale: bool,  // From RenderObject
+    on_window_resize_move: bool,   // From RenderObject
 }
 
 pub struct Renderer {
@@ -376,8 +379,14 @@ impl Renderer {
                 fragment_shader,
                 pipeline,
                 vertex_count: vertices.len() as u32,
+                depth: obj.depth,
+                on_window_resize_scale: obj.on_window_resize_scale,
+                on_window_resize_move: obj.on_window_resize_move,
             });
         }
+
+        // Sort renderables by depth (lower depth = rendered first)
+        renderables.sort_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap());
 
         let queue_family_index = unsafe {
             instance

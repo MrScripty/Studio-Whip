@@ -2,6 +2,7 @@ use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
+use winit::dpi::PhysicalSize;
 use std::sync::Arc;
 use ash::vk;
 use crate::platform::Platform;
@@ -28,7 +29,9 @@ impl PlatformHandler {
 impl ApplicationHandler for PlatformHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.platform.window.is_none() {
-            let window = Arc::new(event_loop.create_window(Window::default_attributes()).unwrap());
+            let window = Arc::new(event_loop.create_window(
+                Window::default_attributes().with_inner_size(PhysicalSize::new(600, 300))
+            ).unwrap());
             self.platform.window = Some(window.clone());
             let window_inner_size = window.inner_size();
             let extent = vk::Extent2D {

@@ -179,36 +179,36 @@ impl Renderer {
             })
             .collect();
 
-        // Create uniform buffer with identity matrix
-        let ortho = Mat4::IDENTITY.to_cols_array(); // Changed to identity for NDC preservation
-        let (uniform_buffer, uniform_allocation) = {
-            let buffer_info = vk::BufferCreateInfo {
-                s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                p_next: std::ptr::null(),
-                flags: vk::BufferCreateFlags::empty(),
-                size: std::mem::size_of_val(&ortho) as u64,
-                usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 0,
-                p_queue_family_indices: std::ptr::null(),
-                _marker: PhantomData,
+            // Create uniform buffer with orthographic projection for pixel coords
+            let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -1.0, 1.0).to_cols_array();
+            let (uniform_buffer, uniform_allocation) = {
+                let buffer_info = vk::BufferCreateInfo {
+                    s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                    p_next: std::ptr::null(),
+                    flags: vk::BufferCreateFlags::empty(),
+                    size: std::mem::size_of_val(&ortho) as u64,
+                    usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    queue_family_index_count: 0,
+                    p_queue_family_indices: std::ptr::null(),
+                    _marker: PhantomData,
+                };
+                let allocation_info = vk_mem::AllocationCreateInfo {
+                    usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                    flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                };
+                let (buffer, mut allocation) = unsafe {
+                    platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info)
+                }
+                .unwrap();
+                let data_ptr = unsafe { platform.allocator.as_ref().unwrap().map_memory(&mut allocation) }
+                    .unwrap()
+                    .cast::<f32>();
+                unsafe { data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len()) };
+                unsafe { platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation) };
+                (buffer, allocation)
             };
-            let allocation_info = vk_mem::AllocationCreateInfo {
-                usage: vk_mem::MemoryUsage::AutoPreferDevice,
-                flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
-                ..Default::default()
-            };
-            let (buffer, mut allocation) = unsafe {
-                platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info)
-            }
-            .unwrap();
-            let data_ptr = unsafe { platform.allocator.as_ref().unwrap().map_memory(&mut allocation) }
-                .unwrap()
-                .cast::<f32>();
-            unsafe { data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len()) };
-            unsafe { platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation) };
-            (buffer, allocation)
-        };
 
         // Create descriptor set layout
         let descriptor_set_layout = unsafe {

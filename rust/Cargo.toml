@@ -13,3 +13,4 @@ vk-mem = "0.4"
 raw-window-handle = "0.6"
 winit = "0.30.9"
 ash-window = "0.13"
+glam = "0.30"  # Added for SIMD-optimized matrix operations

@@ -6,7 +6,7 @@ use crate::{Vertex, Platform, Scene};
 use std::fs;
 
 fn load_shader(device: &ash::Device, filename: &str) -> vk::ShaderModule {
-    let shader_path = format!("../shaders/{}", filename);
+    let shader_path = format!("./shaders/{}", filename);
     let shader_code = fs::read(&shader_path).expect(&format!("Failed to read shader file: {}", shader_path));
     let shader_module_info = vk::ShaderModuleCreateInfo {
         s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,

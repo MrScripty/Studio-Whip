@@ -3,11 +3,8 @@ use std::fs;
 use std::process::Command;
 
 fn main() {
-    // Compile shaders first
     compile_shaders();
-
-    // Then create the symlink
-    create_shaders_symlink();
+    //create_shaders_symlink();
 }
 
 fn compile_shaders() {
@@ -69,6 +66,7 @@ fn compile_shaders() {
     }
 }
 
+/* 
 fn create_shaders_symlink() {
     let shaders_src = Path::new("../shaders"); // Relative to target/debug/, points to rust/shaders/
     let shaders_dest = Path::new("target/debug/shaders");
@@ -93,3 +91,4 @@ fn create_shaders_symlink() {
 
     println!("cargo:rerun-if-changed=shaders"); // Rebuild if shaders/ changes
 }
+*/

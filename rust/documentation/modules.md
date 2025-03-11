@@ -29,7 +29,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ## 3. `main.rs`
 - **Purpose**: The entry point, setting up the `winit` event loop, initializing `Platform` and `Scene`, and running them via `winit`’s `run_app`.
 - **Key Components**:
-  - Creates an `EventLoop`, initializes `Platform` and `Scene` (with a triangle `RenderObject`), and runs them with a `PlatformHandler` via `winit run_app`.
+  - Creates an `EventLoop`, initializes `Platform` and `Scene` (with a triangle and square `RenderObject`), and runs them with a `PlatformHandler` via `winit run_app`.
 - **Relationships**:
   - Depends on `platform.rs` for `Platform` and `scene.rs` for `Scene`.
   - Uses `window_management.rs` to handle events via `PlatformHandler`.
@@ -39,10 +39,12 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ## 4. `renderer.rs`
 - **Purpose**: Manages the Vulkan rendering pipeline, including swapchain setup, vertex buffers, shaders, and rendering commands, using data from `Scene`.
 - **Key Components**:
-  - `load_shader`: Loads SPIR-V shaders from `../shaders/` at runtime.
-  - `setup_renderer`: Initializes rendering resources using `Scene`’s `RenderObject` data (e.g., vertices, shaders).
-  - `cleanup_renderer`: Destroys rendering resources.
+  - `load_shader`: Loads SPIR-V shaders from `./shaders/` at runtime.
+  - `Renderable` struct: Represents a renderable object with vertex buffer, allocation, shaders, pipeline, and vertex count.
+  - `Renderer::new`: Initializes rendering resources using `Scene`’s `RenderObject` data (e.g., vertices, shaders), setting up `renderables` and `pipeline_layout`.
+  - `Renderer::cleanup`: Destroys rendering resources.
   - `render`: Executes the draw loop.
+  - `pipeline_layout`: A `vk::PipelineLayout` stored in `Renderer` for pipeline configuration.
 - **Relationships**:
   - Operates on `Platform` from `platform.rs`, populating its fields.
   - Uses `Vertex` from `lib.rs` and `Scene` from `scene.rs`.
@@ -74,7 +76,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ## 7. `scene.rs`
 - **Purpose**: Defines `Scene` and `RenderObject` for scene management, holding renderable object data.
 - **Key Components**:
-  - `RenderObject`: Stores vertices and shader filenames (e.g., `test_shader.vert.spv`).
+  - `RenderObject`: Stores vertices and shader filenames (e.g., `triangle.vert.spv`).
   - `Scene`: Manages a collection of `RenderObject`s.
 - **Relationships**:
   - Initialized in `main.rs`.
@@ -90,22 +92,26 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ---
 
 ## 9. `build.rs`
-- **Purpose**: Build script for shader compilation and symlinking (unchanged).
+- **Purpose**: Build script for shader compilation using `glslc`. A commented-out section for symlinking shaders is present but inactive.
 - **Relationships**:
-  - Ensures `renderer.rs` can load shaders from `../shaders/`.
+  - Ensures `renderer.rs` can load shaders from `./shaders/` at runtime.
 
 ---
 
 ## 10. `shaders/` Directory
 - **Purpose**: Contains GLSL shaders and compiled SPIR-V binaries (unchanged).
+- **Key Components**:
+  - Shader files: Includes `triangle.vert`, `triangle.frag`, `square.vert`, `square.frag`, `background.vert`, and `background.frag`.
+  - Compilation scripts: `compile_shaders.sh` (Linux/bash) and `compile_shaders.ps1` (Windows/PowerShell) manually compile shaders to `.spv`, preserving filenames (e.g., `triangle.vert.spv`).
 - **Relationships**:
   - Loaded by `renderer.rs`, managed by `build.rs`.
+  - Compilation scripts provide an alternative to `build.rs` for manual shader updates.
 
 ---
 
 ## Project Overview
-`rusty_whip` is a Vulkan-based graphics application forming a GUI framework. It renders a triangle using dynamic shader loading, with a layered architecture:
+`rusty_whip` is a Vulkan-based graphics application forming a GUI framework. It renders a triangle and a square using dynamic shader loading, with a layered architecture:
 - **Platform** (`platform.rs`): Manages Vulkan and window state.
-- **Scene** (`scene.rs`): Handles renderable objects (e.g., a triangle).
+- **Scene** (`scene.rs`): Handles renderable objects (e.g., a triangle and square).
 - **Renderer** (`renderer.rs`): Executes Vulkan rendering.
 - Flow: `main.rs` initializes `Platform` and `Scene`, runs them via `PlatformHandler` in `window_management.rs`, which triggers Vulkan setup (`vulkan_core.rs`) and rendering (`renderer.rs`).

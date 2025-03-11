@@ -29,7 +29,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ## 3. `main.rs`
 - **Purpose**: The entry point, initializing a 600x300 `winit` window, setting up `Platform` and `Scene` with a background, triangle, and square, and running them with dynamic resizing.
 - **Key Components**:
-  - Sets up `EventLoop`, `Platform`, and `Scene` with a background quad (`depth: 0.0`, `21292a`), triangle (`depth: 1.0`, `ff9800`, moving), and square (`depth: 2.0`, `42c922`, moving), plus a scaling triangle placeholder.
+  - Sets up `EventLoop`, `Platform`, and `Scene` with a background quad (`depth: 0.0`, `21292a`, `Move`), triangle (`depth: 1.0`, `ff9800`, `Move`), and square (`depth: 2.0`, `42c922`, `Move`).
   - Runs via `PlatformHandler` with `run_app`.
 - **Relationships**:
   - Depends on `platform.rs` for `Platform`, `scene.rs` for `Scene`, and `window_management.rs` for event handling.
@@ -75,7 +75,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ## 7. `scene.rs`
 - **Purpose**: Manages `Scene` and `RenderObject` with depth for 2D layering, using pixel coordinates.
 - **Key Components**:
-  - `RenderObject`: Stores `vertices`, `vertex_shader_filename`, `fragment_shader_filename`, and `depth: f32`.
+  - `RenderObject`: Stores `vertices`, `vertex_shader_filename`, `fragment_shader_filename`, `depth: f32`, and `behavior: RenderBehavior`.
   - `Scene`: Holds a `Vec<RenderObject>` for rendering.
 - **Relationships**:
   - Initialized in `main.rs`, consumed by `renderer.rs`.
@@ -97,7 +97,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ---
 
 ## 10. `shaders/` Directory
-- **Purpose**: Contains GLSL shaders and SPIR-V binaries for rendering with specified colors.
+- **Purpose**: Contains GLSL shaders (version 460) and SPIR-V binaries for rendering with specified colors.
 - **Key Components**:
   - `background.vert`, `background.frag`: Full-screen quad (`21292a`, RGB: 0.129, 0.161, 0.165).
   - `triangle.vert`, `triangle.frag`: Triangle (`ff9800`, RGB: 1.0, 0.596, 0.0).
@@ -112,7 +112,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 `rusty_whip` is a Vulkan-based graphics application evolving into a 2D/3D content creation tool. After completing the plan, it features:
 - A 600x300 resizable window with a `21292a` background.
 - Depth-sorted 2D GUI elements (background: 0.0, triangle: 1.0, square: 2.0) in pixel coordinates via orthographic projection.
-- Dynamic resizing: Background fills the window, most elements (triangle, square) move relative to the center, and one (e.g., triangle) scales (placeholder for future color wheel).
+- Dynamic resizing: Background fills the window, elements (triangle, square) move proportionately (e.g., triangle at center, square in top-left quadrant), scaling deferred via `RenderBehavior`.
 - Flow: `main.rs` sets up `Platform` and `Scene`, `window_management.rs` handles events (including resizing), `vulkan_core.rs` initializes Vulkan, and `renderer.rs` renders depth-sorted objects with updated uniforms.
 
-This foundation supports future 3D viewports and advanced GUI features, targeting Linux and Windows.
+This foundation supports future 3D viewports and advanced GUI features, targeting Linux and Windows with unofficial compiling for Mac and BSD.

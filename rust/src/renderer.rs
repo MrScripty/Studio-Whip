@@ -37,6 +37,29 @@ fn create_swapchain(platform: &mut Platform, extent: vk::Extent2D) -> vk::Surfac
             .unwrap()
     };
     let surface_format = surface_formats[0];
+
+    // Get surface capabilities to constrain extent
+    let surface_caps = unsafe {
+        surface_loader
+            .get_physical_device_surface_capabilities(physical_device, surface)
+            .unwrap()
+    };
+    let mut final_extent = extent;
+    if surface_caps.current_extent.width != u32::MAX {
+        // If the surface specifies an extent, use it (e.g., Wayland)
+        final_extent = surface_caps.current_extent;
+    } else {
+        // Otherwise, clamp the extent to the surface's min/max
+        final_extent.width = final_extent.width.clamp(
+            surface_caps.min_image_extent.width,
+            surface_caps.max_image_extent.width,
+        );
+        final_extent.height = final_extent.height.clamp(
+            surface_caps.min_image_extent.height,
+            surface_caps.max_image_extent.height,
+        );
+    }
+
     let (swapchain, images) = {
         let swapchain_create_info = vk::SwapchainCreateInfoKHR {
             s_type: vk::StructureType::SWAPCHAIN_CREATE_INFO_KHR,
@@ -46,7 +69,7 @@ fn create_swapchain(platform: &mut Platform, extent: vk::Extent2D) -> vk::Surfac
             min_image_count: 2,
             image_format: surface_format.format,
             image_color_space: surface_format.color_space,
-            image_extent: extent,
+            image_extent: final_extent,
             image_array_layers: 1,
             image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
             image_sharing_mode: vk::SharingMode::EXCLUSIVE,
@@ -239,6 +262,22 @@ fn record_command_buffers(
                 _marker: PhantomData,
             }, vk::SubpassContents::INLINE);
 
+            // Set viewport and scissor to match the new extent
+            let viewport = vk::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: extent.width as f32,
+                height: extent.height as f32,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            };
+            let scissor = vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent,
+            };
+            device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+            device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+
             device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -270,6 +309,9 @@ pub struct Renderable {
     depth: f32,
     on_window_resize_scale: bool,
     on_window_resize_move: bool,
+    original_positions: Vec<[f32; 2]>, // Initial positions in pixels
+    fixed_size: [f32; 2],             // [width, height] in pixels
+    center_ratio: [f32; 2],           // [center_x / orig_width, center_y / orig_height]
 }
 
 pub struct Renderer {
@@ -411,7 +453,7 @@ impl Renderer {
         for obj in &scene.render_objects {
             let vertices = &obj.vertices;
             let (vertex_buffer, vertex_allocation) = {
-                let device = platform.device.as_ref().unwrap(); // Borrow device here
+                let device = platform.device.as_ref().unwrap();
                 let buffer_info = vk::BufferCreateInfo {
                     s_type: vk::StructureType::BUFFER_CREATE_INFO,
                     p_next: std::ptr::null(),
@@ -444,7 +486,7 @@ impl Renderer {
             let fragment_shader = load_shader(platform.device.as_ref().unwrap(), &obj.fragment_shader_filename);
 
             let pipeline = {
-                let device = platform.device.as_ref().unwrap(); // Borrow device here
+                let device = platform.device.as_ref().unwrap();
                 let vertex_stage = vk::PipelineShaderStageCreateInfo {
                     s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
                     p_next: std::ptr::null(),
@@ -498,26 +540,24 @@ impl Renderer {
                     _marker: PhantomData,
                 };
 
-                let viewport = vk::Viewport {
-                    x: 0.0,
-                    y: 0.0,
-                    width: extent.width as f32,
-                    height: extent.height as f32,
-                    min_depth: 0.0,
-                    max_depth: 1.0,
-                };
-                let scissor = vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent,
+                // Use dynamic viewport and scissor
+                let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+                let dynamic_state = vk::PipelineDynamicStateCreateInfo {
+                    s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+                    p_next: std::ptr::null(),
+                    flags: vk::PipelineDynamicStateCreateFlags::empty(),
+                    dynamic_state_count: dynamic_states.len() as u32,
+                    p_dynamic_states: dynamic_states.as_ptr(),
+                    _marker: PhantomData,
                 };
                 let viewport_state = vk::PipelineViewportStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
                     p_next: std::ptr::null(),
                     flags: vk::PipelineViewportStateCreateFlags::empty(),
                     viewport_count: 1,
-                    p_viewports: &viewport,
+                    p_viewports: std::ptr::null(), // Dynamic
                     scissor_count: 1,
-                    p_scissors: &scissor,
+                    p_scissors: std::ptr::null(),  // Dynamic
                     _marker: PhantomData,
                 };
 
@@ -587,7 +627,7 @@ impl Renderer {
                     p_multisample_state: &multisample_state,
                     p_depth_stencil_state: std::ptr::null(),
                     p_color_blend_state: &color_blend_state,
-                    p_dynamic_state: std::ptr::null(),
+                    p_dynamic_state: &dynamic_state,
                     layout: pipeline_layout,
                     render_pass: platform.render_pass.unwrap(),
                     subpass: 0,
@@ -602,6 +642,13 @@ impl Renderer {
                         .unwrap()[0]
                 }
             };
+            
+            let min_x = vertices.iter().map(|v| v.position[0]).fold(f32::INFINITY, f32::min);
+            let max_x = vertices.iter().map(|v| v.position[0]).fold(f32::NEG_INFINITY, f32::max);
+            let min_y = vertices.iter().map(|v| v.position[1]).fold(f32::INFINITY, f32::min);
+            let max_y = vertices.iter().map(|v| v.position[1]).fold(f32::NEG_INFINITY, f32::max);
+            let center_x = (min_x + max_x) / 2.0;
+            let center_y = (min_y + max_y) / 2.0;
 
             renderables.push(Renderable {
                 vertex_buffer,
@@ -613,6 +660,9 @@ impl Renderer {
                 depth: obj.depth,
                 on_window_resize_scale: obj.on_window_resize_scale,
                 on_window_resize_move: obj.on_window_resize_move,
+                original_positions: vertices.iter().map(|v| v.position).collect(),
+                fixed_size: [max_x - min_x, max_y - min_y],
+                center_ratio: [center_x / 600.0, center_y / 300.0], // Original 600x300
             });
         }
 
@@ -646,6 +696,82 @@ impl Renderer {
             descriptor_pool,
             descriptor_set,
         }
+    }
+
+    pub fn resize(&mut self, platform: &mut Platform, width: u32, height: u32) {
+        let device = platform.device.as_ref().unwrap();
+        unsafe { device.device_wait_idle().unwrap() }; // Wait for rendering to finish
+
+        // Clean up old resources
+        for &framebuffer in &platform.framebuffers {
+            unsafe { device.destroy_framebuffer(framebuffer, None) };
+        }
+        unsafe { device.destroy_render_pass(platform.render_pass.take().unwrap(), None) };
+        for &view in &platform.image_views {
+            unsafe { device.destroy_image_view(view, None) };
+        }
+        if let Some(swapchain) = platform.swapchain.take() {
+            unsafe { platform.swapchain_loader.as_ref().unwrap().destroy_swapchain(swapchain, None) };
+        }
+
+        // Recreate swapchain and framebuffers with the new extent
+        let extent = vk::Extent2D { width, height };
+        let surface_format = create_swapchain(platform, extent);
+        create_framebuffers(platform, extent, surface_format);
+        println!("New extent: {:?}", extent);
+
+        // Update uniform buffer with new orthographic projection
+        let ortho = Mat4::orthographic_rh(0.0, width as f32, height as f32, 0.0, -1.0, 1.0).to_cols_array();
+        let data_ptr = unsafe { platform.allocator.as_ref().unwrap().map_memory(&mut self.uniform_allocation) }
+            .unwrap()
+            .cast::<f32>();
+        unsafe { data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len()) };
+        unsafe { platform.allocator.as_ref().unwrap().unmap_memory(&mut self.uniform_allocation) };
+
+        // Update vertex buffers for all renderables
+        for renderable in &mut self.renderables {
+            let mut new_vertices = Vec::new();
+            if renderable.on_window_resize_scale {
+                // Background: Stretch to fill the entire window
+                new_vertices = vec![
+                    Vertex { position: [0.0, 0.0] },              // Bottom-left
+                    Vertex { position: [0.0, height as f32] },    // Top-left
+                    Vertex { position: [width as f32, height as f32] }, // Top-right
+                    Vertex { position: [width as f32, 0.0] },     // Bottom-right
+                ];
+            } else if renderable.on_window_resize_move {
+                // Shapes: Maintain fixed size, adjust position proportionally
+                let new_center_x = renderable.center_ratio[0] * width as f32;
+                let new_center_y = renderable.center_ratio[1] * height as f32;
+                let half_width = renderable.fixed_size[0] / 2.0;
+                let half_height = renderable.fixed_size[1] / 2.0;
+
+                if renderable.vertex_count == 4 { // Square
+                    new_vertices = vec![
+                        Vertex { position: [new_center_x - half_width, new_center_y - half_height] },
+                        Vertex { position: [new_center_x - half_width, new_center_y + half_height] },
+                        Vertex { position: [new_center_x + half_width, new_center_y + half_height] },
+                        Vertex { position: [new_center_x + half_width, new_center_y - half_height] },
+                    ];
+                } else if renderable.vertex_count == 3 { // Triangle
+                    new_vertices = vec![
+                        Vertex { position: [new_center_x - half_width, new_center_y - half_height] },
+                        Vertex { position: [new_center_x, new_center_y + half_height] },
+                        Vertex { position: [new_center_x + half_width, new_center_y - half_height] },
+                    ];
+                }
+            }
+
+            // Update the vertex buffer
+            let data_ptr = unsafe { platform.allocator.as_ref().unwrap().map_memory(&mut renderable.vertex_allocation) }
+                .unwrap()
+                .cast::<Vertex>();
+            unsafe { data_ptr.copy_from_nonoverlapping(new_vertices.as_ptr(), new_vertices.len()) };
+            unsafe { platform.allocator.as_ref().unwrap().unmap_memory(&mut renderable.vertex_allocation) };
+        }
+
+        // Recreate command buffers
+        record_command_buffers(platform, &self.renderables, self.pipeline_layout, self.descriptor_set, extent);
     }
 
     pub fn render(&self, platform: &mut Platform) {

@@ -14,6 +14,7 @@ pub struct PlatformHandler {
     platform: Platform,
     scene: Scene,
     renderer: Option<Renderer>,
+    resizing: bool,
 }
 
 impl PlatformHandler {
@@ -22,6 +23,7 @@ impl PlatformHandler {
             platform,
             scene,
             renderer: None,
+            resizing: false,
         }
     }
 }
@@ -54,11 +56,23 @@ impl ApplicationHandler for PlatformHandler {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                if let Some(renderer) = &self.renderer {
-                    renderer.render(&mut self.platform);
+                if !self.resizing { // Skip rendering during resize to avoid mid-state issues
+                    if let Some(renderer) = &self.renderer {
+                        renderer.render(&mut self.platform);
+                    }
+                    if let Some(window) = &self.platform.window {
+                        window.request_redraw();
+                    }
                 }
+            }
+            WindowEvent::Resized(size) => {
+                self.resizing = true;
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.resize(&mut self.platform, size.width, size.height);
+                }
+                self.resizing = false;
                 if let Some(window) = &self.platform.window {
-                    window.request_redraw();
+                    window.request_redraw(); // Trigger redraw after resize
                 }
             }
             _ => (),

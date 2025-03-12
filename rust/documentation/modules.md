@@ -1,117 +1,118 @@
 # Modules in `rusty_whip`
 
-This document lists all files in the `rusty_whip` project, a Vulkan-based graphics application forming the base of a custom GUI system. Each entry includes a summary of its purpose, key components, and relationships to other files.
+This document lists all files in the `rusty_whip` project, a Vulkan-based graphics application forming the foundation of an advanced 2D/3D GUI system for digital entertainment production. Each entry summarizes its purpose, key components, and relationships, reflecting the state after implementing depth sorting, orthographic projection, window resizing, and GUI behaviors as of March 11, 2025.
 
 ---
 
-## 1. `platform.rs` (Previously `application.rs`)
-- **Purpose**: Defines the core `Platform` struct, the central state container for Vulkan and window management. It holds Vulkan objects, window references, buffers, shaders, and synchronization primitives.
+## 1. `platform.rs`
+- **Purpose**: Defines the `Platform` struct, the central state container for Vulkan and window management, supporting a resizable 600x300 window with Vulkan resources.
 - **Key Components**:
-  - `Platform` struct: Contains fields like `instance`, `device`, `swapchain`, `vertex_buffer`, etc., initialized as `None` or empty via `new()`.
+  - `Platform` struct: Holds Vulkan objects (`instance`, `device`, `swapchain`), window (`Arc<Window>`), buffers, shaders, and synchronization primitives, initialized via `new()`.
 - **Relationships**:
-  - Used by `main.rs` as the main platform instance.
-  - Extended via `window_management.rs` (via `PlatformHandler` implementing `ApplicationHandler`).
-  - Modified by `vulkan_core.rs` and `renderer.rs` to set up and manage Vulkan resources.
+  - Used by `main.rs` as the core platform instance.
+  - Modified by `vulkan_core.rs` for Vulkan setup and `renderer.rs` for rendering resources.
+  - Interacts with `window_management.rs` for event-driven resizing.
 
 ---
 
 ## 2. `lib.rs`
-- **Purpose**: The library root, declaring public modules and a `Vertex` struct for shader input.
+- **Purpose**: The library root, declaring public modules and the `Vertex` struct for 2D rendering in pixel coordinates.
 - **Key Components**:
-  - Exports `platform`, `vulkan_core`, `renderer`, `window_management`, and `scene` modules.
-  - `Vertex` struct: Defines a 2D position (`[f32; 2]`) for rendering.
+  - Exports `platform`, `vulkan_core`, `renderer`, `window_management`, and `scene`.
+  - `Vertex` struct: Defines a 2D position (`[f32; 2]`) in pixel space for GUI elements.
 - **Relationships**:
-  - Ties all modules together, providing a public API for the `rusty_whip` crate.
-  - `Vertex` is used in `renderer.rs` and `scene.rs` for vertex data.
+  - Provides the public API for `rusty_whip`.
+  - `Vertex` is used in `renderer.rs` and `scene.rs`.
 
 ---
 
 ## 3. `main.rs`
-- **Purpose**: The entry point, setting up the `winit` event loop, initializing `Platform` and `Scene`, and running them via `winit`’s `run_app`.
+- **Purpose**: The entry point, initializing a 600x300 `winit` window, setting up `Platform` and `Scene` with a background, triangle, and square, and running them with dynamic resizing.
 - **Key Components**:
-  - Creates an `EventLoop`, initializes `Platform` and `Scene` (with a triangle and square `RenderObject`), and runs them with a `PlatformHandler` via `winit run_app`.
+  - Sets up `EventLoop`, `Platform`, and `Scene` with a background quad (`depth: 0.0`, `21292a`, `on_window_resize_scale: true`), triangle (`depth: 1.0`, `ff9800`, `on_window_resize_move: true`), and square (`depth: 2.0`, `42c922`, `on_window_resize_move: true`).
+  - Runs via `PlatformHandler` with `run_app`.
 - **Relationships**:
-  - Depends on `platform.rs` for `Platform` and `scene.rs` for `Scene`.
-  - Uses `window_management.rs` to handle events via `PlatformHandler`.
+  - Depends on `platform.rs` for `Platform`, `scene.rs` for `Scene`, and `window_management.rs` for event handling.
 
 ---
 
 ## 4. `renderer.rs`
-- **Purpose**: Manages the Vulkan rendering pipeline, including swapchain setup, vertex buffers, shaders, and rendering commands, using data from `Scene`.
+- **Purpose**: Manages Vulkan rendering with depth-sorted 2D objects in pixel coordinates, using an orthographic projection and uniform buffer, supporting window resizing.
 - **Key Components**:
-  - `load_shader`: Loads SPIR-V shaders from `./shaders/` at runtime.
-  - `Renderable` struct: Represents a renderable object with vertex buffer, allocation, shaders, pipeline, and vertex count.
-  - `Renderer::new`: Initializes rendering resources using `Scene`’s `RenderObject` data (e.g., vertices, shaders), setting up `renderables` and `pipeline_layout`.
-  - `Renderer::cleanup`: Destroys rendering resources.
-  - `render`: Executes the draw loop.
-  - `pipeline_layout`: A `vk::PipelineLayout` stored in `Renderer` for pipeline configuration.
+  - `load_shader`: Loads SPIR-V shaders from `./shaders/`.
+  - `Renderable` struct: Represents objects with vertex buffers, shaders, pipelines, vertex count, `depth: f32`, `on_window_resize_scale: bool`, `on_window_resize_move: bool`, `original_positions: Vec<[f32; 2]>`, `fixed_size: [f32; 2]`, and `center_ratio: [f32; 2]` for managing fixed sizes and proportional movement.
+  - `Renderer::new`: Initializes resources, sorts `renderables` by `depth: f32`, sets up uniform buffer with `ortho(0, width, height, 0, -1, 1)`.
+  - `resize`: Updates swapchain, framebuffers, uniform buffer, and vertex buffers on window resize, adjusting background to fill the window and moving shapes proportionally while maintaining fixed sizes.
+  - `render`: Draws depth-sorted objects with background color `21292a`.
+  - Helper functions: `create_swapchain`, `create_framebuffers`, `record_command_buffers`.
 - **Relationships**:
-  - Operates on `Platform` from `platform.rs`, populating its fields.
+  - Operates on `Platform` from `platform.rs`.
   - Uses `Vertex` from `lib.rs` and `Scene` from `scene.rs`.
 
 ---
 
 ## 5. `vulkan_core.rs`
-- **Purpose**: Handles Vulkan initialization (instance, surface, device, etc.) for `Platform`.
+- **Purpose**: Initializes and cleans up Vulkan resources for `Platform`, supporting a resizable window.
 - **Key Components**:
-  - `setup_vulkan`: Sets up Vulkan essentials.
-  - `cleanup_vulkan`: Tears down Vulkan resources.
+  - `setup_vulkan`: Configures Vulkan instance, surface, device, and allocator.
+  - `cleanup_vulkan`: Destroys Vulkan resources.
 - **Relationships**:
   - Modifies `Platform` from `platform.rs`.
 
 ---
 
 ## 6. `window_management.rs`
-- **Purpose**: Defines `PlatformHandler` to manage window lifecycle and events, integrating `Platform` and `Scene`.
+- **Purpose**: Manages window lifecycle and events via `PlatformHandler`, enabling resizing with GUI updates.
 - **Key Components**:
-  - `PlatformHandler`: Wraps `Platform` and `Scene`, implementing `ApplicationHandler`.
-  - `resumed`: Creates the window, triggers Vulkan and renderer setup.
-  - `window_event`: Handles close requests and redraws.
+  - `PlatformHandler`: Wraps `Platform`, `Scene`, and `Renderer`, with a `resizing: bool` flag.
+  - `resumed`: Sets up the 600x300 window and Vulkan.
+  - `window_event`: Handles `Resized` (triggers `renderer.resize`), `CloseRequested`, and `RedrawRequested`.
 - **Relationships**:
-  - Uses `Platform` from `platform.rs` and `Scene` from `scene.rs`.
-  - Calls `vulkan_core.rs` and `renderer.rs` functions.
+  - Uses `Platform` from `platform.rs`, `Scene` from `scene.rs`, and `Renderer` from `renderer.rs`.
 
 ---
 
 ## 7. `scene.rs`
-- **Purpose**: Defines `Scene` and `RenderObject` for scene management, holding renderable object data.
+- **Purpose**: Manages `Scene` and `RenderObject` with depth for 2D layering, using pixel coordinates.
 - **Key Components**:
-  - `RenderObject`: Stores vertices and shader filenames (e.g., `triangle.vert.spv`).
-  - `Scene`: Manages a collection of `RenderObject`s.
+  - `RenderObject`: Stores `vertices`, `vertex_shader_filename`, `fragment_shader_filename`, `depth: f32`, `on_window_resize_scale: bool`, and `on_window_resize_move: bool`.
+  - `Scene`: Holds a `Vec<RenderObject>` for rendering.
 - **Relationships**:
-  - Initialized in `main.rs`.
-  - Used by `renderer.rs` via `window_management.rs`.
+  - Initialized in `main.rs`, consumed by `renderer.rs`.
 
 ---
 
 ## 8. `Cargo.toml`
-- **Purpose**: Project configuration file (unchanged).
+- **Purpose**: Configures the project with dependencies (`ash 0.38`, `vk-mem 0.4`, `winit 0.30.9`, etc.) and build script.
 - **Relationships**:
-  - Governs the build process, including `build.rs`.
+  - Drives `build.rs` for shader compilation.
 
 ---
 
 ## 9. `build.rs`
-- **Purpose**: Build script for shader compilation using `glslc`. A commented-out section for symlinking shaders is present but inactive.
+- **Purpose**: Compiles `.vert` and `.frag` shaders to SPIR-V using `glslc` for runtime loading.
 - **Relationships**:
-  - Ensures `renderer.rs` can load shaders from `./shaders/` at runtime.
+  - Ensures shaders in `./shaders/` are available for `renderer.rs`.
 
 ---
 
 ## 10. `shaders/` Directory
-- **Purpose**: Contains GLSL shaders and compiled SPIR-V binaries (unchanged).
+- **Purpose**: Contains GLSL shaders (version 460) and SPIR-V binaries for rendering with specified colors.
 - **Key Components**:
-  - Shader files: Includes `triangle.vert`, `triangle.frag`, `square.vert`, `square.frag`, `background.vert`, and `background.frag`.
-  - Compilation scripts: `compile_shaders.sh` (Linux/bash) and `compile_shaders.ps1` (Windows/PowerShell) manually compile shaders to `.spv`, preserving filenames (e.g., `triangle.vert.spv`).
+  - `background.vert`, `background.frag`: Full-screen quad (`21292a`, RGB: 0.129, 0.161, 0.165).
+  - `triangle.vert`, `triangle.frag`: Triangle (`ff9800`, RGB: 1.0, 0.596, 0.0).
+  - `square.vert`, `square.frag`: Square (`42c922`, RGB: 0.259, 0.788, 0.133).
+  - Compilation scripts: `compile_shaders.sh` and `.ps1` for manual compilation.
 - **Relationships**:
   - Loaded by `renderer.rs`, managed by `build.rs`.
-  - Compilation scripts provide an alternative to `build.rs` for manual shader updates.
 
 ---
 
 ## Project Overview
-`rusty_whip` is a Vulkan-based graphics application forming a GUI framework. It renders a triangle and a square using dynamic shader loading, with a layered architecture:
-- **Platform** (`platform.rs`): Manages Vulkan and window state.
-- **Scene** (`scene.rs`): Handles renderable objects (e.g., a triangle and square).
-- **Renderer** (`renderer.rs`): Executes Vulkan rendering.
-- Flow: `main.rs` initializes `Platform` and `Scene`, runs them via `PlatformHandler` in `window_management.rs`, which triggers Vulkan setup (`vulkan_core.rs`) and rendering (`renderer.rs`).
+`rusty_whip` is a Vulkan-based graphics application evolving into a 2D/3D content creation tool. After completing the plan, it features:
+- A 600x300 resizable window with a `21292a` background.
+- Depth-sorted 2D GUI elements (background: 0.0, triangle: 1.0, square: 2.0) in pixel coordinates via orthographic projection.
+- Dynamic resizing: Background fills the window using `on_window_resize_scale`, elements (triangle, square) move proportionately using `on_window_resize_move` (e.g., triangle at center, square in top-left quadrant) while maintaining fixed sizes (e.g., 50x50 pixels).
+- Flow: `main.rs` sets up `Platform` and `Scene`, `window_management.rs` handles events (including resizing), `vulkan_core.rs` initializes Vulkan, and `renderer.rs` renders depth-sorted objects with updated uniforms.
+
+This foundation supports future 3D viewports and advanced GUI features, targeting Linux and Windows with unofficial compiling for Mac and BSD.

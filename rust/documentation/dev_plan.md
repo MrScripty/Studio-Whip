@@ -22,6 +22,7 @@
 4. Set colors: background `21292a`, triangle `ff9800`, square `42c922`.
 
 ---
+# This plan has been completed!
 
 ## Step-by-Step Plan
 

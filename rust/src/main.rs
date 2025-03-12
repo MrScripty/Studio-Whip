@@ -9,12 +9,16 @@ fn main() {
     let mut scene = Scene::new();
 
     // Background RenderObject (covers full 600x300 window)
+    let width = 600.0;
+    let height = 300.0;
+
+    // Background RenderObject (scales to full window)
     scene.add_object(RenderObject {
         vertices: vec![
-            Vertex { position: [0.0, 0.0] },     // Bottom-left
-            Vertex { position: [0.0, 300.0] },   // Top-left
-            Vertex { position: [600.0, 300.0] }, // Top-right
-            Vertex { position: [600.0, 0.0] },   // Bottom-right
+            Vertex { position: [0.0, 0.0] },
+            Vertex { position: [0.0, height] },
+            Vertex { position: [width, height] },
+            Vertex { position: [width, 0.0] },
         ],
         vertex_shader_filename: "background.vert.spv".to_string(),
         fragment_shader_filename: "background.frag.spv".to_string(),
@@ -23,7 +27,7 @@ fn main() {
         on_window_resize_move: false,
     });
 
-    // Triangle RenderObject (centered, roughly 50x50 pixels)
+    // Triangle RenderObject (fixed 50x50, centered)
     scene.add_object(RenderObject {
         vertices: vec![
             Vertex { position: [275.0, 125.0] }, // Bottom-left
@@ -37,7 +41,7 @@ fn main() {
         on_window_resize_move: true,
     });
 
-    // Square RenderObject (top-left quadrant, 50x50 pixels)
+    // Square RenderObject (fixed 50x50, top-left quadrant)
     scene.add_object(RenderObject {
         vertices: vec![
             Vertex { position: [100.0, 50.0] },  // Bottom-left
@@ -51,7 +55,7 @@ fn main() {
         on_window_resize_scale: false,
         on_window_resize_move: true,
     });
-
+    
     let mut handler = PlatformHandler::new(platform, scene);
     event_loop.run_app(&mut handler).unwrap();
 }

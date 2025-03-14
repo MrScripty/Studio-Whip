@@ -1,13 +1,13 @@
 # Modules in `rusty_whip`
 
-This document lists all files in the `rusty_whip` project, a Vulkan-based graphics application forming the foundation of an advanced 2D/3D GUI system for digital entertainment production. Each entry summarizes its purpose, key components, and relationships, reflecting the state after implementing depth sorting, orthographic projection, window resizing, and GUI behaviors as of March 13, 2025.
+This document lists all files in the `rusty_whip` project, a Vulkan-based graphics application forming the foundation of an advanced 2D/3D GUI system for digital entertainment production. Each entry summarizes its purpose, key components, and relationships, reflecting the state after implementing depth sorting, orthographic projection, window resizing, GUI behaviors, and a restructured directory layout as of March 13, 2025.
 
 ---
 
-## 1. `vulkan_context.rs`
+## 1. `src/gui_framework/context/vulkan_context.rs`
 - **Purpose**: Defines the `VulkanContext` struct, the central state container for Vulkan and window management, supporting a resizable 600x300 window with Vulkan resources.
 - **Key Components**:
-  - `VulkanContext` struct: Holds Vulkan objects (`instance`, `device`, `swapchain`), window (`Arc<Window>`), buffers, and synchronization primitives, initialized via `new()`.
+  - `VulkanContext` struct: Holds Vulkan objects (`instance`, `device`, `swapchain`), window (`Arc<Window>`), buffers, shaders, and synchronization primitives, initialized via `new()`.
 - **Relationships**:
   - Used by `main.rs` as the core Vulkan context instance.
   - Modified by `vulkan_setup.rs` for Vulkan setup and `render_engine.rs` for rendering resources.
@@ -15,10 +15,10 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 2. `lib.rs`
-- **Purpose**: The library root, declaring public modules and the `Vertex` struct for 2D rendering in pixel coordinates.
+## 2. `src/lib.rs`
+- **Purpose**: The library root, declaring the `gui_framework` module and the `Vertex` struct for 2D rendering in pixel coordinates.
 - **Key Components**:
-  - Exports `vulkan_context`, `vulkan_setup`, `render_engine`, `window_handler`, and `scene`.
+  - Exports `gui_framework` and all its public items via `pub use gui_framework::*`.
   - `Vertex` struct: Defines a 2D position (`[f32; 2]`) in pixel space for GUI elements.
 - **Relationships**:
   - Provides the public API for `rusty_whip`.
@@ -26,7 +26,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 3. `main.rs`
+## 3. `src/main.rs`
 - **Purpose**: The entry point, initializing a 600x300 `winit` window, setting up `VulkanContext` and `Scene` with a background, triangle, and square, and running them with dynamic resizing.
 - **Key Components**:
   - Sets up `EventLoop`, `VulkanContext`, and `Scene` with a background quad (`depth: 0.0`, `21292a`, `on_window_resize_scale: true`), triangle (`depth: 1.0`, `ff9800`, `on_window_resize_move: true`), and square (`depth: 2.0`, `42c922`, `on_window_resize_move: true`).
@@ -36,7 +36,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 4. `render_engine.rs`
+## 4. `src/gui_framework/rendering/render_engine.rs`
 - **Purpose**: Manages Vulkan rendering with depth-sorted 2D objects in pixel coordinates, using an orthographic projection and uniform buffer, supporting window resizing.
 - **Key Components**:
   - `load_shader`: Loads SPIR-V shaders from `./shaders/`.
@@ -48,10 +48,20 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 - **Relationships**:
   - Operates on `VulkanContext` from `vulkan_context.rs`.
   - Uses `Vertex` from `lib.rs` and `Scene` from `scene.rs`.
+- **Note**: Planned for splitting into `shader_utils.rs`, `swapchain.rs`, `command_buffers.rs`, `renderable.rs`, and a reduced `render_engine.rs` within `rendering/`.
 
 ---
 
-## 5. `vulkan_setup.rs`
+## 5. `src/gui_framework/rendering/mod.rs`
+- **Purpose**: Declares the `rendering` submodule hierarchy.
+- **Key Components**:
+  - Declares `pub mod render_engine;`.
+- **Relationships**:
+  - Part of the `gui_framework` module, enabling `render_engine.rs` to be accessed as `rendering::render_engine`.
+
+---
+
+## 6. `src/gui_framework/context/vulkan_setup.rs`
 - **Purpose**: Initializes and cleans up Vulkan resources for `VulkanContext`, supporting a resizable window.
 - **Key Components**:
   - `setup_vulkan`: Configures Vulkan instance, surface, device, and allocator.
@@ -61,18 +71,18 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 6. `window_handler.rs`
+## 7. `src/gui_framework/window/window_handler.rs`
 - **Purpose**: Manages window lifecycle and events via `VulkanContextHandler`, enabling resizing with GUI updates.
 - **Key Components**:
   - `VulkanContextHandler`: Wraps `VulkanContext`, `Scene`, and `Renderer`, with a `resizing: bool` flag.
   - `resumed`: Sets up the 600x300 window and Vulkan.
-  - `window_event`: Handles `Resized` (triggers `render_engine.resize_renderer`), `CloseRequested`, and `RedrawRequested`.
+  - `window_event`: Handles `Resized` (triggers `resize_renderer`), `CloseRequested`, and `RedrawRequested`.
 - **Relationships**:
   - Uses `VulkanContext` from `vulkan_context.rs`, `Scene` from `scene.rs`, and `Renderer` from `render_engine.rs`.
 
 ---
 
-## 7. `scene.rs`
+## 8. `src/gui_framework/scene/scene.rs`
 - **Purpose**: Manages `Scene` and `RenderObject` with depth for 2D layering, using pixel coordinates.
 - **Key Components**:
   - `RenderObject`: Stores `vertices`, `vertex_shader_filename`, `fragment_shader_filename`, `depth: f32`, `on_window_resize_scale: bool`, and `on_window_resize_move: bool`.
@@ -82,21 +92,31 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 8. `Cargo.toml`
+## 9. `src/gui_framework/mod.rs`
+- **Purpose**: Defines the `gui_framework` module hierarchy and re-exports key types.
+- **Key Components**:
+  - Declares submodules: `rendering`, `context`, `window`, `scene`.
+  - Re-exports: `Renderer`, `VulkanContext`, `VulkanContextHandler`, `Scene`, `RenderObject`.
+- **Relationships**:
+  - Ties together all `gui_framework` components for use in `lib.rs`.
+
+---
+
+## 10. `Cargo.toml`
 - **Purpose**: Configures the project with dependencies (`ash 0.38`, `vk-mem 0.4`, `winit 0.30.9`, etc.) and build script.
 - **Relationships**:
   - Drives `build.rs` for shader compilation.
 
 ---
 
-## 9. `build.rs`
+## 11. `build.rs`
 - **Purpose**: Compiles `.vert` and `.frag` shaders to SPIR-V using `glslc` for runtime loading.
 - **Relationships**:
   - Ensures shaders in `./shaders/` are available for `render_engine.rs`.
 
 ---
 
-## 10. `shaders/` Directory
+## 12. `shaders/` Directory
 - **Purpose**: Contains GLSL shaders (version 460) and SPIR-V binaries for rendering with specified colors.
 - **Key Components**:
   - `background.vert`, `background.frag`: Full-screen quad (`21292a`, RGB: 0.129, 0.161, 0.165).
@@ -109,10 +129,11 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ---
 
 ## Project Overview
-`rusty_whip` is a Vulkan-based graphics application evolving into a 2D/3D content creation tool. After completing the plan, it features:
+`rusty_whip` is a Vulkan-based graphics application evolving into a 2D/3D content creation tool. As of March 13, 2025, it features:
 - A 600x300 resizable window with a `21292a` background.
 - Depth-sorted 2D GUI elements (background: 0.0, triangle: 1.0, square: 2.0) in pixel coordinates via orthographic projection.
 - Dynamic resizing: Background fills the window using `on_window_resize_scale`, elements (triangle, square) move proportionately using `on_window_resize_move` (e.g., triangle at center, square in top-left quadrant) while maintaining fixed sizes (e.g., 50x50 pixels).
 - Flow: `main.rs` sets up `VulkanContext` and `Scene`, `window_handler.rs` handles events (including resizing), `vulkan_setup.rs` initializes Vulkan, and `render_engine.rs` renders depth-sorted objects with updated uniforms.
+- New Structure: Organized under `gui_framework/` with subdirectories (`rendering/`, `context/`, etc.), each with a `mod.rs` for explicit module definition.
 
-This foundation supports future 3D viewports and advanced GUI features, targeting Linux and Windows with unofficial compiling for Mac and BSD.
+This foundation supports future 3D viewports and advanced GUI features, targeting Linux and Windows with unofficial compiling for Mac and BSD. The next planned step is splitting `render_engine.rs` into smaller modules within `rendering/`.

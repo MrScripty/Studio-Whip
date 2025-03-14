@@ -8,7 +8,7 @@ use ash::vk;
 use crate::vulkan_context::VulkanContext;
 use crate::scene::Scene;
 use crate::vulkan_setup::{setup_vulkan, cleanup_vulkan};
-use crate::renderer::Renderer;
+use crate::render_engine::Renderer;
 
 pub struct VulkanContextHandler {
     vulkan_context: VulkanContext,

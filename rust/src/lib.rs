@@ -1,12 +1,12 @@
 pub mod vulkan_context;
 pub mod vulkan_setup;
-pub mod renderer;
+pub mod render_engine;
 pub mod window_handler;
 pub mod scene;
 
 pub use vulkan_context::VulkanContext;
 pub use scene::{Scene, RenderObject};
-pub use renderer::Renderer;
+pub use render_engine::Renderer;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]

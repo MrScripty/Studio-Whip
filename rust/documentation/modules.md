@@ -10,7 +10,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
   - `VulkanContext` struct: Holds Vulkan objects (`instance`, `device`, `swapchain`), window (`Arc<Window>`), buffers, and synchronization primitives, initialized via `new()`.
 - **Relationships**:
   - Used by `main.rs` as the core Vulkan context instance.
-  - Modified by `vulkan_setup.rs` for Vulkan setup and `renderer.rs` for rendering resources.
+  - Modified by `vulkan_setup.rs` for Vulkan setup and `render_engine.rs` for rendering resources.
   - Interacts with `window_handler.rs` for event-driven resizing.
 
 ---
@@ -18,11 +18,11 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ## 2. `lib.rs`
 - **Purpose**: The library root, declaring public modules and the `Vertex` struct for 2D rendering in pixel coordinates.
 - **Key Components**:
-  - Exports `vulkan_context`, `vulkan_setup`, `renderer`, `window_handler`, and `scene`.
+  - Exports `vulkan_context`, `vulkan_setup`, `render_engine`, `window_handler`, and `scene`.
   - `Vertex` struct: Defines a 2D position (`[f32; 2]`) in pixel space for GUI elements.
 - **Relationships**:
   - Provides the public API for `rusty_whip`.
-  - `Vertex` is used in `renderer.rs` and `scene.rs`.
+  - `Vertex` is used in `render_engine.rs` and `scene.rs`.
 
 ---
 
@@ -36,7 +36,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 4. `renderer.rs`
+## 4. `render_engine.rs`
 - **Purpose**: Manages Vulkan rendering with depth-sorted 2D objects in pixel coordinates, using an orthographic projection and uniform buffer, supporting window resizing.
 - **Key Components**:
   - `load_shader`: Loads SPIR-V shaders from `./shaders/`.
@@ -66,9 +66,9 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 - **Key Components**:
   - `VulkanContextHandler`: Wraps `VulkanContext`, `Scene`, and `Renderer`, with a `resizing: bool` flag.
   - `resumed`: Sets up the 600x300 window and Vulkan.
-  - `window_event`: Handles `Resized` (triggers `renderer.resize_renderer`), `CloseRequested`, and `RedrawRequested`.
+  - `window_event`: Handles `Resized` (triggers `render_engine.resize_renderer`), `CloseRequested`, and `RedrawRequested`.
 - **Relationships**:
-  - Uses `VulkanContext` from `vulkan_context.rs`, `Scene` from `scene.rs`, and `Renderer` from `renderer.rs`.
+  - Uses `VulkanContext` from `vulkan_context.rs`, `Scene` from `scene.rs`, and `Renderer` from `render_engine.rs`.
 
 ---
 
@@ -78,7 +78,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
   - `RenderObject`: Stores `vertices`, `vertex_shader_filename`, `fragment_shader_filename`, `depth: f32`, `on_window_resize_scale: bool`, and `on_window_resize_move: bool`.
   - `Scene`: Holds a `Vec<RenderObject>` for rendering.
 - **Relationships**:
-  - Initialized in `main.rs`, consumed by `renderer.rs`.
+  - Initialized in `main.rs`, consumed by `render_engine.rs`.
 
 ---
 
@@ -92,7 +92,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ## 9. `build.rs`
 - **Purpose**: Compiles `.vert` and `.frag` shaders to SPIR-V using `glslc` for runtime loading.
 - **Relationships**:
-  - Ensures shaders in `./shaders/` are available for `renderer.rs`.
+  - Ensures shaders in `./shaders/` are available for `render_engine.rs`.
 
 ---
 
@@ -104,7 +104,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
   - `square.vert`, `square.frag`: Square (`42c922`, RGB: 0.259, 0.788, 0.133).
   - Compilation scripts: `compile_shaders.sh` and `.ps1` for manual compilation.
 - **Relationships**:
-  - Loaded by `renderer.rs`, managed by `build.rs`.
+  - Loaded by `render_engine.rs`, managed by `build.rs`.
 
 ---
 
@@ -113,6 +113,6 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 - A 600x300 resizable window with a `21292a` background.
 - Depth-sorted 2D GUI elements (background: 0.0, triangle: 1.0, square: 2.0) in pixel coordinates via orthographic projection.
 - Dynamic resizing: Background fills the window using `on_window_resize_scale`, elements (triangle, square) move proportionately using `on_window_resize_move` (e.g., triangle at center, square in top-left quadrant) while maintaining fixed sizes (e.g., 50x50 pixels).
-- Flow: `main.rs` sets up `VulkanContext` and `Scene`, `window_handler.rs` handles events (including resizing), `vulkan_setup.rs` initializes Vulkan, and `renderer.rs` renders depth-sorted objects with updated uniforms.
+- Flow: `main.rs` sets up `VulkanContext` and `Scene`, `window_handler.rs` handles events (including resizing), `vulkan_setup.rs` initializes Vulkan, and `render_engine.rs` renders depth-sorted objects with updated uniforms.
 
 This foundation supports future 3D viewports and advanced GUI features, targeting Linux and Windows with unofficial compiling for Mac and BSD.

@@ -1,6 +1,6 @@
 use winit::event_loop::{EventLoop, ControlFlow};
 use winit::dpi::PhysicalSize;
-use rusty_whip::{Platform, Scene, RenderObject, Vertex, window_management::PlatformHandler};
+use rusty_whip::{Platform, Scene, RenderObject, Vertex, window_handler::PlatformHandler};
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
@@ -55,7 +55,7 @@ fn main() {
         on_window_resize_scale: false,
         on_window_resize_move: true,
     });
-    
+
     let mut handler = PlatformHandler::new(platform, scene);
     event_loop.run_app(&mut handler).unwrap();
 }

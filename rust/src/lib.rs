@@ -1,10 +1,10 @@
-pub mod platform;
-pub mod vulkan_core;
+pub mod vulkan_context;
+pub mod vulkan_setup;
 pub mod renderer;
-pub mod window_management;
+pub mod window_handler;
 pub mod scene;
 
-pub use platform::Platform;
+pub use vulkan_context::Platform;
 pub use scene::{Scene, RenderObject};
 pub use renderer::Renderer;
 

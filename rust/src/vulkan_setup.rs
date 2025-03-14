@@ -7,7 +7,7 @@ use std::sync::Arc;
 use vk_mem::Allocator;
 use winit::window::Window;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use crate::platform::Platform;
+use crate::vulkan_context::Platform;
 
 pub fn setup_vulkan(app: &mut Platform, window: Arc<Window>) {
     let entry = unsafe { Entry::load() }.unwrap();

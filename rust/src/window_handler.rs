@@ -5,9 +5,9 @@ use winit::window::{Window, WindowId};
 use winit::dpi::PhysicalSize;
 use std::sync::Arc;
 use ash::vk;
-use crate::platform::Platform;
+use crate::vulkan_context::Platform;
 use crate::scene::Scene;
-use crate::vulkan_core::{setup_vulkan, cleanup_vulkan};
+use crate::vulkan_setup::{setup_vulkan, cleanup_vulkan};
 use crate::renderer::Renderer;
 
 pub struct PlatformHandler {

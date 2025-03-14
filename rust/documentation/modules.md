@@ -1,16 +1,16 @@
 # Modules in `rusty_whip`
 
-This document lists all files in the `rusty_whip` project, a Vulkan-based graphics application forming the foundation of an advanced 2D/3D GUI system for digital entertainment production. Each entry summarizes its purpose, key components, and relationships, reflecting the state after implementing depth sorting, orthographic projection, window resizing, and GUI behaviors as of March 11, 2025.
+This document lists all files in the `rusty_whip` project, a Vulkan-based graphics application forming the foundation of an advanced 2D/3D GUI system for digital entertainment production. Each entry summarizes its purpose, key components, and relationships, reflecting the state after implementing depth sorting, orthographic projection, window resizing, and GUI behaviors as of March 13, 2025.
 
 ---
 
 ## 1. `vulkan_context.rs`
 - **Purpose**: Defines the `VulkanContext` struct, the central state container for Vulkan and window management, supporting a resizable 600x300 window with Vulkan resources.
 - **Key Components**:
-  - `VulkanContext` struct: Holds Vulkan objects (`instance`, `device`, `swapchain`), window (`Arc<Window>`), buffers, shaders, and synchronization primitives, initialized via `new()`.
+  - `VulkanContext` struct: Holds Vulkan objects (`instance`, `device`, `swapchain`), window (`Arc<Window>`), buffers, and synchronization primitives, initialized via `new()`.
 - **Relationships**:
-  - Used by `main.rs` as the core platform instance.
-  - Modified by `vulkan_setuo.rs` for Vulkan setup and `renderer.rs` for rendering resources.
+  - Used by `main.rs` as the core Vulkan context instance.
+  - Modified by `vulkan_setup.rs` for Vulkan setup and `renderer.rs` for rendering resources.
   - Interacts with `window_handler.rs` for event-driven resizing.
 
 ---
@@ -18,7 +18,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ## 2. `lib.rs`
 - **Purpose**: The library root, declaring public modules and the `Vertex` struct for 2D rendering in pixel coordinates.
 - **Key Components**:
-  - Exports `platform`, `vulkan_core`, `renderer`, `window_handler`, and `scene`.
+  - Exports `vulkan_context`, `vulkan_setup`, `renderer`, `window_handler`, and `scene`.
   - `Vertex` struct: Defines a 2D position (`[f32; 2]`) in pixel space for GUI elements.
 - **Relationships**:
   - Provides the public API for `rusty_whip`.
@@ -30,7 +30,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 - **Purpose**: The entry point, initializing a 600x300 `winit` window, setting up `VulkanContext` and `Scene` with a background, triangle, and square, and running them with dynamic resizing.
 - **Key Components**:
   - Sets up `EventLoop`, `VulkanContext`, and `Scene` with a background quad (`depth: 0.0`, `21292a`, `on_window_resize_scale: true`), triangle (`depth: 1.0`, `ff9800`, `on_window_resize_move: true`), and square (`depth: 2.0`, `42c922`, `on_window_resize_move: true`).
-  - Runs via `PlatformHandler` with `run_app`.
+  - Runs via `VulkanContextHandler` with `run_app`.
 - **Relationships**:
   - Depends on `vulkan_context.rs` for `VulkanContext`, `scene.rs` for `Scene`, and `window_handler.rs` for event handling.
 
@@ -41,7 +41,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 - **Key Components**:
   - `load_shader`: Loads SPIR-V shaders from `./shaders/`.
   - `Renderable` struct: Represents objects with vertex buffers, shaders, pipelines, vertex count, `depth: f32`, `on_window_resize_scale: bool`, `on_window_resize_move: bool`, `original_positions: Vec<[f32; 2]>`, `fixed_size: [f32; 2]`, and `center_ratio: [f32; 2]` for managing fixed sizes and proportional movement.
-  - `Renderer::new`: Initializes resources, sorts `renderables` by `depth: f32`, sets up uniform buffer with `ortho(0, width, height, 0, -1, 1)`.
+  - `Renderer::new`: Initializes resources, sorts `vulkan_renderables` by `depth: f32`, sets up uniform buffer with `ortho(0, width, height, 0, -1, 1)`.
   - `resize_renderer`: Updates swapchain, framebuffers, uniform buffer, and vertex buffers on window resize, adjusting background to fill the window and moving shapes proportionally while maintaining fixed sizes.
   - `render`: Draws depth-sorted objects with background color `21292a`.
   - Helper functions: `create_swapchain`, `create_framebuffers`, `record_command_buffers`.
@@ -62,9 +62,9 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ---
 
 ## 6. `window_handler.rs`
-- **Purpose**: Manages window lifecycle and events via `PlatformHandler`, enabling resizing with GUI updates.
+- **Purpose**: Manages window lifecycle and events via `VulkanContextHandler`, enabling resizing with GUI updates.
 - **Key Components**:
-  - `PlatformHandler`: Wraps `VulkanContext`, `Scene`, and `Renderer`, with a `resizing: bool` flag.
+  - `VulkanContextHandler`: Wraps `VulkanContext`, `Scene`, and `Renderer`, with a `resizing: bool` flag.
   - `resumed`: Sets up the 600x300 window and Vulkan.
   - `window_event`: Handles `Resized` (triggers `renderer.resize_renderer`), `CloseRequested`, and `RedrawRequested`.
 - **Relationships**:

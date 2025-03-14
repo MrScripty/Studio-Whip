@@ -698,7 +698,7 @@ impl Renderer {
         }
     }
 
-    pub fn resize(&mut self, platform: &mut VulkanContext, width: u32, height: u32) {
+    pub fn resize_renderer(&mut self, platform: &mut VulkanContext, width: u32, height: u32) {
         let device = platform.device.as_ref().unwrap();
         unsafe { device.device_wait_idle().unwrap() }; // Wait for rendering to finish
 

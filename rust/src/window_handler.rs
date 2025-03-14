@@ -68,7 +68,7 @@ impl ApplicationHandler for VulkanContextHandler {
             WindowEvent::Resized(size) => {
                 self.resizing = true;
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.resize(&mut self.platform, size.width, size.height);
+                    renderer.resize_renderer(&mut self.platform, size.width, size.height);
                 }
                 self.resizing = false;
                 if let Some(window) = &self.platform.window {

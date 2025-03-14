@@ -7,6 +7,7 @@ use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::gui_framework::scene::scene::Scene;
 use glam::Mat4;
 use crate::gui_framework::rendering::shader_utils::load_shader;
+use crate::gui_framework::rendering::renderable::Renderable;
 
 fn create_swapchain(platform: &mut VulkanContext, extent: vk::Extent2D) -> vk::SurfaceFormatKHR {
     let instance = platform.instance.as_ref().unwrap();
@@ -280,21 +281,6 @@ fn record_command_buffers(
             device.end_command_buffer(command_buffer).unwrap();
         }
     }
-}
-
-pub struct Renderable {
-    vertex_buffer: vk::Buffer,
-    vertex_allocation: vk_mem::Allocation,
-    vertex_shader: vk::ShaderModule,
-    fragment_shader: vk::ShaderModule,
-    pipeline: vk::Pipeline,
-    vertex_count: u32,
-    depth: f32,
-    on_window_resize_scale: bool,
-    on_window_resize_move: bool,
-    original_positions: Vec<[f32; 2]>,
-    fixed_size: [f32; 2],
-    center_ratio: [f32; 2],
 }
 
 pub struct Renderer {

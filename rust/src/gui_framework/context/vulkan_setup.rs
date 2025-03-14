@@ -7,7 +7,7 @@ use std::sync::Arc;
 use vk_mem::Allocator;
 use winit::window::Window;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use crate::vulkan_context::VulkanContext;
+use crate::gui_framework::context::vulkan_context::VulkanContext;
 
 pub fn setup_vulkan(app: &mut VulkanContext, window: Arc<Window>) {
     let entry = unsafe { Entry::load() }.unwrap();
@@ -92,13 +92,13 @@ pub fn setup_vulkan(app: &mut VulkanContext, window: Arc<Window>) {
         let device_create_info = vk::DeviceCreateInfo {
             s_type: vk::StructureType::DEVICE_CREATE_INFO,
             p_next: std::ptr::null(),
-            flags: vk::DeviceCreateFlags::empty(),
+            flags: vk::DeviceCreateFlags::empty(), // Corrected
             queue_create_info_count: 1,
             p_queue_create_infos: &queue_create_info,
             enabled_extension_count: 1,
             pp_enabled_extension_names: device_extensions.as_ptr(),
             p_enabled_features: std::ptr::null(),
-            ..Default::default() // Use default to handle deprecated fields
+            ..Default::default()
         };
         let device = unsafe { instance.create_device(physical_device, &device_create_info, None) }.unwrap();
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
@@ -125,7 +125,7 @@ pub fn cleanup_vulkan(app: &mut VulkanContext) {
 
     unsafe {
         device.device_wait_idle().unwrap();
-        drop(allocator); // Explicitly drop allocator before device
+        drop(allocator);
         device.destroy_device(None);
         surface_loader.destroy_surface(app.surface.take().unwrap(), None);
         app.instance.take().unwrap().destroy_instance(None);

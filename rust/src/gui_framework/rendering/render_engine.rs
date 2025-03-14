@@ -2,7 +2,9 @@ use ash::vk;
 use ash::khr::swapchain;
 use std::marker::PhantomData;
 use vk_mem::Alloc;
-use crate::{Vertex, VulkanContext, Scene};
+use crate::Vertex; // From lib.rs
+use crate::gui_framework::context::vulkan_context::VulkanContext;
+use crate::gui_framework::scene::scene::Scene;
 use std::fs;
 use glam::Mat4;
 
@@ -38,7 +40,6 @@ fn create_swapchain(platform: &mut VulkanContext, extent: vk::Extent2D) -> vk::S
     };
     let surface_format = surface_formats[0];
 
-    // Get surface capabilities to constrain extent
     let surface_caps = unsafe {
         surface_loader
             .get_physical_device_surface_capabilities(physical_device, surface)
@@ -46,10 +47,8 @@ fn create_swapchain(platform: &mut VulkanContext, extent: vk::Extent2D) -> vk::S
     };
     let mut final_extent = extent;
     if surface_caps.current_extent.width != u32::MAX {
-        // If the surface specifies an extent, use it (e.g., Wayland)
         final_extent = surface_caps.current_extent;
     } else {
-        // Otherwise, clamp the extent to the surface's min/max
         final_extent.width = final_extent.width.clamp(
             surface_caps.min_image_extent.width,
             surface_caps.max_image_extent.width,
@@ -262,7 +261,6 @@ fn record_command_buffers(
                 _marker: PhantomData,
             }, vk::SubpassContents::INLINE);
 
-            // Set viewport and scissor to match the new extent
             let viewport = vk::Viewport {
                 x: 0.0,
                 y: 0.0,
@@ -309,9 +307,9 @@ pub struct Renderable {
     depth: f32,
     on_window_resize_scale: bool,
     on_window_resize_move: bool,
-    original_positions: Vec<[f32; 2]>, // Initial positions in pixels
-    fixed_size: [f32; 2],             // [width, height] in pixels
-    center_ratio: [f32; 2],           // [center_x / orig_width, center_y / orig_height]
+    original_positions: Vec<[f32; 2]>,
+    fixed_size: [f32; 2],
+    center_ratio: [f32; 2],
 }
 
 pub struct Renderer {
@@ -331,7 +329,7 @@ impl Renderer {
 
         let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -1.0, 1.0).to_cols_array();
         let (uniform_buffer, uniform_allocation) = {
-            let device = platform.device.as_ref().unwrap(); // Borrow device here
+            let device = platform.device.as_ref().unwrap();
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,
                 p_next: std::ptr::null(),
@@ -361,7 +359,7 @@ impl Renderer {
         };
 
         let descriptor_set_layout = unsafe {
-            let device = platform.device.as_ref().unwrap(); // Borrow device here
+            let device = platform.device.as_ref().unwrap();
             let binding = vk::DescriptorSetLayoutBinding {
                 binding: 0,
                 descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -382,7 +380,7 @@ impl Renderer {
         .unwrap();
 
         let descriptor_pool = unsafe {
-            let device = platform.device.as_ref().unwrap(); // Borrow device here
+            let device = platform.device.as_ref().unwrap();
             let pool_size = vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
                 descriptor_count: 1,
@@ -400,7 +398,7 @@ impl Renderer {
         .unwrap();
 
         let descriptor_set = unsafe {
-            let device = platform.device.as_ref().unwrap(); // Borrow device here
+            let device = platform.device.as_ref().unwrap();
             device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
                 p_next: std::ptr::null(),
@@ -413,7 +411,7 @@ impl Renderer {
         .unwrap()[0];
 
         unsafe {
-            let device = platform.device.as_ref().unwrap(); // Borrow device here
+            let device = platform.device.as_ref().unwrap();
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer: uniform_buffer,
                 offset: 0,
@@ -435,7 +433,7 @@ impl Renderer {
         }
 
         let pipeline_layout = unsafe {
-            let device = platform.device.as_ref().unwrap(); // Borrow device here
+            let device = platform.device.as_ref().unwrap();
             device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo {
                 s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
                 p_next: std::ptr::null(),
@@ -540,7 +538,6 @@ impl Renderer {
                     _marker: PhantomData,
                 };
 
-                // Use dynamic viewport and scissor
                 let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
                 let dynamic_state = vk::PipelineDynamicStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
@@ -555,9 +552,9 @@ impl Renderer {
                     p_next: std::ptr::null(),
                     flags: vk::PipelineViewportStateCreateFlags::empty(),
                     viewport_count: 1,
-                    p_viewports: std::ptr::null(), // Dynamic
+                    p_viewports: std::ptr::null(),
                     scissor_count: 1,
-                    p_scissors: std::ptr::null(),  // Dynamic
+                    p_scissors: std::ptr::null(),
                     _marker: PhantomData,
                 };
 
@@ -662,7 +659,7 @@ impl Renderer {
                 on_window_resize_move: obj.on_window_resize_move,
                 original_positions: vertices.iter().map(|v| v.position).collect(),
                 fixed_size: [max_x - min_x, max_y - min_y],
-                center_ratio: [center_x / 600.0, center_y / 300.0], // Original 600x300
+                center_ratio: [center_x / 600.0, center_y / 300.0],
             });
         }
 
@@ -670,7 +667,6 @@ impl Renderer {
 
         record_command_buffers(platform, &renderables, pipeline_layout, descriptor_set, extent);
 
-        // Borrow device for semaphores and fence after mutable operations
         let device = platform.device.as_ref().unwrap();
         platform.image_available_semaphore = Some(unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap());
         platform.render_finished_semaphore = Some(unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap());
@@ -700,9 +696,8 @@ impl Renderer {
 
     pub fn resize_renderer(&mut self, vulkan_context: &mut VulkanContext, width: u32, height: u32) {
         let device = vulkan_context.device.as_ref().unwrap();
-        unsafe { device.device_wait_idle().unwrap() }; // Wait for rendering to finish
+        unsafe { device.device_wait_idle().unwrap() };
 
-        // Clean up old resources
         for &framebuffer in &vulkan_context.framebuffers {
             unsafe { device.destroy_framebuffer(framebuffer, None) };
         }
@@ -714,13 +709,11 @@ impl Renderer {
             unsafe { vulkan_context.swapchain_loader.as_ref().unwrap().destroy_swapchain(swapchain, None) };
         }
 
-        // Recreate swapchain and framebuffers with the new extent
         let extent = vk::Extent2D { width, height };
         let surface_format = create_swapchain(vulkan_context, extent);
         create_framebuffers(vulkan_context, extent, surface_format);
         println!("New extent: {:?}", extent);
 
-        // Update uniform buffer with new orthographic projection
         let ortho = Mat4::orthographic_rh(0.0, width as f32, height as f32, 0.0, -1.0, 1.0).to_cols_array();
         let data_ptr = unsafe { vulkan_context.allocator.as_ref().unwrap().map_memory(&mut self.uniform_allocation) }
             .unwrap()
@@ -728,32 +721,29 @@ impl Renderer {
         unsafe { data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len()) };
         unsafe { vulkan_context.allocator.as_ref().unwrap().unmap_memory(&mut self.uniform_allocation) };
 
-        // Update vertex buffers for all renderables
         for renderable in &mut self.vulkan_renderables {
             let mut new_vertices = Vec::new();
             if renderable.on_window_resize_scale {
-                // Background: Stretch to fill the entire window
                 new_vertices = vec![
-                    Vertex { position: [0.0, 0.0] },              // Bottom-left
-                    Vertex { position: [0.0, height as f32] },    // Top-left
-                    Vertex { position: [width as f32, height as f32] }, // Top-right
-                    Vertex { position: [width as f32, 0.0] },     // Bottom-right
+                    Vertex { position: [0.0, 0.0] },
+                    Vertex { position: [0.0, height as f32] },
+                    Vertex { position: [width as f32, height as f32] },
+                    Vertex { position: [width as f32, 0.0] },
                 ];
             } else if renderable.on_window_resize_move {
-                // Shapes: Maintain fixed size, adjust position proportionally
                 let new_center_x = renderable.center_ratio[0] * width as f32;
                 let new_center_y = renderable.center_ratio[1] * height as f32;
                 let half_width = renderable.fixed_size[0] / 2.0;
                 let half_height = renderable.fixed_size[1] / 2.0;
 
-                if renderable.vertex_count == 4 { // Square
+                if renderable.vertex_count == 4 {
                     new_vertices = vec![
                         Vertex { position: [new_center_x - half_width, new_center_y - half_height] },
                         Vertex { position: [new_center_x - half_width, new_center_y + half_height] },
                         Vertex { position: [new_center_x + half_width, new_center_y + half_height] },
                         Vertex { position: [new_center_x + half_width, new_center_y - half_height] },
                     ];
-                } else if renderable.vertex_count == 3 { // Triangle
+                } else if renderable.vertex_count == 3 {
                     new_vertices = vec![
                         Vertex { position: [new_center_x - half_width, new_center_y - half_height] },
                         Vertex { position: [new_center_x, new_center_y + half_height] },
@@ -762,7 +752,6 @@ impl Renderer {
                 }
             }
 
-            // Update the vertex buffer
             let data_ptr = unsafe { vulkan_context.allocator.as_ref().unwrap().map_memory(&mut renderable.vertex_allocation) }
                 .unwrap()
                 .cast::<Vertex>();
@@ -770,7 +759,6 @@ impl Renderer {
             unsafe { vulkan_context.allocator.as_ref().unwrap().unmap_memory(&mut renderable.vertex_allocation) };
         }
 
-        // Recreate command buffers
         record_command_buffers(vulkan_context, &self.vulkan_renderables, self.pipeline_layout, self.descriptor_set, extent);
     }
 

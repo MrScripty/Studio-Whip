@@ -5,10 +5,10 @@ use winit::window::{Window, WindowId};
 use winit::dpi::PhysicalSize;
 use std::sync::Arc;
 use ash::vk;
-use crate::vulkan_context::VulkanContext;
-use crate::scene::Scene;
-use crate::vulkan_setup::{setup_vulkan, cleanup_vulkan};
-use crate::render_engine::Renderer;
+use crate::gui_framework::context::vulkan_context::VulkanContext;
+use crate::gui_framework::scene::scene::Scene;
+use crate::gui_framework::context::vulkan_setup::{setup_vulkan, cleanup_vulkan};
+use crate::gui_framework::rendering::render_engine::Renderer;
 
 pub struct VulkanContextHandler {
     vulkan_context: VulkanContext,

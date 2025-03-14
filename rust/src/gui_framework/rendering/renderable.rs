@@ -1,6 +1,4 @@
 use ash::vk;
-use vk_mem::Alloc;
-use crate::Vertex;
 
 pub struct Renderable {
     pub vertex_buffer: vk::Buffer,

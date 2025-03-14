@@ -1,5 +1,4 @@
 use winit::event_loop::{EventLoop, ControlFlow};
-use winit::dpi::PhysicalSize;
 use rusty_whip::gui_framework::{VulkanContext, Scene, RenderObject, VulkanContextHandler};
 use rusty_whip::Vertex;
 

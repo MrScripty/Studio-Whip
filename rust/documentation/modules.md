@@ -1,6 +1,6 @@
 # Modules in `rusty_whip`
 
-This document lists all files in the `rusty_whip` project, a Vulkan-based graphics application forming the foundation of an advanced 2D/3D GUI system for digital entertainment production. Each entry summarizes its purpose, key components, and relationships, reflecting the state after implementing depth sorting, orthographic projection, window resizing, GUI behaviors, and a restructured directory layout as of March 13, 2025.
+This document lists all files in the `rusty_whip` project, a Vulkan-based graphics application forming the foundation of an advanced 2D/3D GUI system for digital entertainment production. Each entry summarizes its purpose, key components, and relationships, reflecting the state after implementing depth sorting, orthographic projection, window resizing, GUI behaviors, and a restructured directory layout as of March 13, 2025. Notably, `render_engine.rs` has been split into smaller modules within `rendering/` for improved modularity and maintainability.
 
 ---
 
@@ -37,31 +37,71 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ---
 
 ## 4. `src/gui_framework/rendering/render_engine.rs`
-- **Purpose**: Manages Vulkan rendering with depth-sorted 2D objects in pixel coordinates, using an orthographic projection and uniform buffer, supporting window resizing.
+- **Purpose**: Orchestrates Vulkan rendering by managing `Renderer`, leveraging split modules for shader loading, swapchain setup, command buffers, and renderable objects, supporting depth-sorted 2D rendering with window resizing.
 - **Key Components**:
-  - `load_shader`: Loads SPIR-V shaders from `./shaders/`.
-  - `Renderable` struct: Represents objects with vertex buffers, shaders, pipelines, vertex count, `depth: f32`, `on_window_resize_scale: bool`, `on_window_resize_move: bool`, `original_positions: Vec<[f32; 2]>`, `fixed_size: [f32; 2]`, and `center_ratio: [f32; 2]` for managing fixed sizes and proportional movement.
-  - `Renderer::new`: Initializes resources, sorts `vulkan_renderables` by `depth: f32`, sets up uniform buffer with `ortho(0, width, height, 0, -1, 1)`.
-  - `resize_renderer`: Updates swapchain, framebuffers, uniform buffer, and vertex buffers on window resize, adjusting background to fill the window and moving shapes proportionally while maintaining fixed sizes.
-  - `render`: Draws depth-sorted objects with background color `21292a`.
-  - Helper functions: `create_swapchain`, `create_framebuffers`, `record_command_buffers`.
+  - `Renderer` struct: Holds `vulkan_renderables: Vec<Renderable>`, `pipeline_layout`, `uniform_buffer` (orthographic projection), `uniform_allocation`, `descriptor_set_layout`, `descriptor_pool`, and `descriptor_set`.
+  - `Renderer::new`: Initializes rendering resources, creates renderables from `Scene`, sorts by depth, and sets up Vulkan state using split modules.
+  - `resize_renderer`: Updates resources on window resize, adjusting orthographic projection and vertex buffers via split modules.
+  - `render`: Executes the rendering pipeline, submitting command buffers and presenting the swapchain.
+  - `cleanup`: Frees Vulkan resources.
 - **Relationships**:
-  - Operates on `VulkanContext` from `vulkan_context.rs`.
-  - Uses `Vertex` from `lib.rs` and `Scene` from `scene.rs`.
-- **Note**: Planned for splitting into `shader_utils.rs`, `swapchain.rs`, `command_buffers.rs`, `renderable.rs`, and a reduced `render_engine.rs` within `rendering/`.
+  - Depends on `vulkan_context.rs` for `VulkanContext`, `scene.rs` for `Scene`, and split modules: `shader_utils.rs`, `renderable.rs`, `swapchain.rs`, `command_buffers.rs`.
+  - Used by `window_handler.rs` for rendering lifecycle.
 
 ---
 
-## 5. `src/gui_framework/rendering/mod.rs`
-- **Purpose**: Declares the `rendering` submodule hierarchy.
+## 5. `src/gui_framework/rendering/shader_utils.rs`
+- **Purpose**: Provides utility functions for loading SPIR-V shaders from the filesystem.
 - **Key Components**:
-  - Declares `pub mod render_engine;`.
+  - `load_shader`: Loads a shader file from `./shaders/` and creates a `vk::ShaderModule`.
 - **Relationships**:
-  - Part of the `gui_framework` module, enabling `render_engine.rs` to be accessed as `rendering::render_engine`.
+  - Called by `render_engine.rs` to load vertex and fragment shaders for `Renderable` objects.
 
 ---
 
-## 6. `src/gui_framework/context/vulkan_setup.rs`
+## 6. `src/gui_framework/rendering/renderable.rs`
+- **Purpose**: Defines the `Renderable` struct, representing depth-sorted 2D objects with Vulkan resources and resize behavior.
+- **Key Components**:
+  - `Renderable` struct: Contains `vertex_buffer`, `vertex_allocation`, `vertex_shader`, `fragment_shader`, `pipeline`, `vertex_count`, `depth: f32`, `on_window_resize_scale: bool`, `on_window_resize_move: bool`, `original_positions: Vec<[f32; 2]>`, `fixed_size: [f32; 2]`, and `center_ratio: [f32; 2]` for fixed sizes and proportional movement.
+- **Relationships**:
+  - Instantiated in `render_engine.rs` from `Scene` data.
+  - Used by `command_buffers.rs` for drawing commands.
+
+---
+
+## 7. `src/gui_framework/rendering/swapchain.rs`
+- **Purpose**: Manages Vulkan swapchain and framebuffer creation for presentation, supporting dynamic window resizing.
+- **Key Components**:
+  - `create_swapchain`: Initializes the swapchain, images, and image views, returning `vk::SurfaceFormatKHR`.
+  - `create_framebuffers`: Sets up render pass and framebuffers for rendering.
+- **Relationships**:
+  - Called by `render_engine.rs` in `Renderer::new` and `resize_renderer` to manage presentation resources.
+  - Modifies `VulkanContext` fields like `swapchain`, `images`, `image_views`, `render_pass`, and `framebuffers`.
+
+---
+
+## 8. `src/gui_framework/rendering/command_buffers.rs`
+- **Purpose**: Handles Vulkan command buffer recording for drawing depth-sorted 2D objects.
+- **Key Components**:
+  - `record_command_buffers`: Creates a command pool, allocates command buffers, and records drawing commands for `Renderable` objects with a specified extent.
+- **Relationships**:
+  - Called by `render_engine.rs` in `Renderer::new` and `resize_renderer` to prepare command buffers.
+  - Uses `Renderable` from `renderable.rs` for vertex and pipeline data.
+  - Modifies `VulkanContext` fields like `command_pool` and `command_buffers`.
+
+---
+
+## 9. `src/gui_framework/rendering/mod.rs`
+- **Purpose**: Declares the `rendering` submodule hierarchy and re-exports key types for external use.
+- **Key Components**:
+  - Declares submodules: `render_engine`, `shader_utils`, `renderable`, `swapchain`, `command_buffers`.
+  - Re-exports: `Renderer` from `render_engine.rs` and `Renderable` from `renderable.rs` via `pub use`.
+- **Relationships**:
+  - Part of the `gui_framework` module, enabling access to rendering components in `lib.rs`.
+
+---
+
+## 10. `src/gui_framework/context/vulkan_setup.rs`
 - **Purpose**: Initializes and cleans up Vulkan resources for `VulkanContext`, supporting a resizable window.
 - **Key Components**:
   - `setup_vulkan`: Configures Vulkan instance, surface, device, and allocator.
@@ -71,7 +111,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 7. `src/gui_framework/window/window_handler.rs`
+## 11. `src/gui_framework/window/window_handler.rs`
 - **Purpose**: Manages window lifecycle and events via `VulkanContextHandler`, enabling resizing with GUI updates.
 - **Key Components**:
   - `VulkanContextHandler`: Wraps `VulkanContext`, `Scene`, and `Renderer`, with a `resizing: bool` flag.
@@ -82,7 +122,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 8. `src/gui_framework/scene/scene.rs`
+## 12. `src/gui_framework/scene/scene.rs`
 - **Purpose**: Manages `Scene` and `RenderObject` with depth for 2D layering, using pixel coordinates.
 - **Key Components**:
   - `RenderObject`: Stores `vertices`, `vertex_shader_filename`, `fragment_shader_filename`, `depth: f32`, `on_window_resize_scale: bool`, and `on_window_resize_move: bool`.
@@ -92,7 +132,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 9. `src/gui_framework/mod.rs`
+## 13. `src/gui_framework/mod.rs`
 - **Purpose**: Defines the `gui_framework` module hierarchy and re-exports key types.
 - **Key Components**:
   - Declares submodules: `rendering`, `context`, `window`, `scene`.
@@ -102,21 +142,21 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 10. `Cargo.toml`
+## 14. `Cargo.toml`
 - **Purpose**: Configures the project with dependencies (`ash 0.38`, `vk-mem 0.4`, `winit 0.30.9`, etc.) and build script.
 - **Relationships**:
   - Drives `build.rs` for shader compilation.
 
 ---
 
-## 11. `build.rs`
+## 15. `build.rs`
 - **Purpose**: Compiles `.vert` and `.frag` shaders to SPIR-V using `glslc` for runtime loading.
 - **Relationships**:
-  - Ensures shaders in `./shaders/` are available for `render_engine.rs`.
+  - Ensures shaders in `./shaders/` are available for `shader_utils.rs`.
 
 ---
 
-## 12. `shaders/` Directory
+## 16. `shaders/` Directory
 - **Purpose**: Contains GLSL shaders (version 460) and SPIR-V binaries for rendering with specified colors.
 - **Key Components**:
   - `background.vert`, `background.frag`: Full-screen quad (`21292a`, RGB: 0.129, 0.161, 0.165).
@@ -124,7 +164,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
   - `square.vert`, `square.frag`: Square (`42c922`, RGB: 0.259, 0.788, 0.133).
   - Compilation scripts: `compile_shaders.sh` and `.ps1` for manual compilation.
 - **Relationships**:
-  - Loaded by `render_engine.rs`, managed by `build.rs`.
+  - Loaded by `shader_utils.rs`, managed by `build.rs`.
 
 ---
 
@@ -133,7 +173,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 - A 600x300 resizable window with a `21292a` background.
 - Depth-sorted 2D GUI elements (background: 0.0, triangle: 1.0, square: 2.0) in pixel coordinates via orthographic projection.
 - Dynamic resizing: Background fills the window using `on_window_resize_scale`, elements (triangle, square) move proportionately using `on_window_resize_move` (e.g., triangle at center, square in top-left quadrant) while maintaining fixed sizes (e.g., 50x50 pixels).
-- Flow: `main.rs` sets up `VulkanContext` and `Scene`, `window_handler.rs` handles events (including resizing), `vulkan_setup.rs` initializes Vulkan, and `render_engine.rs` renders depth-sorted objects with updated uniforms.
-- New Structure: Organized under `gui_framework/` with subdirectories (`rendering/`, `context/`, etc.), each with a `mod.rs` for explicit module definition.
+- Flow: `main.rs` sets up `VulkanContext` and `Scene`, `window_handler.rs` handles events (including resizing), `vulkan_setup.rs` initializes Vulkan, and `render_engine.rs` orchestrates rendering with depth-sorted objects using split modules (`shader_utils.rs`, `renderable.rs`, `swapchain.rs`, `command_buffers.rs`) and updated uniforms.
+- New Structure: Organized under `gui_framework/` with subdirectories (`rendering/`, `context/`, etc.), each with a `mod.rs` for explicit module definition. The `rendering/` directory now includes `render_engine.rs`, `shader_utils.rs`, `renderable.rs`, `swapchain.rs`, and `command_buffers.rs`.
 
-This foundation supports future 3D viewports and advanced GUI features, targeting Linux and Windows with unofficial compiling for Mac and BSD. The next planned step is splitting `render_engine.rs` into smaller modules within `rendering/`.
+This foundation supports future 3D viewports and advanced GUI features, targeting Linux and Windows with unofficial compiling for Mac and BSD.

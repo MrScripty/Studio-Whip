@@ -1,5 +1,4 @@
 use ash::vk;
-use ash::khr::swapchain;
 use std::marker::PhantomData;
 use vk_mem::Alloc;
 use crate::Vertex; // From lib.rs
@@ -28,7 +27,6 @@ impl Renderer {
 
         let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -1.0, 1.0).to_cols_array();
         let (uniform_buffer, uniform_allocation) = {
-            let device = platform.device.as_ref().unwrap();
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,
                 p_next: std::ptr::null(),
@@ -45,20 +43,20 @@ impl Renderer {
                 flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ..Default::default()
             };
-            let (buffer, mut allocation) = unsafe {
-                platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info)
+            unsafe {
+                let (buffer, mut allocation) = platform.allocator.as_ref().unwrap()
+                    .create_buffer(&buffer_info, &allocation_info)
+                    .unwrap();
+                let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
+                    .unwrap()
+                    .cast::<f32>();
+                data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len());
+                platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                (buffer, allocation)
             }
-            .unwrap();
-            let data_ptr = unsafe { platform.allocator.as_ref().unwrap().map_memory(&mut allocation) }
-                .unwrap()
-                .cast::<f32>();
-            unsafe { data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len()) };
-            unsafe { platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation) };
-            (buffer, allocation)
         };
 
         let descriptor_set_layout = unsafe {
-            let device = platform.device.as_ref().unwrap();
             let binding = vk::DescriptorSetLayoutBinding {
                 binding: 0,
                 descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -67,7 +65,7 @@ impl Renderer {
                 p_immutable_samplers: std::ptr::null(),
                 _marker: PhantomData,
             };
-            device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
+            platform.device.as_ref().unwrap().create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                 p_next: std::ptr::null(),
                 flags: vk::DescriptorSetLayoutCreateFlags::empty(),
@@ -79,12 +77,11 @@ impl Renderer {
         .unwrap();
 
         let descriptor_pool = unsafe {
-            let device = platform.device.as_ref().unwrap();
             let pool_size = vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
                 descriptor_count: 1,
             };
-            device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
+            platform.device.as_ref().unwrap().create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
                 p_next: std::ptr::null(),
                 flags: vk::DescriptorPoolCreateFlags::empty(),
@@ -97,8 +94,7 @@ impl Renderer {
         .unwrap();
 
         let descriptor_set = unsafe {
-            let device = platform.device.as_ref().unwrap();
-            device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
+            platform.device.as_ref().unwrap().allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
                 p_next: std::ptr::null(),
                 descriptor_pool,
@@ -110,13 +106,12 @@ impl Renderer {
         .unwrap()[0];
 
         unsafe {
-            let device = platform.device.as_ref().unwrap();
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer: uniform_buffer,
                 offset: 0,
                 range: std::mem::size_of_val(&ortho) as u64,
             };
-            device.update_descriptor_sets(&[vk::WriteDescriptorSet {
+            platform.device.as_ref().unwrap().update_descriptor_sets(&[vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                 p_next: std::ptr::null(),
                 dst_set: descriptor_set,
@@ -132,8 +127,7 @@ impl Renderer {
         }
 
         let pipeline_layout = unsafe {
-            let device = platform.device.as_ref().unwrap();
-            device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo {
+            platform.device.as_ref().unwrap().create_pipeline_layout(&vk::PipelineLayoutCreateInfo {
                 s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
                 p_next: std::ptr::null(),
                 flags: vk::PipelineLayoutCreateFlags::empty(),
@@ -150,7 +144,6 @@ impl Renderer {
         for obj in &scene.render_objects {
             let vertices = &obj.vertices;
             let (vertex_buffer, vertex_allocation) = {
-                let device = platform.device.as_ref().unwrap();
                 let buffer_info = vk::BufferCreateInfo {
                     s_type: vk::StructureType::BUFFER_CREATE_INFO,
                     p_next: std::ptr::null(),
@@ -167,23 +160,23 @@ impl Renderer {
                     flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                     ..Default::default()
                 };
-                let (buffer, mut allocation) = unsafe {
-                    platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info)
+                unsafe {
+                    let (buffer, mut allocation) = platform.allocator.as_ref().unwrap()
+                        .create_buffer(&buffer_info, &allocation_info)
+                        .unwrap();
+                    let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
+                        .unwrap()
+                        .cast::<Vertex>();
+                    data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
+                    platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                    (buffer, allocation)
                 }
-                .unwrap();
-                let data_ptr = unsafe { platform.allocator.as_ref().unwrap().map_memory(&mut allocation) }
-                    .unwrap()
-                    .cast::<Vertex>();
-                unsafe { data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len()) };
-                unsafe { platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation) };
-                (buffer, allocation)
             };
 
             let vertex_shader = load_shader(platform.device.as_ref().unwrap(), &obj.vertex_shader_filename);
             let fragment_shader = load_shader(platform.device.as_ref().unwrap(), &obj.fragment_shader_filename);
 
             let pipeline = {
-                let device = platform.device.as_ref().unwrap();
                 let vertex_stage = vk::PipelineShaderStageCreateInfo {
                     s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
                     p_next: std::ptr::null(),
@@ -333,7 +326,7 @@ impl Renderer {
                 };
 
                 unsafe {
-                    device
+                    platform.device.as_ref().unwrap()
                         .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
                         .unwrap()[0]
                 }
@@ -366,11 +359,14 @@ impl Renderer {
 
         record_command_buffers(platform, &renderables, pipeline_layout, descriptor_set, extent);
 
-        let device = platform.device.as_ref().unwrap();
-        platform.image_available_semaphore = Some(unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap());
-        platform.render_finished_semaphore = Some(unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap());
+        platform.image_available_semaphore = Some(unsafe {
+            platform.device.as_ref().unwrap().create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+        }.unwrap());
+        platform.render_finished_semaphore = Some(unsafe {
+            platform.device.as_ref().unwrap().create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+        }.unwrap());
         platform.fence = Some(unsafe {
-            device.create_fence(
+            platform.device.as_ref().unwrap().create_fence(
                 &vk::FenceCreateInfo {
                     s_type: vk::StructureType::FENCE_CREATE_INFO,
                     p_next: std::ptr::null(),
@@ -379,8 +375,7 @@ impl Renderer {
                 },
                 None,
             )
-        }
-        .unwrap());
+        }.unwrap());
 
         Self {
             vulkan_renderables: renderables,

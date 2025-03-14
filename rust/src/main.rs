@@ -5,7 +5,7 @@ use rusty_whip::{VulkanContext, Scene, RenderObject, Vertex, window_handler::Vul
 fn main() {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
-    let platform = VulkanContext::new();
+    let vulkan_context = VulkanContext::new();
     let mut scene = Scene::new();
 
     // Background RenderObject (covers full 600x300 window)
@@ -56,6 +56,6 @@ fn main() {
         on_window_resize_move: true,
     });
 
-    let mut handler = VulkanContextHandler::new(platform, scene);
+    let mut handler = VulkanContextHandler::new(vulkan_context, scene);
     event_loop.run_app(&mut handler).unwrap();
 }

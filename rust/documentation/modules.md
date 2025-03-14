@@ -42,7 +42,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
   - `load_shader`: Loads SPIR-V shaders from `./shaders/`.
   - `Renderable` struct: Represents objects with vertex buffers, shaders, pipelines, vertex count, `depth: f32`, `on_window_resize_scale: bool`, `on_window_resize_move: bool`, `original_positions: Vec<[f32; 2]>`, `fixed_size: [f32; 2]`, and `center_ratio: [f32; 2]` for managing fixed sizes and proportional movement.
   - `Renderer::new`: Initializes resources, sorts `renderables` by `depth: f32`, sets up uniform buffer with `ortho(0, width, height, 0, -1, 1)`.
-  - `resize`: Updates swapchain, framebuffers, uniform buffer, and vertex buffers on window resize, adjusting background to fill the window and moving shapes proportionally while maintaining fixed sizes.
+  - `resize_renderer`: Updates swapchain, framebuffers, uniform buffer, and vertex buffers on window resize, adjusting background to fill the window and moving shapes proportionally while maintaining fixed sizes.
   - `render`: Draws depth-sorted objects with background color `21292a`.
   - Helper functions: `create_swapchain`, `create_framebuffers`, `record_command_buffers`.
 - **Relationships**:
@@ -66,7 +66,7 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 - **Key Components**:
   - `PlatformHandler`: Wraps `VulkanContext`, `Scene`, and `Renderer`, with a `resizing: bool` flag.
   - `resumed`: Sets up the 600x300 window and Vulkan.
-  - `window_event`: Handles `Resized` (triggers `renderer.resize`), `CloseRequested`, and `RedrawRequested`.
+  - `window_event`: Handles `Resized` (triggers `renderer.resize_renderer`), `CloseRequested`, and `RedrawRequested`.
 - **Relationships**:
   - Uses `VulkanContext` from `vulkan_context.rs`, `Scene` from `scene.rs`, and `Renderer` from `renderer.rs`.
 

@@ -11,7 +11,7 @@ use crate::vulkan_setup::{setup_vulkan, cleanup_vulkan};
 use crate::renderer::Renderer;
 
 pub struct VulkanContextHandler {
-    platform: VulkanContext,
+    vulkan_context: VulkanContext,
     scene: Scene,
     renderer: Option<Renderer>,
     resizing: bool,
@@ -20,7 +20,7 @@ pub struct VulkanContextHandler {
 impl VulkanContextHandler {
     pub fn new(platform: VulkanContext, scene: Scene) -> Self {
         Self {
-            platform,
+            vulkan_context: platform,
             scene,
             renderer: None,
             resizing: false,
@@ -30,18 +30,18 @@ impl VulkanContextHandler {
 
 impl ApplicationHandler for VulkanContextHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.platform.window.is_none() {
+        if self.vulkan_context.window.is_none() {
             let window = Arc::new(event_loop.create_window(
                 Window::default_attributes().with_inner_size(PhysicalSize::new(600, 300))
             ).unwrap());
-            self.platform.window = Some(window.clone());
+            self.vulkan_context.window = Some(window.clone());
             let window_inner_size = window.inner_size();
             let extent = vk::Extent2D {
                 width: window_inner_size.width,
                 height: window_inner_size.height,
             };
-            setup_vulkan(&mut self.platform, window);
-            self.renderer = Some(Renderer::new(&mut self.platform, extent, &self.scene));
+            setup_vulkan(&mut self.vulkan_context, window);
+            self.renderer = Some(Renderer::new(&mut self.vulkan_context, extent, &self.scene));
         }
     }
 
@@ -50,17 +50,17 @@ impl ApplicationHandler for VulkanContextHandler {
             WindowEvent::CloseRequested => {
                 println!("The close button was pressed; stopping");
                 if let Some(renderer) = self.renderer.take() {
-                    renderer.cleanup(&mut self.platform);
+                    renderer.cleanup(&mut self.vulkan_context);
                 }
-                cleanup_vulkan(&mut self.platform);
+                cleanup_vulkan(&mut self.vulkan_context);
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
                 if !self.resizing { // Skip rendering during resize to avoid mid-state issues
                     if let Some(renderer) = &self.renderer {
-                        renderer.render(&mut self.platform);
+                        renderer.render(&mut self.vulkan_context);
                     }
-                    if let Some(window) = &self.platform.window {
+                    if let Some(window) = &self.vulkan_context.window {
                         window.request_redraw();
                     }
                 }
@@ -68,10 +68,10 @@ impl ApplicationHandler for VulkanContextHandler {
             WindowEvent::Resized(size) => {
                 self.resizing = true;
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.resize_renderer(&mut self.platform, size.width, size.height);
+                    renderer.resize_renderer(&mut self.vulkan_context, size.width, size.height);
                 }
                 self.resizing = false;
-                if let Some(window) = &self.platform.window {
+                if let Some(window) = &self.vulkan_context.window {
                     window.request_redraw(); // Trigger redraw after resize
                 }
             }

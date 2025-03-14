@@ -315,7 +315,7 @@ pub struct Renderable {
 }
 
 pub struct Renderer {
-    renderables: Vec<Renderable>,
+    vulkan_renderables: Vec<Renderable>,
     pipeline_layout: vk::PipelineLayout,
     uniform_buffer: vk::Buffer,
     uniform_allocation: vk_mem::Allocation,
@@ -688,7 +688,7 @@ impl Renderer {
         .unwrap());
 
         Self {
-            renderables,
+            vulkan_renderables: renderables,
             pipeline_layout,
             uniform_buffer,
             uniform_allocation,
@@ -698,38 +698,38 @@ impl Renderer {
         }
     }
 
-    pub fn resize_renderer(&mut self, platform: &mut VulkanContext, width: u32, height: u32) {
-        let device = platform.device.as_ref().unwrap();
+    pub fn resize_renderer(&mut self, vulkan_context: &mut VulkanContext, width: u32, height: u32) {
+        let device = vulkan_context.device.as_ref().unwrap();
         unsafe { device.device_wait_idle().unwrap() }; // Wait for rendering to finish
 
         // Clean up old resources
-        for &framebuffer in &platform.framebuffers {
+        for &framebuffer in &vulkan_context.framebuffers {
             unsafe { device.destroy_framebuffer(framebuffer, None) };
         }
-        unsafe { device.destroy_render_pass(platform.render_pass.take().unwrap(), None) };
-        for &view in &platform.image_views {
+        unsafe { device.destroy_render_pass(vulkan_context.render_pass.take().unwrap(), None) };
+        for &view in &vulkan_context.image_views {
             unsafe { device.destroy_image_view(view, None) };
         }
-        if let Some(swapchain) = platform.swapchain.take() {
-            unsafe { platform.swapchain_loader.as_ref().unwrap().destroy_swapchain(swapchain, None) };
+        if let Some(swapchain) = vulkan_context.swapchain.take() {
+            unsafe { vulkan_context.swapchain_loader.as_ref().unwrap().destroy_swapchain(swapchain, None) };
         }
 
         // Recreate swapchain and framebuffers with the new extent
         let extent = vk::Extent2D { width, height };
-        let surface_format = create_swapchain(platform, extent);
-        create_framebuffers(platform, extent, surface_format);
+        let surface_format = create_swapchain(vulkan_context, extent);
+        create_framebuffers(vulkan_context, extent, surface_format);
         println!("New extent: {:?}", extent);
 
         // Update uniform buffer with new orthographic projection
         let ortho = Mat4::orthographic_rh(0.0, width as f32, height as f32, 0.0, -1.0, 1.0).to_cols_array();
-        let data_ptr = unsafe { platform.allocator.as_ref().unwrap().map_memory(&mut self.uniform_allocation) }
+        let data_ptr = unsafe { vulkan_context.allocator.as_ref().unwrap().map_memory(&mut self.uniform_allocation) }
             .unwrap()
             .cast::<f32>();
         unsafe { data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len()) };
-        unsafe { platform.allocator.as_ref().unwrap().unmap_memory(&mut self.uniform_allocation) };
+        unsafe { vulkan_context.allocator.as_ref().unwrap().unmap_memory(&mut self.uniform_allocation) };
 
         // Update vertex buffers for all renderables
-        for renderable in &mut self.renderables {
+        for renderable in &mut self.vulkan_renderables {
             let mut new_vertices = Vec::new();
             if renderable.on_window_resize_scale {
                 // Background: Stretch to fill the entire window
@@ -763,15 +763,15 @@ impl Renderer {
             }
 
             // Update the vertex buffer
-            let data_ptr = unsafe { platform.allocator.as_ref().unwrap().map_memory(&mut renderable.vertex_allocation) }
+            let data_ptr = unsafe { vulkan_context.allocator.as_ref().unwrap().map_memory(&mut renderable.vertex_allocation) }
                 .unwrap()
                 .cast::<Vertex>();
             unsafe { data_ptr.copy_from_nonoverlapping(new_vertices.as_ptr(), new_vertices.len()) };
-            unsafe { platform.allocator.as_ref().unwrap().unmap_memory(&mut renderable.vertex_allocation) };
+            unsafe { vulkan_context.allocator.as_ref().unwrap().unmap_memory(&mut renderable.vertex_allocation) };
         }
 
         // Recreate command buffers
-        record_command_buffers(platform, &self.renderables, self.pipeline_layout, self.descriptor_set, extent);
+        record_command_buffers(vulkan_context, &self.vulkan_renderables, self.pipeline_layout, self.descriptor_set, extent);
     }
 
     pub fn render(&self, platform: &mut VulkanContext) {
@@ -841,7 +841,7 @@ impl Renderer {
             device.free_command_buffers(command_pool, &platform.command_buffers);
             device.destroy_command_pool(command_pool, None);
 
-            for mut renderable in self.renderables {
+            for mut renderable in self.vulkan_renderables {
                 device.destroy_pipeline(renderable.pipeline, None);
                 device.destroy_shader_module(renderable.vertex_shader, None);
                 device.destroy_shader_module(renderable.fragment_shader, None);

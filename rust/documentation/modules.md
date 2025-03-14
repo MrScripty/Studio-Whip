@@ -4,21 +4,21 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 
 ---
 
-## 1. `platform.rs`
-- **Purpose**: Defines the `Platform` struct, the central state container for Vulkan and window management, supporting a resizable 600x300 window with Vulkan resources.
+## 1. `vulkan_context.rs`
+- **Purpose**: Defines the `VulkanContext` struct, the central state container for Vulkan and window management, supporting a resizable 600x300 window with Vulkan resources.
 - **Key Components**:
-  - `Platform` struct: Holds Vulkan objects (`instance`, `device`, `swapchain`), window (`Arc<Window>`), buffers, shaders, and synchronization primitives, initialized via `new()`.
+  - `VulkanContext` struct: Holds Vulkan objects (`instance`, `device`, `swapchain`), window (`Arc<Window>`), buffers, shaders, and synchronization primitives, initialized via `new()`.
 - **Relationships**:
   - Used by `main.rs` as the core platform instance.
-  - Modified by `vulkan_core.rs` for Vulkan setup and `renderer.rs` for rendering resources.
-  - Interacts with `window_management.rs` for event-driven resizing.
+  - Modified by `vulkan_setuo.rs` for Vulkan setup and `renderer.rs` for rendering resources.
+  - Interacts with `window_handler.rs` for event-driven resizing.
 
 ---
 
 ## 2. `lib.rs`
 - **Purpose**: The library root, declaring public modules and the `Vertex` struct for 2D rendering in pixel coordinates.
 - **Key Components**:
-  - Exports `platform`, `vulkan_core`, `renderer`, `window_management`, and `scene`.
+  - Exports `platform`, `vulkan_core`, `renderer`, `window_handler`, and `scene`.
   - `Vertex` struct: Defines a 2D position (`[f32; 2]`) in pixel space for GUI elements.
 - **Relationships**:
   - Provides the public API for `rusty_whip`.
@@ -27,12 +27,12 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 ---
 
 ## 3. `main.rs`
-- **Purpose**: The entry point, initializing a 600x300 `winit` window, setting up `Platform` and `Scene` with a background, triangle, and square, and running them with dynamic resizing.
+- **Purpose**: The entry point, initializing a 600x300 `winit` window, setting up `VulkanContext` and `Scene` with a background, triangle, and square, and running them with dynamic resizing.
 - **Key Components**:
-  - Sets up `EventLoop`, `Platform`, and `Scene` with a background quad (`depth: 0.0`, `21292a`, `on_window_resize_scale: true`), triangle (`depth: 1.0`, `ff9800`, `on_window_resize_move: true`), and square (`depth: 2.0`, `42c922`, `on_window_resize_move: true`).
+  - Sets up `EventLoop`, `VulkanContext`, and `Scene` with a background quad (`depth: 0.0`, `21292a`, `on_window_resize_scale: true`), triangle (`depth: 1.0`, `ff9800`, `on_window_resize_move: true`), and square (`depth: 2.0`, `42c922`, `on_window_resize_move: true`).
   - Runs via `PlatformHandler` with `run_app`.
 - **Relationships**:
-  - Depends on `platform.rs` for `Platform`, `scene.rs` for `Scene`, and `window_management.rs` for event handling.
+  - Depends on `vulkan_context.rs` for `VulkanContext`, `scene.rs` for `Scene`, and `window_handler.rs` for event handling.
 
 ---
 
@@ -46,29 +46,29 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
   - `render`: Draws depth-sorted objects with background color `21292a`.
   - Helper functions: `create_swapchain`, `create_framebuffers`, `record_command_buffers`.
 - **Relationships**:
-  - Operates on `Platform` from `platform.rs`.
+  - Operates on `VulkanContext` from `vulkan_context.rs`.
   - Uses `Vertex` from `lib.rs` and `Scene` from `scene.rs`.
 
 ---
 
-## 5. `vulkan_core.rs`
-- **Purpose**: Initializes and cleans up Vulkan resources for `Platform`, supporting a resizable window.
+## 5. `vulkan_setup.rs`
+- **Purpose**: Initializes and cleans up Vulkan resources for `VulkanContext`, supporting a resizable window.
 - **Key Components**:
   - `setup_vulkan`: Configures Vulkan instance, surface, device, and allocator.
   - `cleanup_vulkan`: Destroys Vulkan resources.
 - **Relationships**:
-  - Modifies `Platform` from `platform.rs`.
+  - Modifies `VulkanContext` from `vulkan_context.rs`.
 
 ---
 
-## 6. `window_management.rs`
+## 6. `window_handler.rs`
 - **Purpose**: Manages window lifecycle and events via `PlatformHandler`, enabling resizing with GUI updates.
 - **Key Components**:
-  - `PlatformHandler`: Wraps `Platform`, `Scene`, and `Renderer`, with a `resizing: bool` flag.
+  - `PlatformHandler`: Wraps `VulkanContext`, `Scene`, and `Renderer`, with a `resizing: bool` flag.
   - `resumed`: Sets up the 600x300 window and Vulkan.
   - `window_event`: Handles `Resized` (triggers `renderer.resize`), `CloseRequested`, and `RedrawRequested`.
 - **Relationships**:
-  - Uses `Platform` from `platform.rs`, `Scene` from `scene.rs`, and `Renderer` from `renderer.rs`.
+  - Uses `VulkanContext` from `vulkan_context.rs`, `Scene` from `scene.rs`, and `Renderer` from `renderer.rs`.
 
 ---
 
@@ -113,6 +113,6 @@ This document lists all files in the `rusty_whip` project, a Vulkan-based graphi
 - A 600x300 resizable window with a `21292a` background.
 - Depth-sorted 2D GUI elements (background: 0.0, triangle: 1.0, square: 2.0) in pixel coordinates via orthographic projection.
 - Dynamic resizing: Background fills the window using `on_window_resize_scale`, elements (triangle, square) move proportionately using `on_window_resize_move` (e.g., triangle at center, square in top-left quadrant) while maintaining fixed sizes (e.g., 50x50 pixels).
-- Flow: `main.rs` sets up `Platform` and `Scene`, `window_management.rs` handles events (including resizing), `vulkan_core.rs` initializes Vulkan, and `renderer.rs` renders depth-sorted objects with updated uniforms.
+- Flow: `main.rs` sets up `VulkanContext` and `Scene`, `window_handler.rs` handles events (including resizing), `vulkan_setup.rs` initializes Vulkan, and `renderer.rs` renders depth-sorted objects with updated uniforms.
 
 This foundation supports future 3D viewports and advanced GUI features, targeting Linux and Windows with unofficial compiling for Mac and BSD.

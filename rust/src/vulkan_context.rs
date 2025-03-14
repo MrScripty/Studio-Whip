@@ -5,7 +5,7 @@ use std::sync::Arc;
 use vk_mem::Allocator;
 use winit::window::Window;
 
-pub struct Platform {
+pub struct VulkanContext {
     pub window: Option<Arc<Window>>,
     pub entry: Option<Entry>,
     pub instance: Option<Instance>,
@@ -34,7 +34,7 @@ pub struct Platform {
     pub current_image: usize,
 }
 
-impl Platform {
+impl VulkanContext {
     pub fn new() -> Self {
         Self {
             window: None,

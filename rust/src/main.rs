@@ -1,11 +1,11 @@
 use winit::event_loop::{EventLoop, ControlFlow};
 use winit::dpi::PhysicalSize;
-use rusty_whip::{Platform, Scene, RenderObject, Vertex, window_handler::PlatformHandler};
+use rusty_whip::{VulkanContext, Scene, RenderObject, Vertex, window_handler::VulkanContextHandler};
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
-    let platform = Platform::new();
+    let platform = VulkanContext::new();
     let mut scene = Scene::new();
 
     // Background RenderObject (covers full 600x300 window)
@@ -56,6 +56,6 @@ fn main() {
         on_window_resize_move: true,
     });
 
-    let mut handler = PlatformHandler::new(platform, scene);
+    let mut handler = VulkanContextHandler::new(platform, scene);
     event_loop.run_app(&mut handler).unwrap();
 }

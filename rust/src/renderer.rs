@@ -2,7 +2,7 @@ use ash::vk;
 use ash::khr::swapchain;
 use std::marker::PhantomData;
 use vk_mem::Alloc;
-use crate::{Vertex, Platform, Scene};
+use crate::{Vertex, VulkanContext, Scene};
 use std::fs;
 use glam::Mat4;
 
@@ -21,7 +21,7 @@ fn load_shader(device: &ash::Device, filename: &str) -> vk::ShaderModule {
         .expect(&format!("Failed to create shader module from: {}", filename))
 }
 
-fn create_swapchain(platform: &mut Platform, extent: vk::Extent2D) -> vk::SurfaceFormatKHR {
+fn create_swapchain(platform: &mut VulkanContext, extent: vk::Extent2D) -> vk::SurfaceFormatKHR {
     let instance = platform.instance.as_ref().unwrap();
     let device = platform.device.as_ref().unwrap();
     let surface = platform.surface.unwrap();
@@ -117,7 +117,7 @@ fn create_swapchain(platform: &mut Platform, extent: vk::Extent2D) -> vk::Surfac
     surface_format
 }
 
-fn create_framebuffers(platform: &mut Platform, extent: vk::Extent2D, surface_format: vk::SurfaceFormatKHR) {
+fn create_framebuffers(platform: &mut VulkanContext, extent: vk::Extent2D, surface_format: vk::SurfaceFormatKHR) {
     let device = platform.device.as_ref().unwrap();
     let render_pass = {
         let attachment = vk::AttachmentDescription {
@@ -186,7 +186,7 @@ fn create_framebuffers(platform: &mut Platform, extent: vk::Extent2D, surface_fo
 }
 
 fn record_command_buffers(
-    platform: &mut Platform,
+    platform: &mut VulkanContext,
     renderables: &[Renderable],
     pipeline_layout: vk::PipelineLayout,
     descriptor_set: vk::DescriptorSet,
@@ -325,7 +325,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(platform: &mut Platform, extent: vk::Extent2D, scene: &Scene) -> Self {
+    pub fn new(platform: &mut VulkanContext, extent: vk::Extent2D, scene: &Scene) -> Self {
         let surface_format = create_swapchain(platform, extent);
         create_framebuffers(platform, extent, surface_format);
 
@@ -642,7 +642,7 @@ impl Renderer {
                         .unwrap()[0]
                 }
             };
-            
+
             let min_x = vertices.iter().map(|v| v.position[0]).fold(f32::INFINITY, f32::min);
             let max_x = vertices.iter().map(|v| v.position[0]).fold(f32::NEG_INFINITY, f32::max);
             let min_y = vertices.iter().map(|v| v.position[1]).fold(f32::INFINITY, f32::min);
@@ -698,7 +698,7 @@ impl Renderer {
         }
     }
 
-    pub fn resize(&mut self, platform: &mut Platform, width: u32, height: u32) {
+    pub fn resize(&mut self, platform: &mut VulkanContext, width: u32, height: u32) {
         let device = platform.device.as_ref().unwrap();
         unsafe { device.device_wait_idle().unwrap() }; // Wait for rendering to finish
 
@@ -774,7 +774,7 @@ impl Renderer {
         record_command_buffers(platform, &self.renderables, self.pipeline_layout, self.descriptor_set, extent);
     }
 
-    pub fn render(&self, platform: &mut Platform) {
+    pub fn render(&self, platform: &mut VulkanContext) {
         if let (
             Some(device),
             Some(queue),
@@ -828,7 +828,7 @@ impl Renderer {
         }
     }
 
-    pub fn cleanup(mut self, platform: &mut Platform) {
+    pub fn cleanup(mut self, platform: &mut VulkanContext) {
         let device = platform.device.as_ref().unwrap();
         let swapchain_loader = platform.swapchain_loader.take().unwrap();
 

@@ -7,9 +7,9 @@ use std::sync::Arc;
 use vk_mem::Allocator;
 use winit::window::Window;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use crate::vulkan_context::Platform;
+use crate::vulkan_context::VulkanContext;
 
-pub fn setup_vulkan(app: &mut Platform, window: Arc<Window>) {
+pub fn setup_vulkan(app: &mut VulkanContext, window: Arc<Window>) {
     let entry = unsafe { Entry::load() }.unwrap();
     app.entry = Some(entry.clone());
 
@@ -118,7 +118,7 @@ pub fn setup_vulkan(app: &mut Platform, window: Arc<Window>) {
     app.allocator = Some(allocator);
 }
 
-pub fn cleanup_vulkan(app: &mut Platform) {
+pub fn cleanup_vulkan(app: &mut VulkanContext) {
     let device = app.device.take().unwrap();
     let surface_loader = app.surface_loader.take().unwrap();
     let allocator = app.allocator.take().unwrap();

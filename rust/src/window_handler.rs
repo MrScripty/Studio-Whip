@@ -5,20 +5,20 @@ use winit::window::{Window, WindowId};
 use winit::dpi::PhysicalSize;
 use std::sync::Arc;
 use ash::vk;
-use crate::vulkan_context::Platform;
+use crate::vulkan_context::VulkanContext;
 use crate::scene::Scene;
 use crate::vulkan_setup::{setup_vulkan, cleanup_vulkan};
 use crate::renderer::Renderer;
 
-pub struct PlatformHandler {
-    platform: Platform,
+pub struct VulkanContextHandler {
+    platform: VulkanContext,
     scene: Scene,
     renderer: Option<Renderer>,
     resizing: bool,
 }
 
-impl PlatformHandler {
-    pub fn new(platform: Platform, scene: Scene) -> Self {
+impl VulkanContextHandler {
+    pub fn new(platform: VulkanContext, scene: Scene) -> Self {
         Self {
             platform,
             scene,
@@ -28,7 +28,7 @@ impl PlatformHandler {
     }
 }
 
-impl ApplicationHandler for PlatformHandler {
+impl ApplicationHandler for VulkanContextHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.platform.window.is_none() {
             let window = Arc::new(event_loop.create_window(

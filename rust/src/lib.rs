@@ -4,7 +4,7 @@ pub mod renderer;
 pub mod window_handler;
 pub mod scene;
 
-pub use vulkan_context::Platform;
+pub use vulkan_context::VulkanContext;
 pub use scene::{Scene, RenderObject};
 pub use renderer::Renderer;
 

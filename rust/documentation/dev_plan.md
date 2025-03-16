@@ -1,184 +1,175 @@
-# Plan for Implementing Changes in `rusty_whip` (Updated March 11, 2025)
+# Plan for Implementing Click-and-Drag in `rusty_whip` (March 16, 2025)
 
 ## Project Overview: `rusty_whip`
 
 ### Purpose
-`rusty_whip` is an advanced 3D & 2D content generation application designed for integration into a professional digital entertainment production pipeline. It prioritizes AI diffusion and inference performance on GPU VRAM, offering robust tools for prompt engineering, story writing, and multimedia creation. The app focuses on 2D video, stills, animation sequencing, audio editing, and story-driven workflows, with 3D primarily supporting image2image AI guidance. It features a client-side, quantum-resistant, cryptographically secure P2P networking system for live multi-user editing, project sharing, and peer discovery. The desktop app targets Linux and Windows, with unofficial cross-platform compiling for Mac and BSD.
+`rusty_whip` is an advanced 2D & 3D content generation application for digital entertainment production, emphasizing GPU-accelerated AI diffusion/inference, multimedia creation (2D video, stills, animation, audio), and story-driven workflows. It features a client-side, quantum-resistant, P2P networking system for real-time multi-user editing and targets Linux/Windows with unofficial Mac/BSD support. The 2D GUI uses Vulkan for depth-sorted rendering, evolving into a full production tool with 3D viewports.
 
 ### Key Features (Relevant to This Plan)
-- **2D GUI**: Primary interface with depth-sorted render objects (e.g., background, widgets) in pixel coordinates, using orthographic projection for intuitive layout and resizing.
-- **Background Sizing**: Must cover the entire window, resizing dynamically.
-- **GUI Behaviors**: Most elements move to maintain relative positions (e.g., button stays near top-left); scaling deferred with a `RenderBehavior` hook.
-- **Future 3D Viewports**: Separate 3D rendering with depth buffer, composited under 2D GUI using perspective projection.
-- **Export**: Supports video sequences, EXR, OBJ, JPG, PNG files.
+- **2D GUI**: Depth-sorted render objects (background `21292a`, triangle `ff9800`, square `42c922`) in pixel coordinates, orthographic projection, resizable 600x300 window.
+- **Click-and-Drag**: Reposition objects dynamically with shader-based offsets, context-aware input, Ctrl+Z undo via double buffering.
+- **Future 3D**: Separate 3D rendering under 2D GUI, leveraging shader positioning.
 
 ### Current State
-- See modules.md
+- See `modules.md` (March 13, 2025): Depth sorting, orthographic projection, resizing implemented; `render_engine.rs` split into modules.
 
 ### Goals for This Plan
-1. Add `f32` depth sorting for 2D render objects (background, triangle, square).
-2. Implement orthographic projection with pixel coordinates for intuitive GUI layout using `glam`.
-3. Enable window resizing, ensuring background fills the window and GUI elements move proportionately.
-4. Set colors: background `21292a`, triangle `ff9800`, square `42c922`.
+1. Enable click-and-drag for `RenderObject`s using shader offsets.
+2. Add context-aware input via `InteractionController` (e.g., `Canvas` drags, `Other` doesn’t).
+3. Implement Ctrl+Z undo with double buffering.
 
 ---
-# This plan has been completed!
 
 ## Step-by-Step Plan
 
 ### Setup Details
-- **Window Size**: 600x300 pixels, set explicitly in `main.rs`.
-- **Colors**: 
-  - Background: `21292a` (RGB: 33, 41, 42 → 0.129, 0.161, 0.165).
-  - Triangle: `ff9800` (RGB: 255, 152, 0 → 1.0, 0.596, 0.0).
-  - Square: `42c922` (RGB: 66, 201, 34 → 0.259, 0.788, 0.133).
-- **Error Handling**: Use `unwrap` with `println!` for obvious failures (e.g., shader loading, GPU absence); robust handling deferred.
-- **Shader Compilation**: Handled by `build.rs` with `glslc`; separate `compile_shaders.sh` and `.ps1` scripts available for user edits. Ensure all GLSL shaders are version 460.
-- **Matrix Library**: Use `glam` (v0.30) for SIMD-optimized matrix operations.
+- **Window Size**: 600x300 pixels (`main.rs` via `PhysicalSize`).
+- **Colors**: Background `21292a` (0.129, 0.161, 0.165), triangle `ff9800` (1.0, 0.596, 0.0), square `42c922` (0.259, 0.788, 0.133).
+- **Error Handling**: Use `unwrap` with `println!` for simplicity.
+- **Shader Compilation**: `build.rs` with GLSL 460; scripts optional.
+- **Test Command**: `cargo build` (compiles), `cargo run` (renders window, tests dragging/undo).
 
-### Step 1: Add `depth` Field and Background
-- **Objective**: Extend `RenderObject` with `depth: f32` and `RenderBehavior`, add a background quad, keep NDC rendering.
+### Step 0: Setup Interaction Controller
+- **Objective**: Create `InteractionController` with `CursorContext` for input handling.
 - **Files**:
-  - `Cargo.toml`: Add `glam = "0.30"`.
-  - `scene.rs`: Add `depth: f32` and `behavior: RenderBehavior` to `RenderObject`, define:
-    ```rust
-    pub enum RenderBehavior {
-        Move,        // Maintains relative position (default)
-        Scale(f32),  // Scales size proportionally (deferred)
-    }
-    ```
-  - `main.rs`: Set window to 600x300 via `Window::default_attributes().with_inner_size(winit::dpi::PhysicalSize::new(600, 300))`, add:
-    - Background quad (`-1,-1` to `1,1`, `depth: 0.0`, `Move`).
-    - Triangle (`depth: 1.0`, `Move`).
-    - Square (`depth: 2.0`, `Move`).
-  - Shaders: `background.frag`, `triangle.frag`, `square.frag` set colors (`21292a`, `ff9800`, `42c922`), reuse `triangle.vert` as `background.vert`.
-- **Details**:
-  - Background uses NDC quad for now.
-- **Test**: `cargo run`—600x300 window, background, triangle, square render in vector order (no sorting yet).
+  - `src/gui_framework/interaction/mod.rs`:
+    - `pub mod controller; pub use controller::InteractionController;`
+  - `src/gui_framework/interaction/controller.rs`:
+    - `pub struct MouseState { pub is_dragging: bool, pub last_position: Option<[f32; 2]>, pub dragged_object: Option<usize> }`
+    - `pub enum CursorContext { Canvas, Other } // Context at cursor position`
+    - `pub struct InteractionController { pub mouse_state: MouseState, pub context: CursorContext }`
+    - `impl InteractionController { pub fn new() -> Self { Self { mouse_state: MouseState { is_dragging: false, last_position: None, dragged_object: None }, context: CursorContext::Canvas } } }`
+  - `src/gui_framework/mod.rs`:
+    - Add: `pub mod interaction; pub use interaction::controller::InteractionController;`
+- **Test**: `cargo build`—verify compilation.
 
-### Step 2: Depth Sorting
-- **Objective**: Sort `renderables` by `depth` in `Renderer` for consistent 2D layering.
+### Step 1: Detect and Log Mouse Events
+- **Objective**: Forward mouse events to controller, log actions.
 - **Files**:
-  - `renderer.rs`: Sort `renderables` by `depth` in `new` before pipeline creation:
-    ```rust
-    renderables.sort_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap());
-    ```
-- **Details**:
-  - `RenderBehavior` unused in sorting (all `Move` for now).
-- **Test**: `cargo run`—background (`0.0`) behind triangle (`1.0`) behind square (`2.0`), swap depths in `main.rs` to verify.
+  - `src/gui_framework/window/window_handler.rs`:
+    - Struct `VulkanContextHandler`: Add `controller: InteractionController`.
+    - Fn `new`: Add `controller: InteractionController::new()`.
+    - Fn `window_event`: Add:
+      - `WindowEvent::MouseInput { state, button, .. }`: `if button == MouseButton::Left { self.controller.handle_event(event, None, None, &self.window); }`
+      - `WindowEvent::CursorMoved { .. }`: `self.controller.handle_event(event, None, None, &self.window);`
+  - `src/gui_framework/interaction/controller.rs`:
+    - Fn: `pub fn handle_event(&mut self, event: &winit::event::Event<()>, _scene: Option<&Scene>, _renderer: Option<&mut Renderer>, window: &winit::window::Window) { match event { WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => println!("Pressed at {:?}", self.mouse_state.last_position.unwrap_or([0.0, 0.0])), WindowEvent::CursorMoved { position, .. } => { let pos = [position.x as f32, position.y as f32]; println!("Moved to {:?}", pos); self.mouse_state.last_position = Some(pos); }, WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => println!("Released at {:?}", self.mouse_state.last_position.unwrap_or([0.0, 0.0])), _ => (), } }`
+- **Test**: `cargo run`—click/drag/release logs positions.
 
-### Step 3: Uniform Buffer Setup
-- **Objective**: Add uniform buffer with `glam` orthographic projection, update shaders, keep NDC coords temporarily.
+### Step 2: Track Mouse State
+- **Objective**: Update `MouseState` for dragging, context-aware.
 - **Files**:
-  - `renderer.rs`: Add fields (`uniform_buffer`, `uniform_allocation`, `descriptor_set_layout`, `descriptor_set`, `descriptor_pool`), create buffer with:
-    ```rust
-    use glam::Mat4;
-    let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -1.0, 1.0).to_cols_array();
-    ```
-    - Set up descriptors (binding 0).
-  - Shaders: Update `.vert` files:
-    ```glsl
-    layout(binding = 0) uniform UniformBufferObject {
-        mat4 projection;
-    } ubo;
-    gl_Position = ubo.projection * vec4(inPosition, 0.0, 1.0);
-    ```
-- **Details**:
-  - Matrix maps NDC directly for now (600x300 hardcoded).
-- **Test**: `cargo run`—same rendering, uniform setup confirmed.
+  - `src/gui_framework/interaction/controller.rs`:
+    - Update `handle_event`:
+      - `MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }`: `if self.context == CursorContext::Canvas { self.mouse_state.is_dragging = true; let pos = self.mouse_state.last_position.unwrap_or([0.0, 0.0]); println!("Dragging started at {:?}", pos); }`
+      - `CursorMoved { position, .. }`: `let pos = [position.x as f32, position.y as f32]; if self.context == CursorContext::Canvas && self.mouse_state.is_dragging { let delta = [pos[0] - self.mouse_state.last_position.unwrap()[0], pos[1] - self.mouse_state.last_position.unwrap()[1]]; println!("Dragging delta: {:?}", delta); self.mouse_state.last_position = Some(pos); } else { self.mouse_state.last_position = Some(pos); }`
+      - `MouseInput { state: ElementState::Released, button: MouseButton::Left, .. }`: `if self.context == CursorContext::Canvas && self.mouse_state.is_dragging { self.mouse_state.is_dragging = false; println!("Dragging stopped at {:?}", self.mouse_state.last_position); }`
+- **Test**: `cargo run`—drag logs deltas in `Canvas` context only.
 
-### Step 4: Switch to Screen-Space Coords
-- **Objective**: Use pixel coords with orthographic projection, adjust GUI positions.
+### Step 3: Shader Positioning Setup
+- **Objective**: Add offset for shader-based dragging.
 - **Files**:
-  - `main.rs`: Update to pixel coords:
-    - Background: `0,0` to `600,300`.
-    - Triangle: Centered (e.g., `275,125` to `325,175`).
-    - Square: Top-left quadrant (e.g., `100,50` to `150,100`).
-  - `renderer.rs`: Bind descriptor set in command buffers, set clear color to `[0.0, 0.0, 0.0, 0.0]`.
-- **Details**:
-  - Positions hardcoded for 600x300, will adjust in Step 6.
-- **Test**: `cargo run`—objects in pixel coords, depth sorted.
+  - `src/gui_framework/scene/scene.rs`:
+    - Struct `RenderObject`: Add `offset: [f32; 2] = [0.0, 0.0]`.
+  - `src/gui_framework/rendering/renderable.rs`:
+    - Struct `Renderable`: Add `offset_uniform: vk::Buffer`, `offset_allocation: vk_mem::Allocation`.
+  - `src/gui_framework/rendering/render_engine.rs`:
+    - Fn `new`: For each `Renderable`:
+      - Create `offset_uniform`: `let buffer_info = vk::BufferCreateInfo { size: 8, usage: vk::BufferUsageFlags::UNIFORM_BUFFER, ..Default::default() }; let allocation_info = vk_mem::AllocationCreateInfo { usage: vk_mem::MemoryUsage::CpuToGpu, ..Default::default() }; let (buffer, allocation) = vulkan_context.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info).unwrap(); unsafe { vulkan_context.allocator.as_ref().unwrap().map_memory(&allocation).unwrap().copy_from_slice(&render_object.offset); vulkan_context.allocator.as_ref().unwrap().unmap_memory(&allocation); }`
+      - Update `descriptor_set_layout`: Add binding `vk::DescriptorSetLayoutBinding { binding: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: 1, stage_flags: vk::ShaderStageFlags::VERTEX, ..Default::default() }`.
+      - Update `descriptor_set`: Bind `offset_uniform` (binding 1).
+    - Fn `cleanup`: Free `offset_uniform`, `offset_allocation`.
+  - `shaders/background.vert`, `shaders/triangle.vert`, `shaders/square.vert`:
+    - Add: `layout(binding = 1) uniform Offset { vec2 offset; };`
+    - Update: `gl_Position = ubo.projection * vec4(inPosition + offset, 0.0, 1.0);`
+- **Test**: `cargo run`—objects render as before (offset 0).
 
-### Step 5: Extract Helper Functions
-- **Objective**: Refactor `Renderer::new` for resizing prep, no functional change.
+### Step 4: Identify Clicked Object
+- **Objective**: Add hit detection with bounding boxes.
 - **Files**:
-  - `renderer.rs`: Extract:
-    - `create_swapchain`.
-    - `create_framebuffers`.
-    - `record_command_buffers`.
-- **Details**:
-  - DRY focus, reuse existing logic.
-- **Test**: `cargo run`—no rendering change.
+  - `src/gui_framework/scene/scene.rs`:
+    - Trait: `pub trait HitTestable { fn contains(&self, x: f32, y: f32) -> bool; }`
+    - Impl `HitTestable` for `RenderObject`: `fn contains(&self, x: f32, y: f32) -> bool { let (min_x, max_x, min_y, max_y) = self.vertices.iter().fold((f32::MAX, f32::MIN, f32::MAX, f32::MIN), |acc, v| (acc.0.min(v[0]), acc.1.max(v[0]), acc.2.min(v[1]), acc.3.max(v[1]))); x >= min_x && x <= max_x && y >= min_y && y <= max_y }`
+    - Fn: `pub fn pick_object_at(&self, x: f32, y: f32) -> Option<usize> { self.objects.iter().enumerate().filter(|(_, obj)| obj.contains(x, y)).max_by(|a, b| a.1.depth.partial_cmp(&b.1.depth).unwrap_or(Ordering::Equal)).map(|(i, _)| i) }`
+  - `src/gui_framework/interaction/controller.rs`:
+    - Update `handle_event` (press): `if let Some(scene) = scene { let pos = self.mouse_state.last_position.unwrap(); if let Some(index) = scene.pick_object_at(pos[0], pos[1]) { self.mouse_state.dragged_object = Some(index); println!("Clicked object: {:?}", index); } }`
+- **Test**: `cargo run`—click logs object index.
 
-### Step 6: Window Resizing with Proportionate Movement
-- **Objective**: Enable resizing, background fills window, elements move proportionately.
+### Step 5: Update Object Offset
+- **Objective**: Adjust `offset` on drag.
 - **Files**:
-  - `window_management.rs`: Add `resizing: bool`, handle `Resized`:
-    ```rust
-    WindowEvent::Resized(size) => {
-        self.resizing = true;
-        self.renderer.as_mut().unwrap().resize(&mut self.platform, size.width, size.height);
-        self.resizing = false;
-    }
-    ```
-  - `renderer.rs`: Add `resize`:
-    ```rust
-    pub fn resize(&mut self, platform: &mut Platform, width: u32, height: u32) {
-        let ortho = Mat4::orthographic_rh(0.0, width as f32, height as f32, 0.0, -1.0, 1.0).to_cols_array();
-        // Update uniform buffer, recreate swapchain, framebuffers, command buffers
-        // TBD: Recalculate vertex positions based on width/height ratios (e.g., triangle center at `width/2, height/2`)
-    }
-    ```
-    - Recalculation method TBD when implementing this step.
-  - `main.rs`: Define initial positions as ratios (e.g., triangle center `width*0.5, height*0.5`).
-- **Details**:
-  - Background always `0,0` to `width,height`.
-  - All objects use `RenderBehavior::Move`; scaling deferred.
-- **Test**: `cargo run`, resize—background fills, elements move proportionately (e.g., triangle centered, square in top-left quadrant), depth sorted.
+  - `src/gui_framework/scene/scene.rs`:
+    - Fn: `pub fn translate_object(&mut self, index: usize, dx: f32, dy: f32) { let obj = &mut self.objects[index]; obj.offset[0] += dx; obj.offset[1] += dy; }`
+  - `src/gui_framework/interaction/controller.rs`:
+    - Update `handle_event` (move): `if let Some(scene) = scene { if let Some(index) = self.mouse_state.dragged_object { let delta = [pos[0] - self.mouse_state.last_position.unwrap()[0], pos[1] - self.mouse_state.last_position.unwrap()[1]]; scene.translate_object(index, delta[0], delta[1]); window.request_redraw(); } }`
+- **Test**: `cargo run`—drag moves object visually.
+
+### Step 6: Sync Offset to Renderable
+- **Objective**: Update shader uniform with new offset.
+- **Files**:
+  - `src/gui_framework/rendering/render_engine.rs`:
+    - Fn: `pub fn update_offset(&mut self, index: usize, offset: [f32; 2]) { let renderable = &mut self.vulkan_renderables[index]; unsafe { self.vulkan_context.allocator.as_ref().unwrap().map_memory(&renderable.offset_allocation).unwrap().copy_from_slice(&offset); self.vulkan_context.allocator.as_ref().unwrap().unmap_memory(&renderable.offset_allocation); } }`
+  - `src/gui_framework/interaction/controller.rs`:
+    - Update `handle_event` (move): `if let Some(renderer) = renderer { renderer.update_offset(index, scene.objects[index].offset); }`
+- **Test**: `cargo run`—drag is smooth, persists.
+
+### Step 7: Optimize and Polish
+- **Objective**: Handle resize conflicts, test context.
+- **Files**:
+  - `src/gui_framework/interaction/controller.rs`:
+    - Update `handle_event` (drag cases): Add `if !vulkan_context_handler.resizing { ... }`.
+    - Add test: `self.context = CursorContext::Other;` (manual toggle).
+  - `src/gui_framework/window/window_handler.rs`:
+    - Update `handle_event` call: `self.controller.handle_event(event, Some(&self.scene), Some(&mut self.renderer), &self.window);`
+- **Test**: `cargo run`—drag paused during resize, no drag in `Other`.
+
+### Step 8: Double Buffering with Ctrl+Z Undo
+- **Objective**: Add undo via double buffering.
+- **Files**:
+  - `src/gui_framework/scene/scene.rs`:
+    - Struct `RenderObject`: Add `pending_offset: [f32; 2] = [0.0, 0.0]`.
+    - Update `translate_object`: Use `pending_offset`.
+    - Fn: `pub fn commit_offset(&mut self, index: usize) { self.objects[index].offset = self.objects[index].pending_offset; }`
+    - Fn: `pub fn revert_offset(&mut self, index: usize) { self.objects[index].pending_offset = self.objects[index].offset; }`
+  - `src/gui_framework/interaction/controller.rs`:
+    - Update `handle_event` (move): Sync `pending_offset`.
+    - Add: `WindowEvent::KeyboardInput { input: KeyboardInput { state: ElementState::Pressed, virtual_keycode: Some(VirtualKeyCode::Z), modifiers: ModifiersState { ctrl: true, .. }, .. }, .. } => if let Some(scene) = scene { if let Some(index) = self.mouse_state.dragged_object { scene.revert_offset(index); renderer.unwrap().update_offset(index, scene.objects[index].offset); window.request_redraw(); } }`
+    - Update (release): `scene.unwrap().commit_offset(self.mouse_state.dragged_object.unwrap());`
+- **Test**: `cargo run`—drag, Ctrl+Z undoes, release commits.
 
 ---
 
 ## Files Involved
-1. **`Cargo.toml`**: Add `glam = "0.30"`.
-2. **`build.rs`**: Unchanged.
-3. **`main.rs`**: Window size, scene setup with depths and behaviors.
-4. **`renderer.rs`**: Depth sorting, uniform buffer, resizing logic.
-5. **`scene.rs`**: `depth` and `RenderBehavior` in `RenderObject`.
-6. **`window_management.rs`**: Resizing event handling.
-7. **`platform.rs`**: Unchanged.
-8. **`vulkan_core.rs`**: Unchanged.
-9. **`lib.rs`**: Exports updated `scene`.
-10. **Shaders**: Updated `.vert` for uniforms, `.frag` for colors.
+1. `src/gui_framework/interaction/mod.rs`
+2. `src/gui_framework/interaction/controller.rs`
+3. `src/gui_framework/mod.rs`
+4. `src/gui_framework/window/window_handler.rs`
+5. `src/gui_framework/scene/scene.rs`
+6. `src/gui_framework/rendering/renderable.rs`
+7. `src/gui_framework/rendering/render_engine.rs`
+8. `shaders/background.vert`, `shaders/triangle.vert`, `shaders/square.vert`
 
 ---
 
-## Useful Details for Implementation
-
-### Dependencies
-- Updated: `ash 0.38`, `vk-mem 0.4`, `winit 0.30.9`, `raw-window-handle 0.6`, `ash-window 0.13`, `glam 0.30`.
-
-### Window Size
-- Set via `PhysicalSize::new(600, 300)` in `main.rs`.
-
-### Shader Compilation
-- `build.rs` compiles to `.spv`; scripts optional.
-
-### Error Handling
-- `unwrap` with `println!` for simplicity.
-
-### GUI Behavior
-- **Moving**: All elements (background, triangle, square) move proportionately.
-- **Scaling**: Deferred via `RenderBehavior::Scale`.
-
-### Future 3D
-- 2D uses orthographic projection (`glam::Mat4::orthographic_rh`); 3D will use perspective (`glam::Mat4::perspective_rh`) with separate render passes.
-
-### Testing
-- Each step: `cargo build`, `cargo run`—verify colors, depth, resizing.
+## Necessary Files and Information
+- **Provided**: `vulkan_context.rs`, `render_engine.rs`, `triangle.vert`, `window_handler.rs`, `modules.md`, `Cargo.toml`, directory structure.
+- **Assumed Available**: `main.rs`, `scene.rs`, `build.rs`, other shaders (`background.vert`, `square.vert`).
+- **Needed if Different**: 
+  - Exact `main.rs` constructor for `VulkanContextHandler`.
+  - Shader variations (if not GLSL 460 or binding 0 differs).
 
 ---
 
-## Plan Execution
-- **Start**: Step 1—adds `depth`, `RenderBehavior`, and background.
-- **Progress**: Incremental, testable with `cargo run`.
-- **Debug**: Revert on failure, check shaders/Vulkan errors with `println!`.
+## Notes
+- **Future Plans**:
+  - **Event Bus**: Replace `InteractionController` with an event bus for P2P collaboration (e.g., `ObjectMoved` events), when subsystems grow.
+  - **ECS**: Refactor `RenderObject` into components (e.g., `Position`, `RenderData`) for 2D/3D scalability, when complexity increases.
+- **Reasoning**:
+  - **Controller**: Simplifies input now, extensible to event bus.
+  - **Shader Positioning**: High performance, 3D-ready.
+  - **Double Buffering**: Enables undo, added post-dragging for clarity.
+  - **CursorContext**: Region-specific input, future-proof for GUI regions.
+
+---
+
+## Updated `modules_plan.md`

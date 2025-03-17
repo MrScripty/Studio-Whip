@@ -31,7 +31,7 @@ impl InteractionController {
         }
     }
 
-    pub fn handle_event(&mut self, event: &Event<()>, scene: Option<&Scene>, _renderer: Option<&mut Renderer>, _window: &Window) {
+    pub fn handle_event(&mut self, event: &Event<()>, scene: Option<&mut Scene>, _renderer: Option<&mut Renderer>, window: &Window) {
         if let Event::WindowEvent { event, .. } = event {
             match event {
                 WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
@@ -52,6 +52,12 @@ impl InteractionController {
                     if matches!(self.context, CursorContext::Canvas) && self.mouse_state.is_dragging {
                         if let Some(last_pos) = self.mouse_state.last_position {
                             let delta = [pos[0] - last_pos[0], pos[1] - last_pos[1]];
+                            if let Some(scene) = scene {
+                                if let Some(index) = self.mouse_state.dragged_object {
+                                    scene.translate_object(index, delta[0], delta[1]);
+                                    window.request_redraw(); // Request redraw to update visuals
+                                }
+                            }
                             println!("Dragging delta: {:?}", delta);
                         }
                         self.mouse_state.last_position = Some(pos);

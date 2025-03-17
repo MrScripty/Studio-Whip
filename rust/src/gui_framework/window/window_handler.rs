@@ -78,15 +78,15 @@ impl ApplicationHandler for VulkanContextHandler {
                     window.request_redraw();
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => {
+            WindowEvent::MouseInput { state: _state, button, .. } => {
                 if button == MouseButton::Left {
                     let wrapped_event = Event::WindowEvent { event, window_id: _id };
-                    self.controller.handle_event(&wrapped_event, Some(&self.scene), None, self.vulkan_context.window.as_ref().unwrap());
+                    self.controller.handle_event(&wrapped_event, Some(&mut self.scene), None, self.vulkan_context.window.as_ref().unwrap());
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => {
+            WindowEvent::CursorMoved { position: _position, .. } => {
                 let wrapped_event = Event::WindowEvent { event, window_id: _id };
-                self.controller.handle_event(&wrapped_event, Some(&self.scene), None, self.vulkan_context.window.as_ref().unwrap());
+                self.controller.handle_event(&wrapped_event, Some(&mut self.scene), None, self.vulkan_context.window.as_ref().unwrap());
             }
             _ => (),
         }

@@ -52,4 +52,10 @@ impl Scene {
             .max_by(|a, b| a.1.depth.partial_cmp(&b.1.depth).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
     }
+
+    pub fn translate_object(&mut self, index: usize, dx: f32, dy: f32) {
+        let obj = &mut self.render_objects[index];
+        obj.offset[0] += dx;
+        obj.offset[1] += dy;
+    }
 }

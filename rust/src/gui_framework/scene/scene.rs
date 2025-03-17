@@ -8,6 +8,7 @@ pub struct RenderObject {
     pub depth: f32,                    // For 2D layering
     pub on_window_resize_scale: bool,  // Scales to match window size
     pub on_window_resize_move: bool,   // Moves proportionally (GUI elements)
+    pub offset: [f32; 2],              // Added for dragging
 }
 
 #[derive(Debug)]

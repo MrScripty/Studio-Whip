@@ -1,7 +1,7 @@
 use ash::vk;
 use std::marker::PhantomData;
 use vk_mem::Alloc;
-use crate::Vertex; // From lib.rs
+use crate::Vertex;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::gui_framework::scene::scene::Scene;
 use glam::Mat4;
@@ -84,7 +84,7 @@ impl Renderer {
             platform.device.as_ref().unwrap().create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
                 p_next: std::ptr::null(),
-                flags: vk::DescriptorPoolCreateFlags::empty(),
+                flags: vk::DescriptorPoolCreateFlags::empty(), // Fixed syntax
                 max_sets: 1,
                 pool_size_count: 1,
                 p_pool_sizes: &pool_size,
@@ -168,6 +168,37 @@ impl Renderer {
                         .unwrap()
                         .cast::<Vertex>();
                     data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
+                    platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                    (buffer, allocation)
+                }
+            };
+
+            let (offset_uniform, offset_allocation) = {
+                let buffer_info = vk::BufferCreateInfo {
+                    s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                    p_next: std::ptr::null(),
+                    flags: vk::BufferCreateFlags::empty(),
+                    size: std::mem::size_of::<[f32; 2]>() as u64,
+                    usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    queue_family_index_count: 0,
+                    p_queue_family_indices: std::ptr::null(),
+                    _marker: PhantomData,
+                };
+                let allocation_info = vk_mem::AllocationCreateInfo {
+                    usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                    flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                };
+                unsafe {
+                    let (buffer, mut allocation) = platform.allocator.as_ref().unwrap()
+                        .create_buffer(&buffer_info, &allocation_info)
+                        .unwrap();
+                    let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
+                        .unwrap()
+                        .cast::<f32>();
+                    data_ptr.copy_from_nonoverlapping(obj.offset.as_ptr(), 2);
+                    println!("Initialized offset for object (depth {}): {:?}", obj.depth, obj.offset); // Debug log
                     platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
                     (buffer, allocation)
                 }
@@ -345,6 +376,8 @@ impl Renderer {
                 vertex_shader,
                 fragment_shader,
                 pipeline,
+                offset_uniform,
+                offset_allocation,
                 vertex_count: vertices.len() as u32,
                 depth: obj.depth,
                 on_window_resize_scale: obj.on_window_resize_scale,
@@ -532,6 +565,11 @@ impl Renderer {
                     .as_ref()
                     .unwrap()
                     .destroy_buffer(renderable.vertex_buffer, &mut renderable.vertex_allocation);
+                platform
+                    .allocator
+                    .as_ref()
+                    .unwrap()
+                    .destroy_buffer(renderable.offset_uniform, &mut renderable.offset_allocation);
             }
 
             device.destroy_descriptor_pool(self.descriptor_pool, None);

@@ -39,7 +39,7 @@ impl InteractionController {
                     if matches!(self.context, CursorContext::Canvas) {
                         self.mouse_state.is_dragging = true;
                         let pos = self.mouse_state.last_position.unwrap_or([0.0, 0.0]);
-                        println!("Dragging started at {:?}", pos);
+                        //println!("Dragging started at {:?}", pos);
                     } else {
                         println!("Press ignored (not in Canvas context)");
                     }

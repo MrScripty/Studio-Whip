@@ -23,6 +23,7 @@ fn main() {
         depth: 0.0,
         on_window_resize_scale: true,
         on_window_resize_move: false,
+        offset: [0.0, 0.0], // Initialize offset
     });
 
     scene.add_object(RenderObject {
@@ -36,6 +37,7 @@ fn main() {
         depth: 1.0,
         on_window_resize_scale: false,
         on_window_resize_move: true,
+        offset: [0.0, 0.0], // Initialize offset
     });
 
     scene.add_object(RenderObject {
@@ -50,6 +52,7 @@ fn main() {
         depth: 2.0,
         on_window_resize_scale: false,
         on_window_resize_move: true,
+        offset: [0.0, 0.0], // Initialize offset
     });
     
     let mut handler = VulkanContextHandler::new(vulkan_context, scene);

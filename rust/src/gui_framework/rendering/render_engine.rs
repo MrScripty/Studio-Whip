@@ -1,7 +1,7 @@
 use ash::vk;
 use std::marker::PhantomData;
 use vk_mem::Alloc;
-use crate::Vertex; // From lib.rs
+use crate::Vertex;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::gui_framework::scene::scene::Scene;
 use glam::Mat4;
@@ -57,37 +57,53 @@ impl Renderer {
         };
 
         let descriptor_set_layout = unsafe {
-            let binding = vk::DescriptorSetLayoutBinding {
-                binding: 0,
-                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::VERTEX,
-                p_immutable_samplers: std::ptr::null(),
-                _marker: PhantomData,
-            };
+            let bindings = [
+                vk::DescriptorSetLayoutBinding {
+                    binding: 0,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    p_immutable_samplers: std::ptr::null(),
+                    _marker: PhantomData,
+                },
+                vk::DescriptorSetLayoutBinding {
+                    binding: 1,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    p_immutable_samplers: std::ptr::null(),
+                    _marker: PhantomData,
+                },
+            ];
             platform.device.as_ref().unwrap().create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                 p_next: std::ptr::null(),
                 flags: vk::DescriptorSetLayoutCreateFlags::empty(),
-                binding_count: 1,
-                p_bindings: &binding,
+                binding_count: bindings.len() as u32,
+                p_bindings: bindings.as_ptr(),
                 _marker: PhantomData,
             }, None)
         }
         .unwrap();
 
         let descriptor_pool = unsafe {
-            let pool_size = vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 1,
-            };
+            let pool_sizes = [
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1, // For projection
+                },
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: scene.render_objects.len() as u32, // One per renderable
+                },
+            ];
             platform.device.as_ref().unwrap().create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
                 p_next: std::ptr::null(),
                 flags: vk::DescriptorPoolCreateFlags::empty(),
-                max_sets: 1,
-                pool_size_count: 1,
-                p_pool_sizes: &pool_size,
+                max_sets: 1 + scene.render_objects.len() as u32, // One for projection + one per renderable
+                pool_size_count: pool_sizes.len() as u32,
+                p_pool_sizes: pool_sizes.as_ptr(),
                 _marker: PhantomData,
             }, None)
         }
@@ -168,6 +184,36 @@ impl Renderer {
                         .unwrap()
                         .cast::<Vertex>();
                     data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
+                    platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                    (buffer, allocation)
+                }
+            };
+
+            let (offset_uniform, offset_allocation) = {
+                let buffer_info = vk::BufferCreateInfo {
+                    s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                    p_next: std::ptr::null(),
+                    flags: vk::BufferCreateFlags::empty(),
+                    size: std::mem::size_of::<[f32; 2]>() as u64,
+                    usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    queue_family_index_count: 0,
+                    p_queue_family_indices: std::ptr::null(),
+                    _marker: PhantomData,
+                };
+                let allocation_info = vk_mem::AllocationCreateInfo {
+                    usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                    flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                };
+                unsafe {
+                    let (buffer, mut allocation) = platform.allocator.as_ref().unwrap()
+                        .create_buffer(&buffer_info, &allocation_info)
+                        .unwrap();
+                    let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
+                        .unwrap()
+                        .cast::<f32>();
+                    data_ptr.copy_from_nonoverlapping(obj.offset.as_ptr(), 2);
                     platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
                     (buffer, allocation)
                 }
@@ -345,6 +391,8 @@ impl Renderer {
                 vertex_shader,
                 fragment_shader,
                 pipeline,
+                offset_uniform,      // Added
+                offset_allocation,   // Added
                 vertex_count: vertices.len() as u32,
                 depth: obj.depth,
                 on_window_resize_scale: obj.on_window_resize_scale,
@@ -532,6 +580,11 @@ impl Renderer {
                     .as_ref()
                     .unwrap()
                     .destroy_buffer(renderable.vertex_buffer, &mut renderable.vertex_allocation);
+                platform
+                    .allocator
+                    .as_ref()
+                    .unwrap()
+                    .destroy_buffer(renderable.offset_uniform, &mut renderable.offset_allocation); // Cleanup offset
             }
 
             device.destroy_descriptor_pool(self.descriptor_pool, None);

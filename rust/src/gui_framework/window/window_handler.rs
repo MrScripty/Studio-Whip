@@ -1,5 +1,5 @@
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, MouseButton, Event}; // Ensure Event is imported
+use winit::event::{WindowEvent, MouseButton, Event};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 use winit::dpi::PhysicalSize;
@@ -80,15 +80,13 @@ impl ApplicationHandler for VulkanContextHandler {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if button == MouseButton::Left {
-                    //println!("Mouse input detected: state={:?}, button={:?}", state, button); // Debug log
                     let wrapped_event = Event::WindowEvent { event, window_id: _id };
-                    self.controller.handle_event(&wrapped_event, None, None, self.vulkan_context.window.as_ref().unwrap());
+                    self.controller.handle_event(&wrapped_event, Some(&self.scene), None, self.vulkan_context.window.as_ref().unwrap());
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                //println!("Cursor moved to: {:?}", position); // Debug log
                 let wrapped_event = Event::WindowEvent { event, window_id: _id };
-                self.controller.handle_event(&wrapped_event, None, None, self.vulkan_context.window.as_ref().unwrap());
+                self.controller.handle_event(&wrapped_event, Some(&self.scene), None, self.vulkan_context.window.as_ref().unwrap());
             }
             _ => (),
         }

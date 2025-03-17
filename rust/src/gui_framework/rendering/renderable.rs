@@ -13,6 +13,7 @@ pub struct Renderable {
     pub original_positions: Vec<[f32; 2]>,
     pub fixed_size: [f32; 2],
     pub center_ratio: [f32; 2],
-    pub offset_uniform: vk::Buffer,      // Added for shader offset
-    pub offset_allocation: vk_mem::Allocation, // Added for shader offset
+    pub offset_uniform: vk::Buffer,
+    pub offset_allocation: vk_mem::Allocation,
+    pub descriptor_set: vk::DescriptorSet, // Added for per-object uniforms
 }

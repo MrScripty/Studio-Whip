@@ -17,7 +17,7 @@ pub struct Renderer {
     uniform_allocation: vk_mem::Allocation,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
-    descriptor_set: vk::DescriptorSet,
+    descriptor_set: vk::DescriptorSet, // For projection uniform only
 }
 
 impl Renderer {
@@ -44,67 +44,101 @@ impl Renderer {
                 ..Default::default()
             };
             unsafe {
-                let (buffer, mut allocation) = platform.allocator.as_ref().unwrap()
-                    .create_buffer(&buffer_info, &allocation_info)
-                    .unwrap();
-                let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
-                    .unwrap()
-                    .cast::<f32>();
-                data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len());
-                platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
-                (buffer, allocation)
+                match platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info) {
+                    Ok((buffer, mut allocation)) => {
+                        let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
+                            .unwrap()
+                            .cast::<f32>();
+                        data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len());
+                        platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                        (buffer, allocation)
+                    }
+                    Err(e) => {
+                        println!("Failed to create uniform buffer: {:?}", e);
+                        panic!("Uniform buffer creation failed");
+                    }
+                }
             }
         };
 
         let descriptor_set_layout = unsafe {
-            let binding = vk::DescriptorSetLayoutBinding {
-                binding: 0,
-                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::VERTEX,
-                p_immutable_samplers: std::ptr::null(),
-                _marker: PhantomData,
-            };
-            platform.device.as_ref().unwrap().create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
+            let bindings = [
+                vk::DescriptorSetLayoutBinding {
+                    binding: 0,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    p_immutable_samplers: std::ptr::null(),
+                    _marker: PhantomData,
+                },
+                vk::DescriptorSetLayoutBinding {
+                    binding: 1,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    p_immutable_samplers: std::ptr::null(),
+                    _marker: PhantomData,
+                },
+            ];
+            match platform.device.as_ref().unwrap().create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                 p_next: std::ptr::null(),
                 flags: vk::DescriptorSetLayoutCreateFlags::empty(),
-                binding_count: 1,
-                p_bindings: &binding,
+                binding_count: bindings.len() as u32,
+                p_bindings: bindings.as_ptr(),
                 _marker: PhantomData,
-            }, None)
-        }
-        .unwrap();
+            }, None) {
+                Ok(layout) => layout,
+                Err(e) => {
+                    println!("Failed to create descriptor set layout: {:?}", e);
+                    panic!("Descriptor set layout creation failed");
+                }
+            }
+        };
 
         let descriptor_pool = unsafe {
-            let pool_size = vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 1,
-            };
-            platform.device.as_ref().unwrap().create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
+            let pool_sizes = [
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 2 * (1 + scene.render_objects.len() as u32), // 2 descriptors (proj + offset) per set
+                },
+            ];
+            match platform.device.as_ref().unwrap().create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
                 p_next: std::ptr::null(),
-                flags: vk::DescriptorPoolCreateFlags::empty(), // Fixed syntax
-                max_sets: 1,
-                pool_size_count: 1,
-                p_pool_sizes: &pool_size,
+                flags: vk::DescriptorPoolCreateFlags::empty(),
+                max_sets: 1 + scene.render_objects.len() as u32, // 1 proj set + 1 per object
+                pool_size_count: pool_sizes.len() as u32,
+                p_pool_sizes: pool_sizes.as_ptr(),
                 _marker: PhantomData,
-            }, None)
-        }
-        .unwrap();
+            }, None) {
+                Ok(pool) => pool,
+                Err(e) => {
+                    println!("Failed to create descriptor pool: {:?}", e);
+                    panic!("Descriptor pool creation failed");
+                }
+            }
+        };
 
-        let descriptor_set = unsafe {
-            platform.device.as_ref().unwrap().allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
+        let descriptor_sets = unsafe {
+            let layouts = vec![descriptor_set_layout; 1 + scene.render_objects.len()];
+            match platform.device.as_ref().unwrap().allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
                 p_next: std::ptr::null(),
                 descriptor_pool,
-                descriptor_set_count: 1,
-                p_set_layouts: &descriptor_set_layout,
+                descriptor_set_count: layouts.len() as u32,
+                p_set_layouts: layouts.as_ptr(),
                 _marker: PhantomData,
-            })
-        }
-        .unwrap()[0];
+            }) {
+                Ok(sets) => sets,
+                Err(e) => {
+                    println!("Failed to allocate descriptor sets: {:?}", e);
+                    panic!("Descriptor set allocation failed");
+                }
+            }
+        };
 
+        let descriptor_set = descriptor_sets[0]; // Projection set
         unsafe {
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer: uniform_buffer,
@@ -127,7 +161,7 @@ impl Renderer {
         }
 
         let pipeline_layout = unsafe {
-            platform.device.as_ref().unwrap().create_pipeline_layout(&vk::PipelineLayoutCreateInfo {
+            match platform.device.as_ref().unwrap().create_pipeline_layout(&vk::PipelineLayoutCreateInfo {
                 s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
                 p_next: std::ptr::null(),
                 flags: vk::PipelineLayoutCreateFlags::empty(),
@@ -136,12 +170,17 @@ impl Renderer {
                 push_constant_range_count: 0,
                 p_push_constant_ranges: std::ptr::null(),
                 _marker: PhantomData,
-            }, None)
-        }
-        .unwrap();
+            }, None) {
+                Ok(layout) => layout,
+                Err(e) => {
+                    println!("Failed to create pipeline layout: {:?}", e);
+                    panic!("Pipeline layout creation failed");
+                }
+            }
+        };
 
         let mut renderables = Vec::new();
-        for obj in &scene.render_objects {
+        for (i, obj) in scene.render_objects.iter().enumerate() {
             let vertices = &obj.vertices;
             let (vertex_buffer, vertex_allocation) = {
                 let buffer_info = vk::BufferCreateInfo {
@@ -161,15 +200,20 @@ impl Renderer {
                     ..Default::default()
                 };
                 unsafe {
-                    let (buffer, mut allocation) = platform.allocator.as_ref().unwrap()
-                        .create_buffer(&buffer_info, &allocation_info)
-                        .unwrap();
-                    let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
-                        .unwrap()
-                        .cast::<Vertex>();
-                    data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
-                    platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
-                    (buffer, allocation)
+                    match platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info) {
+                        Ok((buffer, mut allocation)) => {
+                            let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
+                                .unwrap()
+                                .cast::<Vertex>();
+                            data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
+                            platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                            (buffer, allocation)
+                        }
+                        Err(e) => {
+                            println!("Failed to create vertex buffer: {:?}", e);
+                            panic!("Vertex buffer creation failed");
+                        }
+                    }
                 }
             };
 
@@ -191,18 +235,67 @@ impl Renderer {
                     ..Default::default()
                 };
                 unsafe {
-                    let (buffer, mut allocation) = platform.allocator.as_ref().unwrap()
-                        .create_buffer(&buffer_info, &allocation_info)
-                        .unwrap();
-                    let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
-                        .unwrap()
-                        .cast::<f32>();
-                    data_ptr.copy_from_nonoverlapping(obj.offset.as_ptr(), 2);
-                    println!("Initialized offset for object (depth {}): {:?}", obj.depth, obj.offset); // Debug log
-                    platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
-                    (buffer, allocation)
+                    match platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info) {
+                        Ok((buffer, mut allocation)) => {
+                            let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
+                                .unwrap()
+                                .cast::<f32>();
+                            data_ptr.copy_from_nonoverlapping(obj.offset.as_ptr(), 2);
+                            platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                            (buffer, allocation)
+                        }
+                        Err(e) => {
+                            println!("Failed to create offset uniform buffer: {:?}", e);
+                            panic!("Offset uniform buffer creation failed");
+                        }
+                    }
                 }
             };
+
+            let descriptor_set = descriptor_sets[i + 1];
+            unsafe {
+                let buffer_infos = [
+                    vk::DescriptorBufferInfo {
+                        buffer: uniform_buffer,
+                        offset: 0,
+                        range: std::mem::size_of_val(&ortho) as u64,
+                    },
+                    vk::DescriptorBufferInfo {
+                        buffer: offset_uniform,
+                        offset: 0,
+                        range: std::mem::size_of::<[f32; 2]>() as u64,
+                    },
+                ];
+                let write_sets = [
+                    vk::WriteDescriptorSet {
+                        s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                        p_next: std::ptr::null(),
+                        dst_set: descriptor_set,
+                        dst_binding: 0,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                        p_image_info: std::ptr::null(),
+                        p_buffer_info: &buffer_infos[0],
+                        p_texel_buffer_view: std::ptr::null(),
+                        _marker: PhantomData,
+                    },
+                    vk::WriteDescriptorSet {
+                        s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                        p_next: std::ptr::null(),
+                        dst_set: descriptor_set,
+                        dst_binding: 1,
+                        dst_array_element: 0,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                        p_image_info: std::ptr::null(),
+                        p_buffer_info: &buffer_infos[1],
+                        p_texel_buffer_view: std::ptr::null(),
+                        _marker: PhantomData,
+                    },
+                ];
+                platform.device.as_ref().unwrap().update_descriptor_sets(&write_sets, &[]);
+            }
 
             let vertex_shader = load_shader(platform.device.as_ref().unwrap(), &obj.vertex_shader_filename);
             let fragment_shader = load_shader(platform.device.as_ref().unwrap(), &obj.fragment_shader_filename);
@@ -357,9 +450,13 @@ impl Renderer {
                 };
 
                 unsafe {
-                    platform.device.as_ref().unwrap()
-                        .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-                        .unwrap()[0]
+                    match platform.device.as_ref().unwrap().create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None) {
+                        Ok(pipelines) => pipelines[0],
+                        Err(e) => {
+                            println!("Failed to create graphics pipeline: {:?}", e);
+                            panic!("Graphics pipeline creation failed");
+                        }
+                    }
                 }
             };
 
@@ -378,6 +475,7 @@ impl Renderer {
                 pipeline,
                 offset_uniform,
                 offset_allocation,
+                descriptor_set,
                 vertex_count: vertices.len() as u32,
                 depth: obj.depth,
                 on_window_resize_scale: obj.on_window_resize_scale,
@@ -393,13 +491,25 @@ impl Renderer {
         record_command_buffers(platform, &renderables, pipeline_layout, descriptor_set, extent);
 
         platform.image_available_semaphore = Some(unsafe {
-            platform.device.as_ref().unwrap().create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-        }.unwrap());
+            match platform.device.as_ref().unwrap().create_semaphore(&vk::SemaphoreCreateInfo::default(), None) {
+                Ok(semaphore) => semaphore,
+                Err(e) => {
+                    println!("Failed to create image available semaphore: {:?}", e);
+                    panic!("Semaphore creation failed");
+                }
+            }
+        });
         platform.render_finished_semaphore = Some(unsafe {
-            platform.device.as_ref().unwrap().create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-        }.unwrap());
+            match platform.device.as_ref().unwrap().create_semaphore(&vk::SemaphoreCreateInfo::default(), None) {
+                Ok(semaphore) => semaphore,
+                Err(e) => {
+                    println!("Failed to create render finished semaphore: {:?}", e);
+                    panic!("Semaphore creation failed");
+                }
+            }
+        });
         platform.fence = Some(unsafe {
-            platform.device.as_ref().unwrap().create_fence(
+            match platform.device.as_ref().unwrap().create_fence(
                 &vk::FenceCreateInfo {
                     s_type: vk::StructureType::FENCE_CREATE_INFO,
                     p_next: std::ptr::null(),
@@ -407,8 +517,14 @@ impl Renderer {
                     _marker: PhantomData,
                 },
                 None,
-            )
-        }.unwrap());
+            ) {
+                Ok(fence) => fence,
+                Err(e) => {
+                    println!("Failed to create fence: {:?}", e);
+                    panic!("Fence creation failed");
+                }
+            }
+        });
 
         Self {
             vulkan_renderables: renderables,
@@ -548,6 +664,8 @@ impl Renderer {
         let swapchain_loader = platform.swapchain_loader.take().unwrap();
 
         unsafe {
+            device.device_wait_idle().unwrap(); // Ensure all operations complete
+
             device.destroy_semaphore(platform.image_available_semaphore.take().unwrap(), None);
             device.destroy_semaphore(platform.render_finished_semaphore.take().unwrap(), None);
             device.destroy_fence(platform.fence.take().unwrap(), None);
@@ -572,13 +690,13 @@ impl Renderer {
                     .destroy_buffer(renderable.offset_uniform, &mut renderable.offset_allocation);
             }
 
-            device.destroy_descriptor_pool(self.descriptor_pool, None);
-            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             platform
                 .allocator
                 .as_ref()
                 .unwrap()
                 .destroy_buffer(self.uniform_buffer, &mut self.uniform_allocation);
+            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
 
             for &framebuffer in &platform.framebuffers {
                 device.destroy_framebuffer(framebuffer, None);

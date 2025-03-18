@@ -9,6 +9,7 @@ pub struct RenderObject {
     pub on_window_resize_scale: bool,
     pub on_window_resize_move: bool,
     pub offset: [f32; 2],
+    pub is_draggable: bool, // Added to control drag behavior
 }
 
 #[derive(Debug)]
@@ -51,7 +52,7 @@ impl Scene {
 
     pub fn pick_object_at(&self, x: f32, y: f32) -> Option<usize> {
         self.render_objects.iter().enumerate()
-            .filter(|(_, obj)| obj.contains(x, y))
+            .filter(|(_, obj)| obj.is_draggable && obj.contains(x, y)) // Only draggable objects
             .max_by(|a, b| a.1.depth.partial_cmp(&b.1.depth).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
     }

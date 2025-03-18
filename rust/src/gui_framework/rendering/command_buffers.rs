@@ -7,7 +7,7 @@ pub fn record_command_buffers(
     platform: &mut VulkanContext,
     renderables: &[Renderable],
     pipeline_layout: vk::PipelineLayout,
-    descriptor_set: vk::DescriptorSet,
+    _projection_descriptor_set: vk::DescriptorSet, // No longer used directly
     extent: vk::Extent2D,
 ) {
     let device = platform.device.as_ref().unwrap();
@@ -26,6 +26,11 @@ pub fn record_command_buffers(
             })
             .unwrap()
     };
+
+    if let Some(command_pool) = platform.command_pool.take() {
+        unsafe { device.destroy_command_pool(command_pool, None) };
+    }
+
     let command_pool = unsafe {
         device.create_command_pool(
             &vk::CommandPoolCreateInfo {
@@ -63,6 +68,7 @@ pub fn record_command_buffers(
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 0.0] },
     }];
+
     for (&command_buffer, &framebuffer) in platform.command_buffers.iter().zip(platform.framebuffers.iter()) {
         unsafe {
             device.begin_command_buffer(command_buffer, &begin_info).unwrap();
@@ -95,17 +101,16 @@ pub fn record_command_buffers(
             device.cmd_set_viewport(command_buffer, 0, &[viewport]);
             device.cmd_set_scissor(command_buffer, 0, &[scissor]);
 
-            device.cmd_bind_descriptor_sets(
-                command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline_layout,
-                0,
-                &[descriptor_set],
-                &[],
-            );
-
             for renderable in renderables {
                 device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, renderable.pipeline);
+                device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline_layout,
+                    0,
+                    &[renderable.descriptor_set], // Use per-object descriptor set
+                    &[],
+                );
                 device.cmd_bind_vertex_buffers(command_buffer, 0, &[renderable.vertex_buffer], &[0]);
                 device.cmd_draw(command_buffer, renderable.vertex_count, 1, 0, 0);
             }

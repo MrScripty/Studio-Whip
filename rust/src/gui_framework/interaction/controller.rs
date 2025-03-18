@@ -51,14 +51,14 @@ impl InteractionController {
                     let pos = [position.x as f32, position.y as f32];
                     if matches!(self.context, CursorContext::Canvas) && self.mouse_state.is_dragging {
                         if let Some(last_pos) = self.mouse_state.last_position {
-                            let delta = [pos[0] - last_pos[0], pos[1] - last_pos[1]];
+                            let delta = [pos[0] - last_pos[0], last_pos[1] - pos[1]]; // Invert Y-delta
+                            println!("Dragging delta: {:?}", delta);
                             if let Some(scene) = scene {
                                 if let Some(index) = self.mouse_state.dragged_object {
                                     scene.translate_object(index, delta[0], delta[1]);
-                                    window.request_redraw(); // Request redraw to update visuals
+                                    window.request_redraw();
                                 }
                             }
-                            println!("Dragging delta: {:?}", delta);
                         }
                         self.mouse_state.last_position = Some(pos);
                     } else {
@@ -68,6 +68,7 @@ impl InteractionController {
                 WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
                     if matches!(self.context, CursorContext::Canvas) && self.mouse_state.is_dragging {
                         self.mouse_state.is_dragging = false;
+                        self.mouse_state.dragged_object = None;
                         println!("Dragging stopped at {:?}", self.mouse_state.last_position);
                     }
                 }

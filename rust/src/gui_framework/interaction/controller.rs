@@ -31,13 +31,19 @@ impl InteractionController {
         }
     }
 
-    pub fn handle_event(&mut self, event: &Event<()>, _scene: Option<&Scene>, _renderer: Option<&mut Renderer>, _window: &Window) {
+    pub fn handle_event(&mut self, event: &Event<()>, scene: Option<&mut Scene>, _renderer: Option<&mut Renderer>, window: &Window) {
         if let Event::WindowEvent { event, .. } = event {
             match event {
                 WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                     if matches!(self.context, CursorContext::Canvas) {
                         self.mouse_state.is_dragging = true;
                         let pos = self.mouse_state.last_position.unwrap_or([0.0, 0.0]);
+                        if let Some(scene) = scene {
+                            if let Some(index) = scene.pick_object_at(pos[0], pos[1]) {
+                                self.mouse_state.dragged_object = Some(index);
+                                println!("Clicked object: {:?}", index);
+                            }
+                        }
                         println!("Dragging started at {:?}", pos);
                     }
                 }
@@ -45,8 +51,14 @@ impl InteractionController {
                     let pos = [position.x as f32, position.y as f32];
                     if matches!(self.context, CursorContext::Canvas) && self.mouse_state.is_dragging {
                         if let Some(last_pos) = self.mouse_state.last_position {
-                            let _delta = [pos[0] - last_pos[0], pos[1] - last_pos[1]];
-                            println!("Dragging delta: {:?}", _delta);
+                            let delta = [pos[0] - last_pos[0], last_pos[1] - pos[1]]; // Invert Y-delta
+                            println!("Dragging delta: {:?}", delta);
+                            if let Some(scene) = scene {
+                                if let Some(index) = self.mouse_state.dragged_object {
+                                    scene.translate_object(index, delta[0], delta[1]);
+                                    window.request_redraw();
+                                }
+                            }
                         }
                         self.mouse_state.last_position = Some(pos);
                     } else {
@@ -56,6 +68,7 @@ impl InteractionController {
                 WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
                     if matches!(self.context, CursorContext::Canvas) && self.mouse_state.is_dragging {
                         self.mouse_state.is_dragging = false;
+                        self.mouse_state.dragged_object = None;
                         println!("Dragging stopped at {:?}", self.mouse_state.last_position);
                     }
                 }

@@ -1,5 +1,5 @@
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, MouseButton, Event}; // Ensure Event is imported
+use winit::event::{WindowEvent, MouseButton, Event};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 use winit::dpi::PhysicalSize;
@@ -60,8 +60,8 @@ impl ApplicationHandler for VulkanContextHandler {
             }
             WindowEvent::RedrawRequested => {
                 if !self.resizing {
-                    if let Some(renderer) = &self.renderer {
-                        renderer.render(&mut self.vulkan_context);
+                    if let Some(renderer) = &mut self.renderer {
+                        renderer.render(&mut self.vulkan_context, &self.scene); // Pass scene
                     }
                     if let Some(window) = &self.vulkan_context.window {
                         window.request_redraw();
@@ -78,17 +78,15 @@ impl ApplicationHandler for VulkanContextHandler {
                     window.request_redraw();
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => {
+            WindowEvent::MouseInput { state: _state, button, .. } => {
                 if button == MouseButton::Left {
-                    //println!("Mouse input detected: state={:?}, button={:?}", state, button); // Debug log
                     let wrapped_event = Event::WindowEvent { event, window_id: _id };
-                    self.controller.handle_event(&wrapped_event, None, None, self.vulkan_context.window.as_ref().unwrap());
+                    self.controller.handle_event(&wrapped_event, Some(&mut self.scene), None, self.vulkan_context.window.as_ref().unwrap());
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                //println!("Cursor moved to: {:?}", position); // Debug log
+            WindowEvent::CursorMoved { position: _position, .. } => {
                 let wrapped_event = Event::WindowEvent { event, window_id: _id };
-                self.controller.handle_event(&wrapped_event, None, None, self.vulkan_context.window.as_ref().unwrap());
+                self.controller.handle_event(&wrapped_event, Some(&mut self.scene), None, self.vulkan_context.window.as_ref().unwrap());
             }
             _ => (),
         }

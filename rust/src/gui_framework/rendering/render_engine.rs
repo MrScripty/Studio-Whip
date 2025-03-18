@@ -17,7 +17,7 @@ pub struct Renderer {
     uniform_allocation: vk_mem::Allocation,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
-    descriptor_set: vk::DescriptorSet, // For projection uniform only
+    descriptor_set: vk::DescriptorSet,
 }
 
 impl Renderer {
@@ -100,14 +100,14 @@ impl Renderer {
             let pool_sizes = [
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: 2 * (1 + scene.render_objects.len() as u32), // 2 descriptors (proj + offset) per set
+                    descriptor_count: 2 * (1 + scene.render_objects.len() as u32),
                 },
             ];
             match platform.device.as_ref().unwrap().create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
                 p_next: std::ptr::null(),
                 flags: vk::DescriptorPoolCreateFlags::empty(),
-                max_sets: 1 + scene.render_objects.len() as u32, // 1 proj set + 1 per object
+                max_sets: 1 + scene.render_objects.len() as u32,
                 pool_size_count: pool_sizes.len() as u32,
                 p_pool_sizes: pool_sizes.as_ptr(),
                 _marker: PhantomData,
@@ -138,7 +138,7 @@ impl Renderer {
             }
         };
 
-        let descriptor_set = descriptor_sets[0]; // Projection set
+        let descriptor_set = descriptor_sets[0];
         unsafe {
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer: uniform_buffer,
@@ -537,6 +537,37 @@ impl Renderer {
         }
     }
 
+    pub fn update_offset(&mut self, device: &ash::Device, allocator: &vk_mem::Allocator, index: usize, offset: [f32; 2]) {
+        let renderable = &mut self.vulkan_renderables[index];
+        unsafe {
+            let data_ptr = allocator
+                .map_memory(&mut renderable.offset_allocation)
+                .unwrap()
+                .cast::<f32>();
+            data_ptr.copy_from_nonoverlapping(offset.as_ptr(), 2);
+            allocator.unmap_memory(&mut renderable.offset_allocation);
+
+            let buffer_info = vk::DescriptorBufferInfo {
+                buffer: renderable.offset_uniform,
+                offset: 0,
+                range: std::mem::size_of::<[f32; 2]>() as u64,
+            };
+            device.update_descriptor_sets(&[vk::WriteDescriptorSet {
+                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                p_next: std::ptr::null(),
+                dst_set: renderable.descriptor_set,
+                dst_binding: 1,
+                dst_array_element: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                p_image_info: std::ptr::null(),
+                p_buffer_info: &buffer_info,
+                p_texel_buffer_view: std::ptr::null(),
+                _marker: PhantomData,
+            }], &[]);
+        }
+    }
+
     pub fn resize_renderer(&mut self, vulkan_context: &mut VulkanContext, width: u32, height: u32) {
         let device = vulkan_context.device.as_ref().unwrap();
         unsafe { device.device_wait_idle().unwrap() };
@@ -605,58 +636,56 @@ impl Renderer {
         record_command_buffers(vulkan_context, &self.vulkan_renderables, self.pipeline_layout, self.descriptor_set, extent);
     }
 
-    pub fn render(&self, platform: &mut VulkanContext) {
-        if let (
-            Some(device),
-            Some(queue),
-            Some(swapchain_loader),
-            Some(swapchain),
-        ) = (
-            platform.device.as_ref(),
-            platform.queue,
-            platform.swapchain_loader.as_ref(),
-            platform.swapchain,
-        ) {
-            let image_available_semaphore = platform.image_available_semaphore.unwrap();
-            let render_finished_semaphore = platform.render_finished_semaphore.unwrap();
-            let fence = platform.fence.unwrap();
+    pub fn render(&mut self, platform: &mut VulkanContext, scene: &Scene) {
+        let device = platform.device.as_ref().unwrap();
+        let queue = platform.queue.unwrap();
+        let swapchain_loader = platform.swapchain_loader.as_ref().unwrap();
+        let swapchain = platform.swapchain.unwrap();
+        let image_available_semaphore = platform.image_available_semaphore.unwrap();
+        let render_finished_semaphore = platform.render_finished_semaphore.unwrap();
+        let fence = platform.fence.unwrap();
+        let allocator = platform.allocator.as_ref().unwrap();
 
-            unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }.unwrap();
-            unsafe { device.reset_fences(&[fence]) }.unwrap();
-
-            let (image_index, _) = unsafe {
-                swapchain_loader.acquire_next_image(swapchain, u64::MAX, image_available_semaphore, vk::Fence::null())
-            }
-            .unwrap();
-            platform.current_image = image_index as usize;
-
-            let submit_info = vk::SubmitInfo {
-                s_type: vk::StructureType::SUBMIT_INFO,
-                p_next: std::ptr::null(),
-                wait_semaphore_count: 1,
-                p_wait_semaphores: &image_available_semaphore,
-                p_wait_dst_stage_mask: &vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT as *const _,
-                command_buffer_count: 1,
-                p_command_buffers: &platform.command_buffers[platform.current_image],
-                signal_semaphore_count: 1,
-                p_signal_semaphores: &render_finished_semaphore,
-                _marker: PhantomData,
-            };
-            unsafe { device.queue_submit(queue, &[submit_info], fence) }.unwrap();
-
-            let present_info = vk::PresentInfoKHR {
-                s_type: vk::StructureType::PRESENT_INFO_KHR,
-                p_next: std::ptr::null(),
-                wait_semaphore_count: 1,
-                p_wait_semaphores: &render_finished_semaphore,
-                swapchain_count: 1,
-                p_swapchains: &swapchain,
-                p_image_indices: &(platform.current_image as u32),
-                p_results: std::ptr::null_mut(),
-                _marker: PhantomData,
-            };
-            unsafe { swapchain_loader.queue_present(queue, &present_info) }.unwrap();
+        // Sync all offsets before rendering
+        for (i, obj) in scene.render_objects.iter().enumerate() {
+            self.update_offset(device, allocator, i, obj.offset);
         }
+
+        unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }.unwrap();
+        unsafe { device.reset_fences(&[fence]) }.unwrap();
+
+        let (image_index, _) = unsafe {
+            swapchain_loader.acquire_next_image(swapchain, u64::MAX, image_available_semaphore, vk::Fence::null())
+        }
+        .unwrap();
+        platform.current_image = image_index as usize;
+
+        let submit_info = vk::SubmitInfo {
+            s_type: vk::StructureType::SUBMIT_INFO,
+            p_next: std::ptr::null(),
+            wait_semaphore_count: 1,
+            p_wait_semaphores: &image_available_semaphore,
+            p_wait_dst_stage_mask: &vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT as *const _,
+            command_buffer_count: 1,
+            p_command_buffers: &platform.command_buffers[platform.current_image],
+            signal_semaphore_count: 1,
+            p_signal_semaphores: &render_finished_semaphore,
+            _marker: PhantomData,
+        };
+        unsafe { device.queue_submit(queue, &[submit_info], fence) }.unwrap();
+
+        let present_info = vk::PresentInfoKHR {
+            s_type: vk::StructureType::PRESENT_INFO_KHR,
+            p_next: std::ptr::null(),
+            wait_semaphore_count: 1,
+            p_wait_semaphores: &render_finished_semaphore,
+            swapchain_count: 1,
+            p_swapchains: &swapchain,
+            p_image_indices: &(platform.current_image as u32),
+            p_results: std::ptr::null_mut(),
+            _marker: PhantomData,
+        };
+        unsafe { swapchain_loader.queue_present(queue, &present_info) }.unwrap();
     }
 
     pub fn cleanup(mut self, platform: &mut VulkanContext) {
@@ -664,7 +693,7 @@ impl Renderer {
         let swapchain_loader = platform.swapchain_loader.take().unwrap();
 
         unsafe {
-            device.device_wait_idle().unwrap(); // Ensure all operations complete
+            device.device_wait_idle().unwrap();
 
             device.destroy_semaphore(platform.image_available_semaphore.take().unwrap(), None);
             device.destroy_semaphore(platform.render_finished_semaphore.take().unwrap(), None);

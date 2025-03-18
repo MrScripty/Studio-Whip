@@ -188,10 +188,9 @@ rusty_whip/
 ---
 
 ## Dependencies
-- **Cargo.toml** (assumed):
-  ```toml
-  [dependencies]
-  ash = "0.37"
-  vk-mem = "0.2"
-  winit = "0.28"
-  glam = "0.22"
+## Dependencies
+  ash = "0.38"
+  ash-window = "0.13"
+  vk-mem = "0.4"
+  winit = "0.30.9"
+  glam = "0.3

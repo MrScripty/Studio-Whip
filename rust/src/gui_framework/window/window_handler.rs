@@ -61,7 +61,7 @@ impl ApplicationHandler for VulkanContextHandler {
             WindowEvent::RedrawRequested => {
                 if !self.resizing {
                     if let Some(renderer) = &mut self.renderer {
-                        renderer.render(&mut self.vulkan_context, &self.scene); // Pass scene
+                        renderer.render(&mut self.vulkan_context, &self.scene);
                     }
                     if let Some(window) = &self.vulkan_context.window {
                         window.request_redraw();
@@ -71,7 +71,7 @@ impl ApplicationHandler for VulkanContextHandler {
             WindowEvent::Resized(size) => {
                 self.resizing = true;
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.resize_renderer(&mut self.vulkan_context, size.width, size.height);
+                    renderer.resize_renderer(&mut self.vulkan_context, &mut self.scene, size.width, size.height);
                 }
                 self.resizing = false;
                 if let Some(window) = &self.vulkan_context.window {

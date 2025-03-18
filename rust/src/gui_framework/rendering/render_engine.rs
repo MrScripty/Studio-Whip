@@ -568,7 +568,7 @@ impl Renderer {
         }
     }
 
-    pub fn resize_renderer(&mut self, vulkan_context: &mut VulkanContext, width: u32, height: u32) {
+    pub fn resize_renderer(&mut self, vulkan_context: &mut VulkanContext, scene: &mut Scene, width: u32, height: u32) {
         let device = vulkan_context.device.as_ref().unwrap();
         unsafe { device.device_wait_idle().unwrap() };
 
@@ -595,7 +595,7 @@ impl Renderer {
         unsafe { data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len()) };
         unsafe { vulkan_context.allocator.as_ref().unwrap().unmap_memory(&mut self.uniform_allocation) };
 
-        for renderable in &mut self.vulkan_renderables {
+        for (renderable, obj) in self.vulkan_renderables.iter_mut().zip(scene.render_objects.iter_mut()) {
             let mut new_vertices = Vec::new();
             if renderable.on_window_resize_scale {
                 new_vertices = vec![
@@ -631,8 +631,10 @@ impl Renderer {
                 .cast::<Vertex>();
             unsafe { data_ptr.copy_from_nonoverlapping(new_vertices.as_ptr(), new_vertices.len()) };
             unsafe { vulkan_context.allocator.as_ref().unwrap().unmap_memory(&mut renderable.vertex_allocation) };
+            obj.vertices = new_vertices; // Sync Scene vertices
         }
 
+        scene.update_dimensions(width, height); // Update Scene dimensions
         record_command_buffers(vulkan_context, &self.vulkan_renderables, self.pipeline_layout, self.descriptor_set, extent);
     }
 

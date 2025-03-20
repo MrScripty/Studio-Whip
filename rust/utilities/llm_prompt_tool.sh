@@ -1,7 +1,10 @@
 #!/bin/bash
 
-# Define absolute paths
-BASE_DIR="/home/deck/Desktop/Rust/Studio-Whip/rust"
+# Dynamically determine the base directory based on the script's location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"  # Assumes script is in a subdirectory (e.g., utilities) of the project root
+
+# Define paths relative to BASE_DIR
 SRC_DIR="$BASE_DIR/src"
 DOCS_DIR="$BASE_DIR/documentation"
 

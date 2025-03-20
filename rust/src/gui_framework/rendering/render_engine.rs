@@ -100,14 +100,14 @@ impl Renderer {
             let pool_sizes = [
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: 2 * (1 + scene.render_objects.len() as u32),
+                    descriptor_count: 2 * (1 + scene.pool.len() as u32),
                 },
             ];
             match platform.device.as_ref().unwrap().create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
                 p_next: std::ptr::null(),
                 flags: vk::DescriptorPoolCreateFlags::empty(),
-                max_sets: 1 + scene.render_objects.len() as u32,
+                max_sets: 1 + scene.pool.len() as u32,
                 pool_size_count: pool_sizes.len() as u32,
                 p_pool_sizes: pool_sizes.as_ptr(),
                 _marker: PhantomData,
@@ -121,7 +121,7 @@ impl Renderer {
         };
 
         let descriptor_sets = unsafe {
-            let layouts = vec![descriptor_set_layout; 1 + scene.render_objects.len()];
+            let layouts = vec![descriptor_set_layout; 1 + scene.pool.len()];
             match platform.device.as_ref().unwrap().allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
                 p_next: std::ptr::null(),
@@ -180,7 +180,7 @@ impl Renderer {
         };
 
         let mut renderables = Vec::new();
-        for (i, obj) in scene.render_objects.iter().enumerate() {
+        for (i, obj) in scene.pool.iter().enumerate() {
             let vertices = &obj.vertices;
             let (vertex_buffer, vertex_allocation) = {
                 let buffer_info = vk::BufferCreateInfo {
@@ -595,7 +595,7 @@ impl Renderer {
         unsafe { data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len()) };
         unsafe { vulkan_context.allocator.as_ref().unwrap().unmap_memory(&mut self.uniform_allocation) };
 
-        for (renderable, obj) in self.vulkan_renderables.iter_mut().zip(scene.render_objects.iter_mut()) {
+        for (renderable, obj) in self.vulkan_renderables.iter_mut().zip(scene.pool.iter_mut()) {
             let mut new_vertices = Vec::new();
             if renderable.on_window_resize_scale {
                 new_vertices = vec![
@@ -649,7 +649,7 @@ impl Renderer {
         let allocator = platform.allocator.as_ref().unwrap();
 
         // Sync all offsets before rendering
-        for (i, obj) in scene.render_objects.iter().enumerate() {
+        for (i, obj) in scene.pool.iter().enumerate() {
             self.update_offset(device, allocator, i, obj.offset);
         }
 

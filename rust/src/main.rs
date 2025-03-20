@@ -58,6 +58,40 @@ fn main() {
         is_draggable: true, // Square draggable
     });
 
+    // Add a group with two new objects
+    scene.add_group(vec![
+        RenderObject {
+            vertices: vec![
+                Vertex { position: [400.0, 200.0] },
+                Vertex { position: [400.0, 230.0] },
+                Vertex { position: [430.0, 230.0] },
+                Vertex { position: [430.0, 200.0] },
+            ],
+            vertex_shader_filename: "square.vert.spv".to_string(), // Reuse square shader
+            fragment_shader_filename: "square.frag.spv".to_string(),
+            depth: 3.0,
+            on_window_resize_scale: false,
+            on_window_resize_move: true,
+            offset: [0.0, 0.0],
+            is_draggable: true, // Group will control draggability
+        },
+        RenderObject {
+            vertices: vec![
+                Vertex { position: [450.0, 190.0] },
+                Vertex { position: [450.0, 240.0] },
+                Vertex { position: [470.0, 240.0] },
+                Vertex { position: [470.0, 190.0] },
+            ],
+            vertex_shader_filename: "square.vert.spv".to_string(), // Reuse square shader
+            fragment_shader_filename: "square.frag.spv".to_string(),
+            depth: 4.0,
+            on_window_resize_scale: false,
+            on_window_resize_move: true,
+            offset: [0.0, 0.0],
+            is_draggable: true, // Group will control draggability
+        },
+    ], true); // Group is draggable
+
     let mut handler = VulkanContextHandler::new(vulkan_context, scene);
     event_loop.run_app(&mut handler).unwrap();
 }

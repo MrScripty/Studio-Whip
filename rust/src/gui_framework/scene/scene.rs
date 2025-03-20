@@ -44,6 +44,11 @@ impl ElementPool {
     }
 }
 
+#[derive(Debug)]
+pub struct Group {
+    element_ids: Vec<usize>,
+    is_draggable: bool,
+}
 
 #[derive(Debug)]
 pub struct RenderObject {
@@ -60,6 +65,7 @@ pub struct RenderObject {
 #[derive(Debug)]
 pub struct Scene {
     pub pool: ElementPool,
+    pub groups: Vec<Group>,
     pub width: f32,  // Current window width
     pub height: f32, // Current window height
 }
@@ -89,6 +95,7 @@ impl Scene {
     pub fn new() -> Self {
         Scene {
             pool: ElementPool::new(10000),
+            groups: Vec::new(),
             width: 600.0,  // Initial window width
             height: 300.0, // Initial window height
         }
@@ -106,17 +113,47 @@ impl Scene {
         self.pool.elements[element_id].offset = new_offset;
     }
 
+    pub fn add_group(&mut self, elements: Vec<RenderObject>, is_draggable: bool) -> usize {
+        let ids = self.add_objects(elements);
+        let group_id = self.groups.len();
+        self.groups.push(Group { element_ids: ids, is_draggable });
+        group_id
+    }
+
+    pub fn add_to_group(&mut self, group_id: usize, elements: Vec<RenderObject>) {
+        let ids = self.add_objects(elements);
+        self.groups[group_id].element_ids.extend(ids);
+    }
+
     pub fn pick_object_at(&self, x: f32, y: f32) -> Option<usize> {
-        self.pool.elements.iter().enumerate()
-            .filter(|(_, obj)| obj.is_draggable && obj.contains(x, y, self.height))
-            .max_by(|a, b| a.1.depth.partial_cmp(&b.1.depth).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(i, _)| i)
+        // Check groups first
+        self.groups.iter().enumerate()
+            .filter(|(_, group)| group.is_draggable)
+            .find_map(|(group_id, group)| {
+                group.element_ids.iter().any(|&id| {
+                    self.pool.elements[id].contains(x, y, self.height)
+                }).then_some(group_id)
+            })
+            .or_else(|| {
+                // Fallback to individual draggable objects
+                self.pool.iter().enumerate()
+                    .filter(|(_, obj)| obj.is_draggable && obj.contains(x, y, self.height))
+                    .max_by(|a, b| a.1.depth.partial_cmp(&b.1.depth).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(i, _)| i)
+            })
     }
 
     pub fn translate_object(&mut self, index: usize, dx: f32, dy: f32) {
-        let obj = &mut self.pool.elements[index];
-        obj.offset[0] += dx;
-        obj.offset[1] += dy;
+        if index < self.groups.len() {
+            for &id in &self.groups[index].element_ids {
+                self.pool.elements[id].offset[0] += dx;
+                self.pool.elements[id].offset[1] += dy;
+            }
+        } else if index < self.pool.len() {
+            let obj = &mut self.pool.elements[index];
+            obj.offset[0] += dx;
+            obj.offset[1] += dy;
+        }
     }
 
     pub fn update_dimensions(&mut self, width: u32, height: u32) {

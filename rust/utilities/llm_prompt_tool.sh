@@ -36,17 +36,17 @@ append_content() {
 }
 
 # CLI Interface
+echo "LLM Prompts"
 echo "Choose an option:"
-echo "1) Prompt Setup"
-echo "2) Code Prompt"
-echo "3) Documentation Prompt"
+echo "1) Start New Chat"
+echo "2) Get All Code"
+echo "3) Generate Documentation"
 echo "4) Custom Code List"
 read -p "Enter option (1-4): " option
 
 # Process files based on user option
 case "$option" in
-    1) # Prompt Setup
-        echo "Running Prompt Setup..."
+    1) # Start New Chat
         first_file=true
         # Process architecture.md first
         arch_md="$DOCS_DIR/architecture.md"
@@ -104,8 +104,7 @@ case "$option" in
         fi
         ;;
 
-    2) # Code Prompt
-        echo "Running Code Prompt..."
+    2) # Get All Code
         # Create a separate list for .rs files to ensure recursive search
         rs_list=$(mktemp)
         find "$SRC_DIR" -type f -name "*.rs" | sort > "$rs_list"
@@ -137,8 +136,7 @@ case "$option" in
         rm "$rs_list"  # Clean up rs_list
         ;;
 
-    3) # Documentation Prompt
-        echo "Running Documentation Prompt..."
+    3) # Generate Documentation
         doc_prompt="$DOCS_DIR/documentation_prompt.md"
         if [ -s "$doc_prompt" ]; then
             echo "Processing $doc_prompt"
@@ -150,7 +148,7 @@ case "$option" in
 
     4) # Custom Code List
         echo "Running Custom Code List..."
-        echo "Please paste the bash list of .rs files (space-separated, e.g., '/path/to/file1.rs /path/to/file2.rs') and press Enter:"
+        echo "Please paste the space-seperated file-path list and press Enter"
         read -r custom_files
         # Convert the space-separated list into a temporary file for processing
         echo "$custom_files" | tr ' ' '\n' | sort > "$file_list"

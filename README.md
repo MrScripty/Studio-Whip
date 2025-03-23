@@ -1,51 +1,62 @@
 # Studio-Whip
-Open source AI content production suite for movies and visual novels. Create compelling stories with seamlessly integrated image, video, text, and audio models. Our goal is not to replace creative talent, but enhance it with workflows and tools that can rapidly spark and refine ideas.
+An open-source AI-powered content production suite for movies and visual novels, featuring real-time collaboration. Create compelling stories with seamlessly integrated tools for image, video, text, and audio generation. Our goal is not to replace creative talent but to enhance it with a workflow that sparks and refines ideas rapidly.
 
-Enjoy complete privacy, customizability, and controlled costs with local model inference.
+Enjoy complete privacy, customizability, and controlled costs with local model inference—no subscriptions or cloud dependency required.
 
-### Major Planned Features:
-- __P2P real time collaboration:__ Free and easy access to remote group projects without any subscriptions or servers.
-- __Image 2 Image:__ With a powerful brush engine, 3D scene rendering, and refrence library.
-- __Story driven interface:__ The quality of any show is ultimatly dependant on its ability to tell captivating stories. Thats why we prioritize creative writing with advanced LLM integrations to guide the production process.
-- Node Editor
-- Story Boarding
-- XML Multimedia Sequencing
-- Color Managed Workspace
-- Color Grading (Davinci-like)
+---
 
-## Requirments (All platforms)
-- Vulkan 1.3 or later
-- Rustup (Latest Stable)
-- Nvidia GPU with 16GB+ VRAM recomended
+## Major Planned Features
+- **Story-Driven Interface**: Prioritizes captivating storytelling with advanced LLM integrations to guide the creative process.
+- **Storyboarding**: Generate, draw, or use 3D assets to create animatic storyboards alongside your script.
+- **Audio Mixing**: Sequence and edit music, sound effects, and dialogue using industry-standard techniques.
+- **P2P Real-Time Collaboration**: Work on group projects remotely with free, serverless peer-to-peer networking.
+- **Image-to-Image**: Leverage a powerful brush engine, 3D scene composition, and reference library tied to storyboards.
+- **Image-to-Video**: Generate videos guided by prompts and still images.
+- **Color Grading**: Express emotion with scopes, primary/secondary color adjustments, and more.
+- **XML Sequence Export/Import**: Transfer sequences to professional NLEs like DaVinci Resolve, Premiere, or Final Cut.
+- **Color-Managed Workspace**: Supports ACES, BT2020, REC-709, and P3 standards.
+- **Node Editor**: Flexible, visual workflow customization.
 
+---
 
-## Setup On Windows
-### Windows Dependency Download Links
-- Vulkan 1.3 or later : https://vulkan.lunarg.com/sdk/home#windows
-- Rustup (Latest Stable) : https://www.rust-lang.org/tools/install
+## Requirements (All Platforms)
+- **Vulkan**: 1.3 or later
+- **Rust**: Latest stable version (via Rustup)
+- **Recommended Hardware**: NVIDIA GPU with 16GB+ VRAM for optimal AI inference
+
+---
+
+## Setup on Windows
+### Dependencies
+- **Vulkan 1.3+**: [Download from LunarG](https://vulkan.lunarg.com/sdk/home#windows)
+- **Rustup**: [Install Rust](https://www.rust-lang.org/tools/install)
 
 ### Environment Variables
-After instalation of all dependencys, you will need to add an environment variable to Path pointing to VulkanSDK GLSLC. 
+After installing dependencies, add the Vulkan SDK's `glslc` compiler to your `Path`:
 
-1. Press ```Win+r``` and enter ```SystemPropertiesAdvanced```
-2. Go to ```Environment Variables...```
-3. Select ```Path``` then ```Edit```
-4. Click ```New``` and add the value ```C:\VulkanSDK\<version>\Bin```
-5. Press ```OK```
-6. You can varify it worked using ```glslc --version``` in powershell.
-7. Restart your IDE if it  was running while updating ```Path```
+1. Press `Win + R`, type `SystemPropertiesAdvanced`, and click `Environment Variables`.
+2. Under "System Variables" or "User Variables," select `Path` and click `Edit`.
+3. Click `New` and add: `C:\VulkanSDK\<version>\Bin` (replace `<version>` with your installed version).
+4. Click `OK` to save.
+5. Verify with `glslc --version` in PowerShell.
 
 ### Running PowerShell Scripts
-There are severeal optional powershell utility scripts that can be used for development. You might encounter the below error or notice the scripts dont do anything when run
+Optional development scripts (`.ps1`) may require enabling script execution:
 
-```
-<scriptName>.ps1 cannot be loaded because running scripts is disabled on this 
-system. For more information, see about_Execution_Policies at https:/go.microsoft.com/fwlink/?LinkID=135170.
-    + CategoryInfo          : SecurityError: (:) [], ParentContainsErrorRecordException
-    + FullyQualifiedErrorId : UnauthorizedAccess
-```
+1. Open PowerShell as Administrator (`Win + R` > `powershell` > `Ctrl + Shift + Enter`).
+2. Run: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`.
+3. Confirm with `Y` if prompted.
+4. Scripts should now work. If you see an error like `<scriptName>.ps1 cannot be loaded because running scripts is disabled`, this step resolves it.
 
-To fix this
-1. ```Win+r``` > ```powershell``` > ```Ctrl+Shift+Enter``` (to run as admin)
-2. Run ```Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned```
-3. You should now be able to run the *.ps1 scripts.
+---
+
+## Getting Started
+1. Clone the repository: `git clone https://github.com/<your-repo>/studio-whip.git`
+2. Navigate to the project: `cd studio-whip/rust`
+3. Build and run: `cargo run --release`
+
+---
+
+## Contributing
+Check out the [architecture overview](architecture.md) and [modules documentation](documentation/modules.md) to get started. Feel free to open issues or submit pull requests.
+

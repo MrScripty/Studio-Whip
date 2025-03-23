@@ -58,5 +58,5 @@ Optional development scripts (`.ps1`) may require enabling script execution:
 ---
 
 ## Contributing
-Check out the [architecture overview](architecture.md) and [modules documentation](documentation/modules.md) to get started. Feel free to open issues or submit pull requests.
+Check out the [architecture overview](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/architecture.md), [modules documentation](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/modules.md), [Roadmap](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/roadmap.md) to get started. Feel free to open issues or submit pull requests.
 

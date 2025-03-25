@@ -87,3 +87,6 @@ If you are using Windows, this allows you to run the linux shell script utlities
 ## Contributing
 Check out the [architecture overview](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/architecture.md), [modules documentation](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/modules.md), [Roadmap](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/roadmap.md) to get started.
 
+# Is This Production Ready?
+
+No. This is early development software mith many incomplete or missing features using cutting edge technology. Even the best Nvidia workstation AI GPU's still lack inference performance for rapid video generation and have restrictive VRAM limitations. 

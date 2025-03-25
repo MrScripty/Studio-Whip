@@ -1,5 +1,5 @@
 # Studio-Whip
-An open-source AI-enhanced collaborative content production suite for movies, comics, and interactive visual novels. Create compelling stories with seamlessly integrated tools for content generation and editing. Enhance your creative talent with tools 
+An open-source AI-enhanced collaborative content production suite for movies, comics, and interactive visual novels. Create compelling stories with seamlessly integrated tools to enhance your creative talents.
 
 Enjoy complete privacy, customizability, and controlled costs with local model inference—no subscriptions or cloud dependency is required, but cloud API usage is supported.
 

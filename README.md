@@ -17,9 +17,9 @@ Enjoy complete privacy, customizability, and controlled costs with local model i
 ## System Requirments
 **Sytem reqirments are almost entirly dependent on what AI models you choose**. There are [MANY](https://huggingface.co/) model choices. For the fastest user experience it is recomended to **use combinations of models specific for what you are doing that can be simutaniously loaded** as Studio Whip utalizes multiple models to provide various functionality. If multiple models do not fit in memory together they are still usable but will run slower.
 
-These are general guidlines for a good user experience using local models with at least one LLM and an image generation model simutaniously loaded. It does not represent the best possible single models the hardware is capable of using. 
-
 System requirments can be dramaticly decreased if utalizing cloud API services in Studio Whip such as [OpenRouter](https://openrouter.ai/) for LLM's and/or [Together.ai](https://www.together.ai/) for images and audio. Some models may even be availible for free (with limitations).
+
+These general guidlines are meant for a good user experience utalizing local models with at least one LLM and an image generation model simutaniously loaded. It does not represent the best possible single models that can be used, or the best model choice for your unique creative style.
 
 - AI TOPS are measured as FP8.
 - [See Passmark Ratings of CPU's](https://www.cpubenchmark.net/high_end_cpus.html)

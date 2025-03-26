@@ -69,15 +69,17 @@ A fast Single user workstation sutable for high quality models and video generat
 ### After installing requirments
 1. Clone the repository: `git clone https://github.com/<your-repo>/studio-whip.git`
 2. Navigate to the project: `cd studio-whip/rust`
-3. Build and run: `cargo run --release`
+3. Build: `cargo run --release`
 
-### For Windows
+### For Windows Users
 Install [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/), this allows you to run the linux shell script utlities located in [/rust/utilities](https://github.com/MrScripty/Studio-Whip/tree/main/rust/utilities)
 
 1. Open Powershell as admin and install wsl ```wsl --install```
 2. Find availible linux distros ```wsl --list --online```
 3. Install the latest Ubuntu LTS ```wsl --install --<distro>```
-4. Reboot your computer
+4. Win+R ```Ubuntu```
+5. Windows paths in Ubutu are located in ```/mnt/<lowercase-windows-drive-letter/<path-to-StudioWhip>/rust/utilities```
+6. You may need to install ```dos2unix``` in Ubuntu to convert windows line endings. example usage : ```dos2unix llm_prompt_tool.sh```
 
  After installing the Linux Subsystem, add the Vulkan SDK's `glslc` compiler to your ```system variables```:
 

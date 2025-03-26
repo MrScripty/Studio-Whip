@@ -1,12 +1,12 @@
-# Modules Documentation for `rusty_whip` (March 19, 2025)
+# Modules Documentation for `rusty_whip` (March 26, 2025)
 
 ## Project Overview: `rusty_whip`
 ### Purpose
-`rusty_whip` is an advanced 2D & 3D content generation application for digital entertainment production, emphasizing GPU-accelerated AI diffusion/inference, multimedia creation, and story-driven workflows, with plans for P2P networking. Current focus: 2D GUI with Vulkan rendering and click-and-drag.
+`rusty_whip` is an advanced 2D & 3D content generation application for digital entertainment production, emphasizing GPU-accelerated AI diffusion/inference, multimedia creation, and story-driven workflows, with plans for P2P networking. Current focus: 2D GUI with Vulkan rendering, click-and-drag, and object grouping.
 ### Current State
-- 2D GUI: Depth-sorted objects with orthographic projection, resizing, and dragging.
-- Features Implemented: Mouse detection, shader-based positioning, object picking/dragging.
-- Features Skipped: Resize conflict handling, context switching, undo.
+- 2D GUI: Depth-sorted objects with orthographic projection, resizing, dragging, and grouping.
+- Features Implemented: Mouse detection, shader-based positioning, object picking/dragging, group management.
+- Features Skipped: Resize conflict handling, context switching, undo, instancing.
 
 ## Module Structure
 rusty_whip/
@@ -41,7 +41,6 @@ rusty_whip/
     Cargo.toml
     build.rs
 
-
 ## Modules and Their Functions
 
 ### `src/lib.rs`
@@ -50,8 +49,8 @@ rusty_whip/
 
 ### `src/main.rs`
 - **Purpose**: Application entry point, sets up Vulkan, scene, and event loop.
-- **Key Functions**: `main() -> ()`: Creates `EventLoop`, `VulkanContext`, `Scene`, adds three `RenderObject`s, runs `VulkanContextHandler`.
-- **Notes**: Initial window 600x300, objects: background (static), triangle/square (draggable).
+- **Key Functions**: `main() -> ()`: Creates `EventLoop`, `VulkanContext`, `Scene`, adds three `RenderObject`s and one group (two objects), runs `VulkanContextHandler`.
+- **Notes**: Initial window 600x300, objects: background (static), triangle/square (draggable), group (quad/rectangle, draggable).
 
 ### `src/gui_framework/mod.rs`
 - **Purpose**: Re-exports GUI framework submodules and types.
@@ -84,12 +83,12 @@ rusty_whip/
 - **Key Methods**:
   - `new() -> Self`: Initializes with `Canvas` context.
   - `handle_event(&mut self, event: &Event<()>, scene: Option<&mut Scene>, _renderer: Option<&mut Renderer>, window: &Window) -> ()`: Processes mouse events, updates `Scene`.
-- **Notes**: Inverts Y-delta for Vulkan; depends on `scene.rs`.
+- **Notes**: Inverts Y-delta for Vulkan; supports group dragging via `Scene`.
 
 ### `src/gui_framework/rendering/command_buffers.rs`
 - **Purpose**: Records Vulkan command buffers for rendering.
 - **Key Functions**: `record_command_buffers(platform: &mut VulkanContext, renderables: &[Renderable], pipeline_layout: vk::PipelineLayout, _projection_descriptor_set: vk::DescriptorSet, extent: vk::Extent2D) -> ()`: Sets up draw commands.
-- **Notes**: Uses per-object descriptor sets; recreates command pool each call.
+- **Notes**: Uses per-object descriptor sets; no instancing; recreates command pool each call.
 
 ### `src/gui_framework/rendering/renderable.rs`
 - **Purpose**: Defines Vulkan renderable object properties.
@@ -106,7 +105,7 @@ rusty_whip/
   - `resize_renderer(&mut self, vulkan_context: &mut VulkanContext, scene: &mut Scene, width: u32, height: u32) -> ()`: Handles resizing.
   - `render(&mut self, platform: &mut VulkanContext, scene: &Scene) -> ()`: Renders frame.
   - `cleanup(self, platform: &mut VulkanContext) -> ()`: Frees resources.
-- **Notes**: Syncs offsets before rendering; depends on `scene.rs`.
+- **Notes**: Syncs offsets before rendering; no instancing implemented.
 
 ### `src/gui_framework/rendering/shader_utils.rs`
 - **Purpose**: Loads shader modules.
@@ -119,19 +118,23 @@ rusty_whip/
   - `create_framebuffers(platform: &mut VulkanContext, extent: vk::Extent2D, surface_format: vk::SurfaceFormatKHR) -> ()`: Sets up framebuffers.
 
 ### `src/gui_framework/scene/scene.rs`
-- **Purpose**: Manages scene and renderable objects.
+- **Purpose**: Manages scene and renderable objects with grouping.
 - **Key Structs**:
   - `RenderObject`: `vertices`, `vertex_shader_filename`, `fragment_shader_filename`, `depth`, `on_window_resize_scale`, `on_window_resize_move`, `offset`, `is_draggable`.
-  - `Scene`: `render_objects`, `width`, `height`.
+  - `ElementPool`: `elements`, `free_indices`.
+  - `Group`: `element_ids`, `is_draggable`.
+  - `Scene`: `pool`, `groups`, `width`, `height`.
 - **Key Trait**: `HitTestable`
   - `contains(&self, x: f32, y: f32, window_height: f32) -> bool`: Checks object bounds.
 - **Key Methods**:
-  - `new() -> Self`: Initializes 600x300 scene.
-  - `add_object(&mut self, object: RenderObject) -> ()`: Adds object.
-  - `pick_object_at(&self, x: f32, y: f32) -> Option<usize>`: Picks draggable object.
-  - `translate_object(&mut self, index: usize, dx: f32, dy: f32) -> ()`: Updates offset.
+  - `new() -> Self`: Initializes 600x300 scene with `ElementPool`.
+  - `add_object(&mut self, object: RenderObject) -> usize`: Adds object to pool.
+  - `add_group(&mut self, elements: Vec<RenderObject>, is_draggable: bool) -> usize`: Adds group.
+  - `add_to_group(&mut self, group_id: usize, elements: Vec<RenderObject>) -> ()`: Extends group.
+  - `pick_object_at(&self, x: f32, y: f32) -> Option<usize>`: Picks draggable object or group.
+  - `translate_object(&mut self, index: usize, dx: f32, dy: f32) -> ()`: Updates offset (group or single).
   - `update_dimensions(&mut self, width: u32, height: u32) -> ()`: Updates size.
-- **Notes**: Used by `controller.rs` and `render_engine.rs`.
+- **Notes**: Supports efficient object management and grouping.
 
 ### `src/gui_framework/window/window_handler.rs`
 - **Purpose**: Handles window events and rendering loop.
@@ -141,7 +144,7 @@ rusty_whip/
   - `new(platform: VulkanContext, scene: Scene) -> Self`: Initializes handler.
   - `resumed(&mut self, event_loop: &ActiveEventLoop) -> ()`: Sets up window and renderer.
   - `window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) -> ()`: Handles events.
-- **Notes**: Implements `ApplicationHandler`; depends on all subsystems.
+- **Notes**: Implements `ApplicationHandler`; supports group dragging.
 
 ## Shaders
 - **Location**: `shaders/`

@@ -3,7 +3,7 @@
 ## Overview
 These tasks enhance `gui_framework` to support a divider system in `gui_app`, adding efficient element creation, grouping, instancing, and input handling. The framework will remain generic, with `gui_app` building the specific divider GUI atop it.
 
-## Task 1: Add Element Pool and Batching to `scene.rs`
+## Task 1 (Complete): Add Element Pool and Batching to `scene.rs`
 - **Goal**: Enable efficient creation and management of `RenderObject`s for dividers and regions (256+ elements).
 - **Affected Modules**:
   - `src/gui_framework/scene/scene.rs`
@@ -24,7 +24,7 @@ These tasks enhance `gui_framework` to support a divider system in `gui_app`, ad
   - Ensure batching supports 256+ elements efficiently.
 - **Notes**: Batching is optional—use for regions, `add_object` for one-offs.
 
-## Task 2: Implement Grouping in `scene.rs`
+## Task 2 (Complete): Implement Grouping in `scene.rs`
 - **Goal**: Support hierarchical organization for dividers and regions.
 - **Affected Modules**:
   - `src/gui_framework/scene/scene.rs`

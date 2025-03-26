@@ -15,17 +15,15 @@ Enjoy complete privacy, customizability, and controlled costs with local model i
 
 
 ## System Requirments
-**Sytem reqirments are almost entirly dependent on what AI models you choose**. There are [MANY](https://huggingface.co/) model choices. For the fastest user experience it is recomended to **use combinations of models specific for what you are doing that can be simutaniously loaded** as Studio Whip utalizes multiple models to provide various functionality. If multiple models do not fit in memory together they are still usable but will run slower.
+**System requirements largly depend on what AI models you use**, and there are [MANY](https://huggingface.co/) choices. For the best experience, use task-specific model combinations that load simultaneously in Studio Whip. If your hardware doesnt meet your needs, connect to cloud APIs like [OpenRouter](https://openrouter.ai/) and [Together.ai](https://www.together.ai/). Some models may even be availible free with limits. 
 
-System requirments can be dramaticly decreased if utalizing cloud API services in Studio Whip such as [OpenRouter](https://openrouter.ai/) for LLM's and/or [Together.ai](https://www.together.ai/) for images and audio. Some models may even be availible for free (with limitations).
-
-These general guidlines are meant for a good user experience utalizing local models with at least one LLM and an image generation model simutaniously loaded. It does not represent the best possible single models that can be used, or the best model choice for your unique creative style.
+These guidelines give an idea of what is practical to use for different hardware specs using only local models. It is possible to run better models, combinations tailored to a specific task, or mix of local and cloud to better meet your needs.
 
 - AI TOPS are measured as FP8.
 - [See Passmark Ratings of CPU's](https://www.cpubenchmark.net/high_end_cpus.html)
 
 **Minimum**:
-Sutable for software development and toying around [Gemma 3 Q8 1B](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF) LLM and [Midjourney Mini](openskyml/midjourney-mini).
+For development and testing [Gemma 3 Q8 1B](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF) LLM and [Midjourney Mini](openskyml/midjourney-mini).
 
 - 8GB VRAM
 - 250 AI TOPS
@@ -34,7 +32,7 @@ Sutable for software development and toying around [Gemma 3 Q8 1B](https://huggi
 - 14GB Space For Instalation
 
 **Low**:
-Sutable for education and small personal projects using [Gemma 3 Q6_K 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF) LLM and [FLUX.1-schnell Q6_K](https://huggingface.co/city96/FLUX.1-schnell-gguf) with a LORA. Video not recomeneded but possible using [Wan1.2-12V-14B 480p Q4_K_S](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf).
+Sutable for educatuin and small personal projects [Gemma 3 Q6_K 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF) LLM and [FLUX.1-schnell Q6_K](https://huggingface.co/city96/FLUX.1-schnell-gguf) with a LORA. Video not recomeneded but possible using [Wan1.2-12V-14B 480p Q4_K_S](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf).
 
 - 16GB VRAM
 - 500 AI TOPS
@@ -43,7 +41,7 @@ Sutable for education and small personal projects using [Gemma 3 Q6_K 4B](https:
 - 256GB Instalation Space
 
 **Medium (Recomended)**:
-Sutable for advanced personal projects and freelancing with [Gemma 3 IQ4_XS i1 Abliterated 12B](https://huggingface.co/mradermacher/gemma-3-12b-it-abliterated-i1-GGUF) LLM and [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf) with a LORA. Slow but decent video using [Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf).
+For advanced projects and small buisness [Gemma 3 IQ4_XS i1 Abliterated 12B](https://huggingface.co/mradermacher/gemma-3-12b-it-abliterated-i1-GGUF) LLM and [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf) with a LORA. Slow but decent video using [Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf).
 
 - 24GB+ VRAM
 - 1000 AI TOPS
@@ -53,7 +51,7 @@ Sutable for advanced personal projects and freelancing with [Gemma 3 IQ4_XS i1 A
 
 
 **Professional Use**:
-A fast Single user workstation sutable for high quality models and video generation with [Gemma 3 Q5_K_M 27B](https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/), [Wan2.1-12V 14B 720p](https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-720P), and [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf) (FLUX Pro 1.1 availible via API)
+A fast Single user workstation sutable for high quality models and video generation [Gemma 3 Q5_K_M 27B](https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/), and [Wan2.1-12V 14B 720p](https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-720P), and [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf)
 
 - 128GB+ VRAM
 - 5000+ AI TOPS
@@ -68,8 +66,20 @@ A fast Single user workstation sutable for high quality models and video generat
 - [**Rust**](https://www.rust-lang.org/tools/install): Latest stable version (via Rustup)
 - **Nvidia GPU**
 
-### Windows : Install Linux Subsystem
-If you are using Windows, this allows you to run the linux shell script utlities located in [/rust/utilities](https://github.com/MrScripty/Studio-Whip/tree/main/rust/utilities) After installing the Linux Subsystem, add the Vulkan SDK's `glslc` compiler to your ```system variables```:
+### After installing requirments
+1. Clone the repository: `git clone https://github.com/<your-repo>/studio-whip.git`
+2. Navigate to the project: `cd studio-whip/rust`
+3. Build and run: `cargo run --release`
+
+### For Windows
+Install [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/), this allows you to run the linux shell script utlities located in [/rust/utilities](https://github.com/MrScripty/Studio-Whip/tree/main/rust/utilities)
+
+1. Open Powershell as admin and install wsl ```wsl --install```
+2. Find availible linux distros ```wsl --list --online```
+3. Install the latest Ubuntu LTS ```wsl --install --<distro>```
+4. Reboot your computer
+
+ After installing the Linux Subsystem, add the Vulkan SDK's `glslc` compiler to your ```system variables```:
 
 1. Press `Win + R`, type `SystemPropertiesAdvanced`, and click `Environment Variables`.
 2. Under "System Variables" or "User Variables," select `Path` and click `Edit`.
@@ -77,16 +87,9 @@ If you are using Windows, this allows you to run the linux shell script utlities
 4. Click `OK` to save.
 5. Verify with `glslc --version` in PowerShell.
 
-## Getting Started
-1. Clone the repository: `git clone https://github.com/<your-repo>/studio-whip.git`
-2. Navigate to the project: `cd studio-whip/rust`
-3. Build and run: `cargo run --release`
-
----
-
 ## Contributing
-Check out the [architecture overview](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/architecture.md), [modules documentation](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/modules.md), [Roadmap](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/roadmap.md) to get started.
+Check out the [architecture overview](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/architecture.md), [modules documentation](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/modules.md), [Roadmap](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/roadmap.md), and [prompt_tool.sh](https://github.com/MrScripty/Studio-Whip/tree/main/rust/utilities) to get started.
 
-# Is This Production Ready?
+## Is This Production Ready?
 
-No. This is early development software mith many incomplete or missing features using cutting edge technology. Even the best Nvidia workstation AI GPU's still lack inference performance for rapid video generation and have restrictive VRAM limitations. 
+No. This is a complex early development software with many incomplete or missing features. It will take at least a year to enter plausable production readiyness.

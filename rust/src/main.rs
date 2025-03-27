@@ -68,7 +68,7 @@ fn main() {
 
     // Add an instance to the square
     scene.add_instance(square_id, [100.0, 0.0]); // Instance 1: offset by (100, 0)
-
+    
     scene.add_group(vec![
         RenderObject {
             vertices: vec![
@@ -103,6 +103,7 @@ fn main() {
             instances: Vec::new(),
         },
     ], true);
+
 
     let mut handler = VulkanContextHandler::new(vulkan_context, scene);
     event_loop.run_app(&mut handler).unwrap();

@@ -1,17 +1,16 @@
 use winit::event::{Event, WindowEvent, ElementState, MouseButton};
 use winit::window::Window;
-use crate::Scene;
-use crate::Renderer;
+use crate::{Scene, Renderer};
 
 pub struct MouseState {
     pub is_dragging: bool,
     pub last_position: Option<[f32; 2]>,
-    pub dragged_object: Option<usize>,
+    pub dragged_object: Option<(usize, Option<usize>)>,
 }
 
 pub enum CursorContext {
-    Canvas, // Draggable region
-    Other,  // Non-draggable region
+    Canvas,
+    Other,
 }
 
 pub struct InteractionController {
@@ -27,11 +26,11 @@ impl InteractionController {
                 last_position: None,
                 dragged_object: None,
             },
-            context: CursorContext::Canvas, // Default to Canvas for simplicity
+            context: CursorContext::Canvas,
         }
     }
 
-    pub fn handle_event(&mut self, event: &Event<()>, scene: Option<&mut Scene>, _renderer: Option<&mut Renderer>, window: &Window) {
+    pub fn handle_event(&mut self, event: &Event<()>, scene: Option<&mut Scene>, renderer: Option<&mut Renderer>, window: &Window) {
         if let Event::WindowEvent { event, .. } = event {
             match event {
                 WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
@@ -39,9 +38,9 @@ impl InteractionController {
                         self.mouse_state.is_dragging = true;
                         let pos = self.mouse_state.last_position.unwrap_or([0.0, 0.0]);
                         if let Some(scene) = scene {
-                            if let Some(index) = scene.pick_object_at(pos[0], pos[1]) {
-                                self.mouse_state.dragged_object = Some(index);
-                                println!("Clicked object: {:?}", index);
+                            if let Some(target) = scene.pick_object_at(pos[0], pos[1]) {
+                                self.mouse_state.dragged_object = Some(target);
+                                println!("Clicked object: {:?}", target);
                             }
                         }
                         println!("Dragging started at {:?}", pos);
@@ -54,8 +53,8 @@ impl InteractionController {
                             let delta = [pos[0] - last_pos[0], last_pos[1] - pos[1]]; // Invert Y-delta
                             println!("Dragging delta: {:?}", delta);
                             if let Some(scene) = scene {
-                                if let Some(index) = self.mouse_state.dragged_object {
-                                    scene.translate_object(index, delta[0], delta[1]);
+                                if let Some((index, instance_id)) = self.mouse_state.dragged_object {
+                                    scene.translate_object(index, delta[0], delta[1], instance_id);
                                     window.request_redraw();
                                 }
                             }

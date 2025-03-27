@@ -695,6 +695,18 @@ impl Renderer {
         record_command_buffers(vulkan_context, &self.vulkan_renderables, self.pipeline_layout, self.descriptor_set, extent);
     }
 
+    pub fn update_instance_offset(&mut self, _device: &ash::Device, allocator: &vk_mem::Allocator, object_index: usize, instance_id: usize, offset: [f32; 2]) {
+        let renderable = &mut self.vulkan_renderables[object_index];
+        if let Some(ref mut instance_allocation) = renderable.instance_allocation {
+            unsafe {
+                let data_ptr = allocator.map_memory(instance_allocation).unwrap().cast::<f32>();
+                let offset_ptr = data_ptr.add(instance_id * 2); // Each instance offset is 2 f32s
+                offset_ptr.copy_from_nonoverlapping(offset.as_ptr(), 2);
+                allocator.unmap_memory(instance_allocation);
+            }
+        }
+    }
+
     pub fn render(&mut self, platform: &mut VulkanContext, scene: &Scene) {
         let device = platform.device.as_ref().unwrap();
         let queue = platform.queue.unwrap();
@@ -708,6 +720,9 @@ impl Renderer {
         // Sync all offsets before rendering
         for (i, obj) in scene.pool.iter().enumerate() {
             self.update_offset(device, allocator, i, obj.offset);
+            for (j, instance) in obj.instances.iter().enumerate() {
+                self.update_instance_offset(device, allocator, i, j, instance.offset);
+            }
         }
 
         unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }.unwrap();
@@ -715,8 +730,7 @@ impl Renderer {
 
         let (image_index, _) = unsafe {
             swapchain_loader.acquire_next_image(swapchain, u64::MAX, image_available_semaphore, vk::Fence::null())
-        }
-        .unwrap();
+        }.unwrap();
         platform.current_image = image_index as usize;
 
         let submit_info = vk::SubmitInfo {

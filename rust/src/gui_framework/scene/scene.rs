@@ -1,6 +1,6 @@
 use crate::Vertex;
 
-#[derive(Debug, Clone)] // New: Instance data structure
+#[derive(Debug, Clone)]
 pub struct InstanceData {
     pub offset: [f32; 2],
 }
@@ -47,6 +47,10 @@ impl ElementPool {
     pub fn iter_mut(&mut self) -> std::slice::IterMut<RenderObject> {
         self.elements.iter_mut()
     }
+
+    pub fn get(&self, index: usize) -> Option<&RenderObject> {
+        self.elements.get(index)
+    }
 }
 
 #[derive(Debug)]
@@ -68,33 +72,33 @@ pub struct RenderObject {
     pub instances: Vec<InstanceData>,
 }
 
+pub trait HitTestable {
+    fn contains(&self, x: f32, y: f32, window_height: f32, offset: [f32; 2]) -> bool; // Modified to take offset
+}
+
+impl HitTestable for RenderObject {
+    fn contains(&self, x: f32, y: f32, window_height: f32, offset: [f32; 2]) -> bool {
+        let adjusted_y = window_height - y;
+        let (min_x, max_x, min_y, max_y) = self.vertices.iter().fold(
+            (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY),
+            |acc, v| {
+                let pos_x = v.position[0] + offset[0];
+                let pos_y = v.position[1] + offset[1];
+                (acc.0.min(pos_x), acc.1.max(pos_x), acc.2.min(pos_y), acc.3.max(pos_y))
+            }
+        );
+        println!("Checking object (depth {}): x=[{}, {}], y=[{}, {}], click=({}, {}), offset={:?}",
+                 self.depth, min_x, max_x, min_y, max_y, x, adjusted_y, offset);
+        x >= min_x && x <= max_x && adjusted_y >= min_y && adjusted_y <= max_y
+    }
+}
+
 #[derive(Debug)]
 pub struct Scene {
     pub pool: ElementPool,
     pub groups: Vec<Group>,
-    pub width: f32,  // Current window width
-    pub height: f32, // Current window height
-}
-
-pub trait HitTestable {
-    fn contains(&self, x: f32, y: f32, window_height: f32) -> bool;
-}
-
-impl HitTestable for RenderObject {
-    fn contains(&self, x: f32, y: f32, window_height: f32) -> bool {
-        let adjusted_y = window_height - y; // Dynamic window height
-        let (min_x, max_x, min_y, max_y) = self.vertices.iter().fold(
-            (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY),
-            |acc, v| {
-                let pos_x = v.position[0] + self.offset[0];
-                let pos_y = v.position[1] + self.offset[1];
-                (acc.0.min(pos_x), acc.1.max(pos_x), acc.2.min(pos_y), acc.3.max(pos_y))
-            }
-        );
-        println!("Checking object (depth {}): x=[{}, {}], y=[{}, {}], click=({}, {})",
-                 self.depth, min_x, max_x, min_y, max_y, x, adjusted_y);
-        x >= min_x && x <= max_x && adjusted_y >= min_y && adjusted_y <= max_y
-    }
+    pub width: f32,
+    pub height: f32,
 }
 
 impl Scene {
@@ -102,8 +106,8 @@ impl Scene {
         Scene {
             pool: ElementPool::new(10000),
             groups: Vec::new(),
-            width: 600.0,  // Initial window width
-            height: 300.0, // Initial window height
+            width: 600.0,
+            height: 300.0,
         }
     }
 
@@ -134,28 +138,45 @@ impl Scene {
     pub fn add_instance(&mut self, object_id: usize, offset: [f32; 2]) -> usize {
         let instance_data = InstanceData { offset };
         self.pool.elements[object_id].instances.push(instance_data);
-        self.pool.elements[object_id].instances.len() - 1 // Return instance index
+        self.pool.elements[object_id].instances.len() - 1
     }
 
-    pub fn pick_object_at(&self, x: f32, y: f32) -> Option<usize> {
+    pub fn pick_object_at(&self, x: f32, y: f32) -> Option<(usize, Option<usize>)> {
         // Check groups first
-        self.groups.iter().enumerate()
-            .filter(|(_, group)| group.is_draggable)
-            .find_map(|(group_id, group)| {
-                group.element_ids.iter().any(|&id| {
-                    self.pool.elements[id].contains(x, y, self.height)
-                }).then_some(group_id)
+        for (group_id, group) in self.groups.iter().enumerate() {
+            if group.is_draggable {
+                for &id in &group.element_ids {
+                    let obj = &self.pool.elements[id];
+                    if obj.contains(x, y, self.height, obj.offset) {
+                        return Some((group_id, None));
+                    }
+                }
+            }
+        }
+
+        // Check individual objects and their instances
+        self.pool.iter().enumerate()
+            .filter(|(_, obj)| obj.is_draggable)
+            .flat_map(|(id, obj)| {
+                let mut hits = Vec::new();
+                // Base object
+                if obj.contains(x, y, self.height, obj.offset) {
+                    hits.push((id, None, obj.depth));
+                }
+                // Instances
+                for (instance_id, instance) in obj.instances.iter().enumerate() {
+                    let total_offset = [obj.offset[0] + instance.offset[0], obj.offset[1] + instance.offset[1]];
+                    if obj.contains(x, y, self.height, total_offset) {
+                        hits.push((id, Some(instance_id), obj.depth));
+                    }
+                }
+                hits
             })
-            .or_else(|| {
-                // Fallback to individual draggable objects
-                self.pool.iter().enumerate()
-                    .filter(|(_, obj)| obj.is_draggable && obj.contains(x, y, self.height))
-                    .max_by(|a, b| a.1.depth.partial_cmp(&b.1.depth).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(i, _)| i)
-            })
+            .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(id, instance_id, _)| (id, instance_id))
     }
 
-    pub fn translate_object(&mut self, index: usize, dx: f32, dy: f32) {
+    pub fn translate_object(&mut self, index: usize, dx: f32, dy: f32, instance_id: Option<usize>) {
         if index < self.groups.len() {
             for &id in &self.groups[index].element_ids {
                 self.pool.elements[id].offset[0] += dx;
@@ -163,8 +184,16 @@ impl Scene {
             }
         } else if index < self.pool.len() {
             let obj = &mut self.pool.elements[index];
-            obj.offset[0] += dx;
-            obj.offset[1] += dy;
+            match instance_id {
+                Some(i) if i < obj.instances.len() => {
+                    obj.instances[i].offset[0] += dx;
+                    obj.instances[i].offset[1] += dy;
+                }
+                _ => {
+                    obj.offset[0] += dx;
+                    obj.offset[1] += dy;
+                }
+            }
         }
     }
 

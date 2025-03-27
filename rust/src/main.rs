@@ -1,3 +1,4 @@
+// "C:\Users\jerem\Desktop\Studio-Whip\rust\src\main.rs"
 use winit::event_loop::{EventLoop, ControlFlow};
 use rusty_whip::gui_framework::{VulkanContext, Scene, RenderObject, VulkanContextHandler};
 use rusty_whip::Vertex;
@@ -24,10 +25,11 @@ fn main() {
         on_window_resize_scale: true,
         on_window_resize_move: false,
         offset: [0.0, 0.0],
-        is_draggable: false, // Background not draggable
+        is_draggable: false,
+        instances: Vec::new(),
     });
 
-    scene.add_object(RenderObject {
+    let triangle_id = scene.add_object(RenderObject {
         vertices: vec![
             Vertex { position: [275.0, 125.0] },
             Vertex { position: [300.0, 175.0] },
@@ -38,11 +40,12 @@ fn main() {
         depth: 1.0,
         on_window_resize_scale: false,
         on_window_resize_move: true,
-        offset: [0.0, 0.0], // Reset for testing
-        is_draggable: true, // Triangle draggable
+        offset: [0.0, 0.0],
+        is_draggable: true,
+        instances: Vec::new(),
     });
 
-    scene.add_object(RenderObject {
+    let square_id = scene.add_object(RenderObject {
         vertices: vec![
             Vertex { position: [100.0, 50.0] },
             Vertex { position: [100.0, 100.0] },
@@ -55,10 +58,17 @@ fn main() {
         on_window_resize_scale: false,
         on_window_resize_move: true,
         offset: [0.0, 0.0],
-        is_draggable: true, // Square draggable
+        is_draggable: true,
+        instances: Vec::new(),
     });
 
-    // Add a group with two new objects
+    // Add instances to the triangle
+    scene.add_instance(triangle_id, [50.0, 50.0]);  // Instance 1: offset by (50, 50)
+    scene.add_instance(triangle_id, [-50.0, -50.0]); // Instance 2: offset by (-50, -50)
+
+    // Add an instance to the square
+    scene.add_instance(square_id, [100.0, 0.0]); // Instance 1: offset by (100, 0)
+
     scene.add_group(vec![
         RenderObject {
             vertices: vec![
@@ -67,13 +77,14 @@ fn main() {
                 Vertex { position: [430.0, 230.0] },
                 Vertex { position: [430.0, 200.0] },
             ],
-            vertex_shader_filename: "square.vert.spv".to_string(), // Reuse square shader
+            vertex_shader_filename: "square.vert.spv".to_string(),
             fragment_shader_filename: "square.frag.spv".to_string(),
             depth: 3.0,
             on_window_resize_scale: false,
             on_window_resize_move: true,
             offset: [0.0, 0.0],
-            is_draggable: true, // Group will control draggability
+            is_draggable: true,
+            instances: Vec::new(),
         },
         RenderObject {
             vertices: vec![
@@ -82,15 +93,16 @@ fn main() {
                 Vertex { position: [470.0, 240.0] },
                 Vertex { position: [470.0, 190.0] },
             ],
-            vertex_shader_filename: "square.vert.spv".to_string(), // Reuse square shader
+            vertex_shader_filename: "square.vert.spv".to_string(),
             fragment_shader_filename: "square.frag.spv".to_string(),
             depth: 4.0,
             on_window_resize_scale: false,
             on_window_resize_move: true,
             offset: [0.0, 0.0],
-            is_draggable: true, // Group will control draggability
+            is_draggable: true,
+            instances: Vec::new(),
         },
-    ], true); // Group is draggable
+    ], true);
 
     let mut handler = VulkanContextHandler::new(vulkan_context, scene);
     event_loop.run_app(&mut handler).unwrap();

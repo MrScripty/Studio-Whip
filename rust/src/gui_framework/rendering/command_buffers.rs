@@ -7,7 +7,7 @@ pub fn record_command_buffers(
     platform: &mut VulkanContext,
     renderables: &[Renderable],
     pipeline_layout: vk::PipelineLayout,
-    _projection_descriptor_set: vk::DescriptorSet, // No longer used directly
+    _projection_descriptor_set: vk::DescriptorSet,
     extent: vk::Extent2D,
 ) {
     let device = platform.device.as_ref().unwrap();
@@ -72,19 +72,23 @@ pub fn record_command_buffers(
     for (&command_buffer, &framebuffer) in platform.command_buffers.iter().zip(platform.framebuffers.iter()) {
         unsafe {
             device.begin_command_buffer(command_buffer, &begin_info).unwrap();
-            device.cmd_begin_render_pass(command_buffer, &vk::RenderPassBeginInfo {
-                s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
-                p_next: std::ptr::null(),
-                render_pass: platform.render_pass.unwrap(),
-                framebuffer,
-                render_area: vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent,
+            device.cmd_begin_render_pass(
+                command_buffer,
+                &vk::RenderPassBeginInfo {
+                    s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
+                    p_next: std::ptr::null(),
+                    render_pass: platform.render_pass.unwrap(),
+                    framebuffer,
+                    render_area: vk::Rect2D {
+                        offset: vk::Offset2D { x: 0, y: 0 },
+                        extent,
+                    },
+                    clear_value_count: clear_values.len() as u32,
+                    p_clear_values: clear_values.as_ptr(),
+                    _marker: PhantomData,
                 },
-                clear_value_count: clear_values.len() as u32,
-                p_clear_values: clear_values.as_ptr(),
-                _marker: PhantomData,
-            }, vk::SubpassContents::INLINE);
+                vk::SubpassContents::INLINE,
+            );
 
             let viewport = vk::Viewport {
                 x: 0.0,
@@ -108,11 +112,22 @@ pub fn record_command_buffers(
                     vk::PipelineBindPoint::GRAPHICS,
                     pipeline_layout,
                     0,
-                    &[renderable.descriptor_set], // Use per-object descriptor set
+                    &[renderable.descriptor_set],
                     &[],
                 );
                 device.cmd_bind_vertex_buffers(command_buffer, 0, &[renderable.vertex_buffer], &[0]);
-                device.cmd_draw(command_buffer, renderable.vertex_count, 1, 0, 0);
+                if let Some(instance_buffer) = renderable.instance_buffer {
+                    device.cmd_bind_vertex_buffers(command_buffer, 1, &[instance_buffer], &[0]);
+                    device.cmd_draw(
+                        command_buffer,
+                        renderable.vertex_count,
+                        renderable.instance_count + 1, // Base + instances
+                        0,
+                        0,
+                    );
+                } else {
+                    device.cmd_draw(command_buffer, renderable.vertex_count, 1, 0, 0);
+                }
             }
 
             device.cmd_end_render_pass(command_buffer);

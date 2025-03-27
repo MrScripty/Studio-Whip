@@ -252,6 +252,45 @@ impl Renderer {
                 }
             };
 
+            // New: Create instance buffer if there are instances
+            let (instance_buffer, instance_allocation, instance_count) = if !obj.instances.is_empty() {
+                let instance_data: Vec<[f32; 2]> = obj.instances.iter().map(|i| i.offset).collect();
+                let buffer_info = vk::BufferCreateInfo {
+                    s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                    p_next: std::ptr::null(),
+                    flags: vk::BufferCreateFlags::empty(),
+                    size: (instance_data.len() * std::mem::size_of::<[f32; 2]>()) as u64,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+                    sharing_mode: vk::SharingMode::EXCLUSIVE,
+                    queue_family_index_count: 0,
+                    p_queue_family_indices: std::ptr::null(),
+                    _marker: PhantomData,
+                };
+                let allocation_info = vk_mem::AllocationCreateInfo {
+                    usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                    flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                };
+                unsafe {
+                    match platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info) {
+                        Ok((buffer, mut allocation)) => {
+                            let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
+                                .unwrap()
+                                .cast::<f32>();
+                            data_ptr.copy_from_nonoverlapping(instance_data.as_ptr() as *const f32, instance_data.len() * 2);
+                            platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                            (Some(buffer), Some(allocation), instance_data.len() as u32)
+                        }
+                        Err(e) => {
+                            println!("Failed to create instance buffer: {:?}", e);
+                            panic!("Instance buffer creation failed");
+                        }
+                    }
+                }
+            } else {
+                (None, None, 0)
+            };
+
             let descriptor_set = descriptor_sets[i + 1];
             unsafe {
                 let buffer_infos = [
@@ -323,24 +362,39 @@ impl Renderer {
                 };
                 let stages = [vertex_stage, fragment_stage];
 
-                let vertex_attributes = [vk::VertexInputAttributeDescription {
-                    location: 0,
-                    binding: 0,
-                    format: vk::Format::R32G32_SFLOAT,
-                    offset: 0,
-                }];
-                let vertex_bindings = [vk::VertexInputBindingDescription {
-                    binding: 0,
-                    stride: std::mem::size_of::<Vertex>() as u32,
-                    input_rate: vk::VertexInputRate::VERTEX,
-                }];
+                let vertex_attributes = [
+                    vk::VertexInputAttributeDescription {
+                        location: 0,
+                        binding: 0,
+                        format: vk::Format::R32G32_SFLOAT,
+                        offset: 0,
+                    },
+                    vk::VertexInputAttributeDescription { // New: Instance offset
+                        location: 1,
+                        binding: 1,
+                        format: vk::Format::R32G32_SFLOAT,
+                        offset: 0,
+                    },
+                ];
+                let vertex_bindings = [
+                    vk::VertexInputBindingDescription {
+                        binding: 0,
+                        stride: std::mem::size_of::<Vertex>() as u32,
+                        input_rate: vk::VertexInputRate::VERTEX,
+                    },
+                    vk::VertexInputBindingDescription { // New: Instance data binding
+                        binding: 1,
+                        stride: std::mem::size_of::<[f32; 2]>() as u32,
+                        input_rate: vk::VertexInputRate::INSTANCE,
+                    },
+                ];
                 let vertex_input = vk::PipelineVertexInputStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
                     p_next: std::ptr::null(),
                     flags: vk::PipelineVertexInputStateCreateFlags::empty(),
-                    vertex_binding_description_count: 1,
+                    vertex_binding_description_count: 2,
                     p_vertex_binding_descriptions: vertex_bindings.as_ptr(),
-                    vertex_attribute_description_count: 1,
+                    vertex_attribute_description_count: 2,
                     p_vertex_attribute_descriptions: vertex_attributes.as_ptr(),
                     _marker: PhantomData,
                 };
@@ -483,6 +537,9 @@ impl Renderer {
                 original_positions: vertices.iter().map(|v| v.position).collect(),
                 fixed_size: [max_x - min_x, max_y - min_y],
                 center_ratio: [center_x / 600.0, center_y / 300.0],
+                instance_buffer,        // New
+                instance_allocation,    // New
+                instance_count,         // New
             });
         }
 
@@ -693,52 +750,46 @@ impl Renderer {
     pub fn cleanup(mut self, platform: &mut VulkanContext) {
         let device = platform.device.as_ref().unwrap();
         let swapchain_loader = platform.swapchain_loader.take().unwrap();
-
+    
         unsafe {
             device.device_wait_idle().unwrap();
-
+    
             device.destroy_semaphore(platform.image_available_semaphore.take().unwrap(), None);
             device.destroy_semaphore(platform.render_finished_semaphore.take().unwrap(), None);
             device.destroy_fence(platform.fence.take().unwrap(), None);
-
+    
             let command_pool = platform.command_pool.take().unwrap();
             device.free_command_buffers(command_pool, &platform.command_buffers);
             device.destroy_command_pool(command_pool, None);
-
+    
             for mut renderable in self.vulkan_renderables {
                 device.destroy_pipeline(renderable.pipeline, None);
                 device.destroy_shader_module(renderable.vertex_shader, None);
                 device.destroy_shader_module(renderable.fragment_shader, None);
-                platform
-                    .allocator
-                    .as_ref()
-                    .unwrap()
+                platform.allocator.as_ref().unwrap()
                     .destroy_buffer(renderable.vertex_buffer, &mut renderable.vertex_allocation);
-                platform
-                    .allocator
-                    .as_ref()
-                    .unwrap()
+                platform.allocator.as_ref().unwrap()
                     .destroy_buffer(renderable.offset_uniform, &mut renderable.offset_allocation);
+                if let (Some(instance_buffer), Some(mut instance_allocation)) = (renderable.instance_buffer, renderable.instance_allocation) {
+                    platform.allocator.as_ref().unwrap().destroy_buffer(instance_buffer, &mut instance_allocation);
+                }
             }
-
-            platform
-                .allocator
-                .as_ref()
-                .unwrap()
+    
+            platform.allocator.as_ref().unwrap()
                 .destroy_buffer(self.uniform_buffer, &mut self.uniform_allocation);
             device.destroy_descriptor_pool(self.descriptor_pool, None);
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-
+    
             for &framebuffer in &platform.framebuffers {
                 device.destroy_framebuffer(framebuffer, None);
             }
             device.destroy_render_pass(platform.render_pass.take().unwrap(), None);
-
+    
             swapchain_loader.destroy_swapchain(platform.swapchain.take().unwrap(), None);
             for &view in &platform.image_views {
                 device.destroy_image_view(view, None);
             }
-
+    
             device.destroy_pipeline_layout(self.pipeline_layout, None);
         }
     }

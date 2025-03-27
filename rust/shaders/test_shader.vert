@@ -7,7 +7,8 @@ layout(binding = 1) uniform Offset {
 };
 
 layout(location = 0) in vec2 inPosition;
+layout(location = 1) in vec2 instanceOffset;
 
 void main() {
-    gl_Position = ubo.projection * vec4(inPosition + offset, 0.0, 1.0);
+    gl_Position = ubo.projection * vec4(inPosition + offset + instanceOffset, 0.0, 1.0);
 }

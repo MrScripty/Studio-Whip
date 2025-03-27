@@ -1,5 +1,10 @@
 use crate::Vertex;
 
+#[derive(Debug, Clone)] // New: Instance data structure
+pub struct InstanceData {
+    pub offset: [f32; 2],
+}
+
 #[derive(Debug)]
 pub struct ElementPool {
     elements: Vec<RenderObject>,
@@ -60,6 +65,7 @@ pub struct RenderObject {
     pub on_window_resize_move: bool,
     pub offset: [f32; 2],
     pub is_draggable: bool,
+    pub instances: Vec<InstanceData>,
 }
 
 #[derive(Debug)]
@@ -123,6 +129,12 @@ impl Scene {
     pub fn add_to_group(&mut self, group_id: usize, elements: Vec<RenderObject>) {
         let ids = self.add_objects(elements);
         self.groups[group_id].element_ids.extend(ids);
+    }
+
+    pub fn add_instance(&mut self, object_id: usize, offset: [f32; 2]) -> usize {
+        let instance_data = InstanceData { offset };
+        self.pool.elements[object_id].instances.push(instance_data);
+        self.pool.elements[object_id].instances.len() - 1 // Return instance index
     }
 
     pub fn pick_object_at(&self, x: f32, y: f32) -> Option<usize> {

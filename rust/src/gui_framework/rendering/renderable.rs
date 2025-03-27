@@ -16,4 +16,7 @@ pub struct Renderable {
     pub offset_uniform: vk::Buffer,
     pub offset_allocation: vk_mem::Allocation,
     pub descriptor_set: vk::DescriptorSet, // Added for per-object uniforms
+    pub instance_buffer: Option<vk::Buffer>,           // Buffer for instance data
+    pub instance_allocation: Option<vk_mem::Allocation>, // Allocation for instance buffer
+    pub instance_count: u32,                          // Number of instances
 }

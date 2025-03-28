@@ -48,9 +48,21 @@ read -p "Enter option (1-4): " option
 case "$option" in
     1) # Start New Chat
         first_file=true
-        # Process architecture.md first
+        # Process README.md first (located one level up from BASE_DIR)
+        readme_md="$(dirname "$BASE_DIR")/README.md"
+        if [ -s "$readme_md" ]; then
+            echo "Processing $readme_md"
+            append_content "$readme_md" "markdown"
+            first_file=false
+        fi
+
+        # Then architecture.md
         arch_md="$DOCS_DIR/architecture.md"
         if [ -s "$arch_md" ]; then
+            if ! $first_file; then
+                echo "---" >> "$temp_file"
+                echo "" >> "$temp_file"
+            fi
             echo "Processing $arch_md"
             append_content "$arch_md" "markdown"
             first_file=false
@@ -117,7 +129,7 @@ case "$option" in
                 # Special handling for first file (no leading divider)
                 if $first_file; then
                     echo "Processing $file"
-                    append_content "$file" "Rust"
+                    append_content "$file" "rust"
                     first_file=false
                 else
                     # Add dividing line if switching directories
@@ -126,7 +138,7 @@ case "$option" in
                         echo "" >> "$temp_file"
                     fi
                     echo "Processing $file"
-                    append_content "$file" "Rust"
+                    append_content "$file" "rust"
                 fi
                 prev_dir="$current_dir"
             else
@@ -161,7 +173,7 @@ case "$option" in
                 # Special handling for first file (no leading divider)
                 if $first_file; then
                     echo "Processing $file"
-                    append_content "$file" "Rust"
+                    append_content "$file" "rust"
                     first_file=false
                 else
                     # Add dividing line if switching directories
@@ -170,7 +182,7 @@ case "$option" in
                         echo "" >> "$temp_file"
                     fi
                     echo "Processing $file"
-                    append_content "$file" "Rust"
+                    append_content "$file" "rust"
                 fi
                 prev_dir="$current_dir"
             else

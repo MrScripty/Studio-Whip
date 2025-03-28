@@ -54,12 +54,6 @@ impl ElementPool {
 }
 
 #[derive(Debug)]
-pub struct Group {
-    element_ids: Vec<usize>,
-    is_draggable: bool,
-}
-
-#[derive(Debug)]
 pub struct RenderObject {
     pub vertices: Vec<Vertex>,
     pub vertex_shader_filename: String,
@@ -73,7 +67,7 @@ pub struct RenderObject {
 }
 
 pub trait HitTestable {
-    fn contains(&self, x: f32, y: f32, window_height: f32, offset: [f32; 2]) -> bool; // Modified to take offset
+    fn contains(&self, x: f32, y: f32, window_height: f32, offset: [f32; 2]) -> bool;
 }
 
 impl HitTestable for RenderObject {
@@ -96,7 +90,6 @@ impl HitTestable for RenderObject {
 #[derive(Debug)]
 pub struct Scene {
     pub pool: ElementPool,
-    pub groups: Vec<Group>,
     pub width: f32,
     pub height: f32,
 }
@@ -105,7 +98,6 @@ impl Scene {
     pub fn new() -> Self {
         Scene {
             pool: ElementPool::new(10000),
-            groups: Vec::new(),
             width: 600.0,
             height: 300.0,
         }
@@ -123,18 +115,6 @@ impl Scene {
         self.pool.elements[element_id].offset = new_offset;
     }
 
-    pub fn add_group(&mut self, elements: Vec<RenderObject>, is_draggable: bool) -> usize {
-        let ids = self.add_objects(elements);
-        let group_id = self.groups.len();
-        self.groups.push(Group { element_ids: ids, is_draggable });
-        group_id
-    }
-
-    pub fn add_to_group(&mut self, group_id: usize, elements: Vec<RenderObject>) {
-        let ids = self.add_objects(elements);
-        self.groups[group_id].element_ids.extend(ids);
-    }
-
     pub fn add_instance(&mut self, object_id: usize, offset: [f32; 2]) -> usize {
         let instance_data = InstanceData { offset };
         self.pool.elements[object_id].instances.push(instance_data);
@@ -142,28 +122,13 @@ impl Scene {
     }
 
     pub fn pick_object_at(&self, x: f32, y: f32) -> Option<(usize, Option<usize>)> {
-        // Check groups first
-        for (group_id, group) in self.groups.iter().enumerate() {
-            if group.is_draggable {
-                for &id in &group.element_ids {
-                    let obj = &self.pool.elements[id];
-                    if obj.contains(x, y, self.height, obj.offset) {
-                        return Some((group_id, None));
-                    }
-                }
-            }
-        }
-
-        // Check individual objects and their instances
         self.pool.iter().enumerate()
             .filter(|(_, obj)| obj.is_draggable)
             .flat_map(|(id, obj)| {
                 let mut hits = Vec::new();
-                // Base object
                 if obj.contains(x, y, self.height, obj.offset) {
                     hits.push((id, None, obj.depth));
                 }
-                // Instances
                 for (instance_id, instance) in obj.instances.iter().enumerate() {
                     let total_offset = [obj.offset[0] + instance.offset[0], obj.offset[1] + instance.offset[1]];
                     if obj.contains(x, y, self.height, total_offset) {
@@ -177,12 +142,7 @@ impl Scene {
     }
 
     pub fn translate_object(&mut self, index: usize, dx: f32, dy: f32, instance_id: Option<usize>) {
-        if index < self.groups.len() {
-            for &id in &self.groups[index].element_ids {
-                self.pool.elements[id].offset[0] += dx;
-                self.pool.elements[id].offset[1] += dy;
-            }
-        } else if index < self.pool.len() {
+        if index < self.pool.len() {
             let obj = &mut self.pool.elements[index];
             match instance_id {
                 Some(i) if i < obj.instances.len() => {

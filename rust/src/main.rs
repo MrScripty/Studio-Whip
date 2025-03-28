@@ -68,42 +68,39 @@ fn main() {
 
     // Add an instance to the square
     scene.add_instance(square_id, [100.0, 0.0]); // Instance 1: offset by (100, 0)
-    
-    scene.add_group(vec![
-        RenderObject {
-            vertices: vec![
-                Vertex { position: [400.0, 200.0] },
-                Vertex { position: [400.0, 230.0] },
-                Vertex { position: [430.0, 230.0] },
-                Vertex { position: [430.0, 200.0] },
-            ],
-            vertex_shader_filename: "square.vert.spv".to_string(),
-            fragment_shader_filename: "square.frag.spv".to_string(),
-            depth: 3.0,
-            on_window_resize_scale: false,
-            on_window_resize_move: true,
-            offset: [0.0, 0.0],
-            is_draggable: true,
-            instances: Vec::new(),
-        },
-        RenderObject {
-            vertices: vec![
-                Vertex { position: [450.0, 190.0] },
-                Vertex { position: [450.0, 240.0] },
-                Vertex { position: [470.0, 240.0] },
-                Vertex { position: [470.0, 190.0] },
-            ],
-            vertex_shader_filename: "square.vert.spv".to_string(),
-            fragment_shader_filename: "square.frag.spv".to_string(),
-            depth: 4.0,
-            on_window_resize_scale: false,
-            on_window_resize_move: true,
-            offset: [0.0, 0.0],
-            is_draggable: true,
-            instances: Vec::new(),
-        },
-    ], true);
 
+    let small_square_id = scene.add_object(RenderObject {
+        vertices: vec![
+            Vertex { position: [400.0, 200.0] },
+            Vertex { position: [400.0, 230.0] },
+            Vertex { position: [430.0, 230.0] },
+            Vertex { position: [430.0, 200.0] },
+        ],
+        vertex_shader_filename: "square.vert.spv".to_string(),
+        fragment_shader_filename: "square.frag.spv".to_string(),
+        depth: 3.0,
+        on_window_resize_scale: false,
+        on_window_resize_move: true,
+        offset: [0.0, 0.0],
+        is_draggable: true,
+        instances: Vec::new(),
+    });
+    let vertical_rect_id = scene.add_object(RenderObject {
+        vertices: vec![
+            Vertex { position: [450.0, 190.0] },
+            Vertex { position: [450.0, 240.0] },
+            Vertex { position: [470.0, 240.0] },
+            Vertex { position: [470.0, 190.0] },
+        ],
+        vertex_shader_filename: "square.vert.spv".to_string(),
+        fragment_shader_filename: "square.frag.spv".to_string(),
+        depth: 4.0,
+        on_window_resize_scale: false,
+        on_window_resize_move: true,
+        offset: [0.0, 0.0],
+        is_draggable: true,
+        instances: Vec::new(),
+    });
 
     let mut handler = VulkanContextHandler::new(vulkan_context, scene);
     event_loop.run_app(&mut handler).unwrap();

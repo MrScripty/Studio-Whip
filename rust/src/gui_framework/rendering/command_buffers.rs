@@ -121,11 +121,12 @@ pub fn record_command_buffers(
                     device.cmd_draw(
                         command_buffer,
                         renderable.vertex_count,
-                        renderable.instance_count + 1, // Base + instances
+                        renderable.instance_count + 1,
                         0,
                         0,
                     );
                 } else {
+                    device.cmd_bind_vertex_buffers(command_buffer, 1, &[vk::Buffer::null()], &[0]); // Null binding for non-instanced
                     device.cmd_draw(command_buffer, renderable.vertex_count, 1, 0, 0);
                 }
             }

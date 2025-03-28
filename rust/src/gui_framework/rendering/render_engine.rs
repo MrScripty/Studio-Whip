@@ -362,39 +362,57 @@ impl Renderer {
                 };
                 let stages = [vertex_stage, fragment_stage];
 
-                let vertex_attributes = [
-                    vk::VertexInputAttributeDescription {
-                        location: 0,
-                        binding: 0,
-                        format: vk::Format::R32G32_SFLOAT,
-                        offset: 0,
-                    },
-                    vk::VertexInputAttributeDescription { // New: Instance offset
-                        location: 1,
-                        binding: 1,
-                        format: vk::Format::R32G32_SFLOAT,
-                        offset: 0,
-                    },
-                ];
-                let vertex_bindings = [
-                    vk::VertexInputBindingDescription {
-                        binding: 0,
-                        stride: std::mem::size_of::<Vertex>() as u32,
-                        input_rate: vk::VertexInputRate::VERTEX,
-                    },
-                    vk::VertexInputBindingDescription { // New: Instance data binding
-                        binding: 1,
-                        stride: std::mem::size_of::<[f32; 2]>() as u32,
-                        input_rate: vk::VertexInputRate::INSTANCE,
-                    },
-                ];
+                let (vertex_attributes, vertex_bindings) = if obj.instances.is_empty() {
+                    (
+                        vec![vk::VertexInputAttributeDescription {
+                            location: 0,
+                            binding: 0,
+                            format: vk::Format::R32G32_SFLOAT,
+                            offset: 0,
+                        }],
+                        vec![vk::VertexInputBindingDescription {
+                            binding: 0,
+                            stride: std::mem::size_of::<Vertex>() as u32,
+                            input_rate: vk::VertexInputRate::VERTEX,
+                        }],
+                    )
+                } else {
+                    (
+                        vec![
+                            vk::VertexInputAttributeDescription {
+                                location: 0,
+                                binding: 0,
+                                format: vk::Format::R32G32_SFLOAT,
+                                offset: 0,
+                            },
+                            vk::VertexInputAttributeDescription {
+                                location: 1,
+                                binding: 1,
+                                format: vk::Format::R32G32_SFLOAT,
+                                offset: 0,
+                            },
+                        ],
+                        vec![
+                            vk::VertexInputBindingDescription {
+                                binding: 0,
+                                stride: std::mem::size_of::<Vertex>() as u32,
+                                input_rate: vk::VertexInputRate::VERTEX,
+                            },
+                            vk::VertexInputBindingDescription {
+                                binding: 1,
+                                stride: std::mem::size_of::<[f32; 2]>() as u32,
+                                input_rate: vk::VertexInputRate::INSTANCE,
+                            },
+                        ],
+                    )
+                };
                 let vertex_input = vk::PipelineVertexInputStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
                     p_next: std::ptr::null(),
                     flags: vk::PipelineVertexInputStateCreateFlags::empty(),
-                    vertex_binding_description_count: 2,
+                    vertex_binding_description_count: vertex_bindings.len() as u32,
                     p_vertex_binding_descriptions: vertex_bindings.as_ptr(),
-                    vertex_attribute_description_count: 2,
+                    vertex_attribute_description_count: vertex_attributes.len() as u32,
                     p_vertex_attribute_descriptions: vertex_attributes.as_ptr(),
                     _marker: PhantomData,
                 };

@@ -1,6 +1,7 @@
 // "C:\Users\jerem\Desktop\Studio-Whip\rust\src\main.rs"
 use winit::event_loop::{EventLoop, ControlFlow};
 use rusty_whip::gui_framework::{VulkanContext, Scene, RenderObject, VulkanContextHandler};
+use rusty_whip::gui_framework::scene::group::GroupManager;
 use rusty_whip::Vertex;
 
 fn main() {
@@ -62,13 +63,10 @@ fn main() {
         instances: Vec::new(),
     });
 
-    // Add instances to the triangle
-    scene.add_instance(triangle_id, [50.0, 50.0]);  // Instance 1: offset by (50, 50)
-    scene.add_instance(triangle_id, [-50.0, -50.0]); // Instance 2: offset by (-50, -50)
-
-    // Add an instance to the square
-    scene.add_instance(square_id, [100.0, 0.0]); // Instance 1: offset by (100, 0)
-
+    scene.add_instance(triangle_id, [50.0, 50.0]);
+    scene.add_instance(triangle_id, [-50.0, -50.0]);
+    scene.add_instance(square_id, [100.0, 0.0]);
+    
     let small_square_id = scene.add_object(RenderObject {
         vertices: vec![
             Vertex { position: [400.0, 200.0] },
@@ -101,6 +99,14 @@ fn main() {
         is_draggable: true,
         instances: Vec::new(),
     });
+
+    let mut group_mgr = GroupManager::new();
+    group_mgr.new_group("test_group").unwrap();
+    assert_eq!(group_mgr.groups_for_object(0), Vec::<&str>::new()); // Specify Vec<&str>
+    group_mgr.edit("test_group", &mut scene).unwrap().add_object(0);
+    assert_eq!(group_mgr.groups_for_object(0), vec!["test_group"]);
+    group_mgr.delete("test_group").unwrap();
+    assert_eq!(group_mgr.groups_for_object(0), Vec::<&str>::new()); // Specify Vec<&str>
 
     let mut handler = VulkanContextHandler::new(vulkan_context, scene);
     event_loop.run_app(&mut handler).unwrap();

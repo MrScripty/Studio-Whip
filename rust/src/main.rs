@@ -130,6 +130,10 @@ fn main() {
         let _objects = test_group.list_objects(); // [1]
     }
     
+    // After the group operations, before handler:
+    let groups = group_mgr.get_groups_with_object(1); // Should return ["another_group"]
+    let groups_empty = group_mgr.get_groups_with_object(0); // Should return []
+
     // Delete test_group
     group_mgr.delete_group("test_group").unwrap(); // Only "another_group" remains with [1, 3]
 

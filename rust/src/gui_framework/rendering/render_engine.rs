@@ -9,6 +9,7 @@ use crate::gui_framework::rendering::shader_utils::load_shader;
 use crate::gui_framework::rendering::renderable::Renderable;
 use crate::gui_framework::rendering::swapchain::{create_swapchain, create_framebuffers};
 use crate::gui_framework::rendering::command_buffers::record_command_buffers;
+use crate::gui_framework::rendering::pipeline_manager::PipelineManager;
 
 pub struct Renderer {
     vulkan_renderables: Vec<Renderable>,
@@ -24,7 +25,9 @@ impl Renderer {
     pub fn new(platform: &mut VulkanContext, extent: vk::Extent2D, scene: &Scene) -> Self {
         let surface_format = create_swapchain(platform, extent);
         create_framebuffers(platform, extent, surface_format);
-
+    
+        let pipeline_mgr = PipelineManager::new(platform, scene); // Add this
+    
         let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -1.0, 1.0).to_cols_array();
         let (uniform_buffer, uniform_allocation) = {
             let buffer_info = vk::BufferCreateInfo {
@@ -148,7 +151,7 @@ impl Renderer {
             platform.device.as_ref().unwrap().update_descriptor_sets(&[vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                 p_next: std::ptr::null(),
-                dst_set: descriptor_set,
+                dst_set: pipeline_mgr.descriptor_set, // Update this
                 dst_binding: 0,
                 dst_array_element: 0,
                 descriptor_count: 1,
@@ -563,7 +566,7 @@ impl Renderer {
 
         renderables.sort_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap());
 
-        record_command_buffers(platform, &renderables, pipeline_layout, descriptor_set, extent);
+        record_command_buffers(platform, &renderables, pipeline_mgr.pipeline_layout, pipeline_mgr.descriptor_set, extent);
 
         platform.image_available_semaphore = Some(unsafe {
             match platform.device.as_ref().unwrap().create_semaphore(&vk::SemaphoreCreateInfo::default(), None) {
@@ -603,12 +606,12 @@ impl Renderer {
 
         Self {
             vulkan_renderables: renderables,
-            pipeline_layout,
+            pipeline_layout: pipeline_mgr.pipeline_layout,
             uniform_buffer,
             uniform_allocation,
-            descriptor_set_layout,
-            descriptor_pool,
-            descriptor_set,
+            descriptor_set_layout: pipeline_mgr.descriptor_set_layout,
+            descriptor_pool: pipeline_mgr.descriptor_pool,
+            descriptor_set: pipeline_mgr.descriptor_set,
         }
     }
 
@@ -780,6 +783,16 @@ impl Renderer {
     }
 
     pub fn cleanup(mut self, platform: &mut VulkanContext) {
+        PipelineManager::cleanup(
+            PipelineManager {
+                pipeline_layout: self.pipeline_layout,
+                descriptor_set_layout: self.descriptor_set_layout,
+                descriptor_pool: self.descriptor_pool,
+                descriptor_set: self.descriptor_set,
+            },
+            platform,
+        );
+        
         let device = platform.device.as_ref().unwrap();
         let swapchain_loader = platform.swapchain_loader.take().unwrap();
     

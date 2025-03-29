@@ -149,12 +149,42 @@ case "$option" in
         ;;
 
     3) # Generate Documentation
+        first_file=true
+        # Start with documentation_prompt.md
         doc_prompt="$DOCS_DIR/documentation_prompt.md"
         if [ -s "$doc_prompt" ]; then
             echo "Processing $doc_prompt"
             append_content "$doc_prompt" "markdown"
+            first_file=false
         else
             echo "Warning: $doc_prompt not found or is empty"
+        fi
+
+        # Then modules.md
+        modules_md="$DOCS_DIR/modules.md"
+        if [ -s "$modules_md" ]; then
+            if ! $first_file; then
+                echo "---" >> "$temp_file"
+                echo "" >> "$temp_file"
+            fi
+            echo "Processing $modules_md"
+            append_content "$modules_md" "markdown"
+            first_file=false
+        else
+            echo "Warning: $modules_md not found or is empty"
+        fi
+
+        # Then architecture.md
+        arch_md="$DOCS_DIR/architecture.md"
+        if [ -s "$arch_md" ]; then
+            if ! $first_file; then
+                echo "---" >> "$temp_file"
+                echo "" >> "$temp_file"
+            fi
+            echo "Processing $arch_md"
+            append_content "$arch_md" "markdown"
+        else
+            echo "Warning: $arch_md not found or is empty"
         fi
         ;;
 

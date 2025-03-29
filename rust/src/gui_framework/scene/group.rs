@@ -1,4 +1,3 @@
-use crate::gui_framework::scene::scene::Scene;
 use std::fmt;
 
 // Error type for group operations
@@ -61,10 +60,10 @@ impl GroupManager {
         Ok(())
     }
 
-    pub fn group<'a>(&'a mut self, name: &str, scene: &'a mut Scene) -> Result<GroupEditor<'a>, GroupError> {
+    pub fn group<'a>(&'a mut self, name: &str) -> Result<GroupEditor<'a>, GroupError> {
         let group = self.groups.iter_mut().find(|g| g.name == name)
             .ok_or(GroupError::GroupNotFound)?;
-        Ok(GroupEditor { group, scene })
+        Ok(GroupEditor { group })
     }
 
     pub fn get_groups_with_object(&self, object_id: usize) -> Vec<&str> {
@@ -78,12 +77,11 @@ impl GroupManager {
 // Editor for modifying a specific group
 pub struct GroupEditor<'a> {
     group: &'a mut Group,
-    scene: &'a mut Scene,
 }
 
 impl<'a> GroupEditor<'a> {
     pub fn add_object(&mut self, object_id: usize) {
-        if object_id < self.scene.pool.len() && !self.group.object_ids.contains(&object_id) {
+        if !self.group.object_ids.contains(&object_id) {
             self.group.object_ids.push(object_id);
         }
     }

@@ -30,7 +30,7 @@ impl InteractionController {
         }
     }
 
-    pub fn handle_event(&mut self, event: &Event<()>, scene: Option<&mut Scene>, renderer: Option<&mut Renderer>, window: &Window) {
+    pub fn handle_event(&mut self, event: &Event<()>, scene: Option<&mut Scene>, _renderer: Option<&mut Renderer>, window: &Window) {
         if let Event::WindowEvent { event, .. } = event {
             match event {
                 WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {

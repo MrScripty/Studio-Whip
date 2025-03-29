@@ -1,8 +1,12 @@
 pub mod rendering;
 pub mod context;
 pub mod window;
-pub mod scene;
 pub mod interaction;
+pub mod scene {
+    pub mod scene;
+    pub mod group;
+}
+
 
 pub use rendering::render_engine::Renderer;
 pub use context::vulkan_context::VulkanContext;

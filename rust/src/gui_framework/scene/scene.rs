@@ -1,4 +1,5 @@
 use crate::Vertex;
+use super::group::GroupManager;
 
 #[derive(Debug, Clone)]
 pub struct InstanceData {
@@ -90,6 +91,7 @@ impl HitTestable for RenderObject {
 #[derive(Debug)]
 pub struct Scene {
     pub pool: ElementPool,
+    groups: GroupManager,
     pub width: f32,
     pub height: f32,
 }
@@ -98,9 +100,14 @@ impl Scene {
     pub fn new() -> Self {
         Scene {
             pool: ElementPool::new(10000),
+            groups: GroupManager::new(),
             width: 600.0,
             height: 300.0,
         }
+    }
+
+    pub fn groups(&mut self) -> &mut GroupManager {
+        &mut self.groups
     }
 
     pub fn add_object(&mut self, object: RenderObject) -> usize {

@@ -1,58 +1,67 @@
-# Architecture Overview for `rusty_whip` (March 27, 2025)
+# Architecture Overview for `rusty_whip` (March 29, 2025)
 
 ## Purpose
-`rusty_whip` is an advanced 2D and 3D content generation application for digital entertainment production, leveraging GPU-accelerated AI diffusion/inference, multimedia creation (2D video, stills, animation, audio), and story-driven workflows, with plans for quantum-resistant P2P networking. Current focus: 2D GUI with Vulkan rendering, click-and-drag, instancing, and grouping (under redesign).
+`rusty_whip` is an advanced 2D and 3D content generation application for digital entertainment production, leveraging GPU-accelerated AI diffusion/inference, multimedia creation (2D video, stills, animation, audio), and story-driven workflows, with plans for quantum-resistant P2P networking. Current focus: 2D GUI with Vulkan-based rendering, click-and-drag functionality, instancing, and logical grouping.
 
 ## Core Components
 1. **Vulkan Context Management (`context/`)**
-   - **Role**: Initializes and manages Vulkan resources.
+   - **Role**: Initializes and manages Vulkan resources (instance, device, swapchain, etc.).
    - **Key Modules**: `vulkan_context.rs`, `vulkan_setup.rs`.
 2. **Rendering Engine (`rendering/`)**
-   - **Role**: Executes Vulkan rendering pipeline with instancing support.
+   - **Role**: Executes the Vulkan rendering pipeline with support for instancing.
    - **Key Modules**: `render_engine.rs`, `command_buffers.rs`, `renderable.rs`, `swapchain.rs`, `shader_utils.rs`.
 3. **Scene Management (`scene/`)**
-   - **Role**: Stores and manipulates renderable objects with pooling, instancing, and grouping (currently rendering-affecting, to be logical-only).
-   - **Key Module**: `scene.rs`.
+   - **Role**: Manages renderable objects with pooling, instancing, and logical grouping.
+   - **Key Modules**: `scene.rs`, `group.rs`.
 4. **Interaction Handling (`interaction/`)**
-   - **Role**: Processes user input for object and instance manipulation.
+   - **Role**: Processes user input (e.g., mouse events) for object and instance manipulation.
    - **Key Module**: `controller.rs`.
 5. **Window and Event Loop (`window/`)**
-   - **Role**: Manages window events and rendering loop.
+   - **Role**: Manages window creation, events, and the rendering loop.
    - **Key Module**: `window_handler.rs`.
 6. **Application Entry (`main.rs`)**
-   - **Role**: Bootstraps the application.
+   - **Role**: Bootstraps the application with initial setup and test objects.
 
 ## Data Flow
-1. `main.rs` initializes `VulkanContext`, `Scene` with objects, instances, and one group, and `EventLoop`.
-2. `window_handler.rs` sets up Vulkan via `vulkan_setup.rs` and `Renderer`.
-3. Mouse events flow to `controller.rs`, updating `Scene` offsets for objects, instances, or groups.
-4. `render_engine.rs` syncs offsets and renders via `command_buffers.rs` and `swapchain.rs`, using instancing where applicable.
+1. `main.rs` initializes `VulkanContext` and `Scene`, populates objects/instances, and launches `EventLoop`.
+2. `window_handler.rs` configures Vulkan via `vulkan_setup.rs` and initializes `Renderer`.
+3. Mouse events are routed to `controller.rs`, which updates `Scene` offsets for objects or instances.
+4. `render_engine.rs` synchronizes offsets and renders via `command_buffers.rs` and `swapchain.rs`, leveraging instancing.
 
 ## Key Interactions
-- `Scene` ↔ `Renderer`: `Scene` provides objects and instances; `Renderer` renders them with instancing.
-- `InteractionController` ↔ `Scene`: Updates offsets based on pool or group indices.
-- `VulkanContext` ↔ `Renderer`: Supplies Vulkan resources.
-- `WindowHandler` ↔ All: Coordinates events and rendering.
+- **`Scene` ↔ `Renderer`**: `Scene` supplies objects and instances; `Renderer` renders them with depth sorting and instancing.
+- **`InteractionController` ↔ `Scene`**: Updates object/instance offsets using pool indices.
+- **`VulkanContext` ↔ `Renderer`**: Provides Vulkan resources for rendering.
+- **`WindowHandler` ↔ All Components**: Orchestrates event handling and rendering.
+- **`Scene` ↔ `GroupManager`**: Manages logical groups for object organization.
 
 ## Current Capabilities
 - 2D GUI with depth-sorted objects using orthographic projection.
-- Click-and-drag for individual objects and instances via shader offsets.
-- Window resizing with scaling/movement adjustments.
-- Object pooling for efficient management.
-- Instancing for efficient rendering of multiple object copies.
-- Grouping (affects rendering, under redesign) for organizing objects.
+- Click-and-drag support for objects and instances via shader offsets.
+- Window resizing with scaling or repositioning of objects.
+- Object pooling for efficient memory management.
+- Instancing for rendering multiple object copies efficiently.
+- Logical grouping for organizing objects, independent of rendering.
 
 ## Future Extensions
-- Redesign groups as logical containers (Task 2).
-- P2P networking with event bus.
-- 3D rendering and AI integration.
-- Performance testing with 256+ elements.
+- Batch operations for groups (e.g., translate all objects in a group).
+- Optional visibility toggling for objects or groups.
+- P2P networking with an event bus.
+- 3D rendering and AI-driven content generation.
+- Performance optimization for 256+ elements.
+
+## Error Handling
+- Vulkan errors are checked via `ash` results, with cleanup handled in `vulkan_setup.rs`.
+- Logical errors (e.g., duplicate group names) use `Result` in `group.rs`.
+
+## Shader Integration
+- Per-object shaders (e.g., `triangle.vert.spv`) are managed by `renderable.rs` and integrated into `Renderer` pipelines.
 
 ## Dependencies
-- `ash = "0.38"`, `vk-mem = "0.4"`, `winit = "0.30.9"`, `ash-window = "0.13"`, `glam = "0.30"`, `raw-window-handle = "0.6"`.
-- Shaders: `.spv` files in `shaders/`.
+- External crates: `ash = "0.38"`, `vk-mem = "0.4"`, `winit = "0.30.9"`, `ash-window = "0.13"`, `glam = "0.30"`, `raw-window-handle = "0.6"`.
+- Shaders: Precompiled `.spv` files in `shaders/` (e.g., `triangle.vert.spv`, `square.frag.spv`).
 
 ## Notes
-- Vulkan uses inverted Y-axis, adjusted in `controller.rs` and hit detection.
-- Grouping currently impacts rendering (hitbox/dragging issues); redesign in progress.
-- Instancing fixed for instanced objects; non-instanced grouped objects problematic.
+- Vulkan’s inverted Y-axis is adjusted in `controller.rs` for mouse input and in `scene.rs` for hit detection.
+- Logical grouping redesign ensures no direct rendering impact, managed via `GroupManager`.
+- `main.rs` serves as a functional testbed for GUI features (e.g., dragging, instancing).

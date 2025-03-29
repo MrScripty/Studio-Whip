@@ -81,8 +81,8 @@ impl HitTestable for RenderObject {
                 (acc.0.min(pos_x), acc.1.max(pos_x), acc.2.min(pos_y), acc.3.max(pos_y))
             }
         );
-        println!("Checking object (depth {}): x=[{}, {}], y=[{}, {}], click=({}, {}), offset={:?}",
-                 self.depth, min_x, max_x, min_y, max_y, x, adjusted_y, offset);
+        //println!("Checking object (depth {}): x=[{}, {}], y=[{}, {}], click=({}, {}), offset={:?}",
+                 //self.depth, min_x, max_x, min_y, max_y, x, adjusted_y, offset);
         x >= min_x && x <= max_x && adjusted_y >= min_y && adjusted_y <= max_y
     }
 }

@@ -51,7 +51,7 @@ impl InteractionController {
                     if matches!(self.context, CursorContext::Canvas) && self.mouse_state.is_dragging {
                         if let Some(last_pos) = self.mouse_state.last_position {
                             let delta = [pos[0] - last_pos[0], last_pos[1] - pos[1]]; // Invert Y-delta
-                            println!("Dragging delta: {:?}", delta);
+                            //println!("Dragging delta: {:?}", delta);
                             if let Some(scene) = scene {
                                 if let Some((index, instance_id)) = self.mouse_state.dragged_object {
                                     scene.translate_object(index, delta[0], delta[1], instance_id);

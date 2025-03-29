@@ -46,7 +46,7 @@ impl GroupManager {
         }
     }
 
-    pub fn new_group(&mut self, name: &str) -> Result<(), GroupError> {
+    pub fn add_group(&mut self, name: &str) -> Result<(), GroupError> {
         if self.groups.iter().any(|g| g.name == name) {
             return Err(GroupError::DuplicateName);
         }
@@ -54,20 +54,20 @@ impl GroupManager {
         Ok(())
     }
 
-    pub fn delete(&mut self, name: &str) -> Result<(), GroupError> {
+    pub fn delete_group(&mut self, name: &str) -> Result<(), GroupError> {
         let index = self.groups.iter().position(|g| g.name == name)
             .ok_or(GroupError::GroupNotFound)?;
         self.groups.remove(index);
         Ok(())
     }
 
-    pub fn edit<'a>(&'a mut self, name: &str, scene: &'a mut Scene) -> Result<GroupEditor<'a>, GroupError> {
+    pub fn group<'a>(&'a mut self, name: &str, scene: &'a mut Scene) -> Result<GroupEditor<'a>, GroupError> {
         let group = self.groups.iter_mut().find(|g| g.name == name)
             .ok_or(GroupError::GroupNotFound)?;
         Ok(GroupEditor { group, scene })
     }
 
-    pub fn groups_for_object(&self, object_id: usize) -> Vec<&str> {
+    pub fn get_groups_with_object(&self, object_id: usize) -> Vec<&str> {
         self.groups.iter()
             .filter(|g| g.object_ids.contains(&object_id))
             .map(|g| g.name.as_str())
@@ -78,12 +78,12 @@ impl GroupManager {
 // Editor for modifying a specific group
 pub struct GroupEditor<'a> {
     group: &'a mut Group,
-    scene: &'a mut Scene, // Access to modify RenderObjects in the pool
+    scene: &'a mut Scene,
 }
 
 impl<'a> GroupEditor<'a> {
     pub fn add_object(&mut self, object_id: usize) {
-        if !self.group.object_ids.contains(&object_id) {
+        if object_id < self.scene.pool.len() && !self.group.object_ids.contains(&object_id) {
             self.group.object_ids.push(object_id);
         }
     }
@@ -92,5 +92,9 @@ impl<'a> GroupEditor<'a> {
         if let Some(index) = self.group.object_ids.iter().position(|&id| id == object_id) {
             self.group.object_ids.remove(index);
         }
+    }
+
+    pub fn list_objects(&self) -> &[usize] {
+        &self.group.object_ids
     }
 }

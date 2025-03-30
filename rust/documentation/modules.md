@@ -25,6 +25,8 @@ Studio_Whip/
                     controller.rs
                 rendering/
                     command_buffers.rs
+                    buffer_manager.rs
+                    pipeline_manager.rs
                     renderable.rs
                     render_engine.rs
                     shader_utils.rs
@@ -60,6 +62,7 @@ Studio_Whip/
         build.rs
         compile_shaders.ps1
         compile_shaders.sh
+
 
 
 
@@ -122,16 +125,34 @@ Studio_Whip/
 - **Key Structs**: `Renderable { vertex_buffer, pipeline, depth, offset_uniform, instance_buffer, ... }`.
 
 ### `src/gui_framework/rendering/render_engine.rs`
-- **Purpose**: Manages the Vulkan rendering pipeline with instancing.
-- **Key Structs**: `Renderer { vulkan_renderables, pipeline_layout, descriptor_set, ... }`.
+- **Purpose**: Orchestrates Vulkan rendering by delegating to `pipeline_manager.rs` and `buffer_manager.rs`.
+- **Key Structs**: `Renderer { vulkan_renderables, pipeline_layout, uniform_buffer, descriptor_set, ... }`.
 - **Key Methods**:
-  - `new(&mut VulkanContext, vk::Extent2D, &Scene) -> Self` - Initializes renderer.
+  - `new(&mut VulkanContext, vk::Extent2D, &Scene) -> Self` - Initializes renderer with delegated setup.
   - `update_offset(&mut self, &Device, &Allocator, usize, [f32; 2]) -> ()` - Updates object offset.
   - `update_instance_offset(&mut self, &Device, &Allocator, usize, usize, [f32; 2]) -> ()` - Updates instance offset.
   - `resize_renderer(&mut self, &mut VulkanContext, &mut Scene, u32, u32) -> ()` - Adjusts for window resize.
-  - `render(&mut self, &mut VulkanContext, &Scene) -> ()` - Renders frame.
-  - `cleanup(self, &mut VulkanContext) -> ()` - Frees resources.
-- **Notes**: Syncs offsets from `Scene`; 3D support may extend `Renderable`.
+  - `render(&mut self, &mut VulkanContext, &Scene) -> ()` - Renders frame with offset sync.
+  - `cleanup(self, &mut VulkanContext) -> ()` - Delegates cleanup to submodules.
+- **Notes**: Reduced scope; syncs offsets from `Scene`; depends on `pipeline_manager.rs` and `buffer_manager.rs`.
+
+### `src/gui_framework/rendering/pipeline_manager.rs`
+- **Purpose**: Manages Vulkan pipeline creation and descriptor set setup.
+- **Key Structs**: `PipelineManager { pipeline_layout, descriptor_set_layout, descriptor_pool, descriptor_set }`.
+- **Key Methods**:
+  - `new(&mut VulkanContext, &Scene) -> Self` - Creates pipeline layout and projection descriptor set.
+  - `cleanup(self, &mut VulkanContext) -> ()` - Frees pipeline resources.
+- **Notes**: Used by `render_engine.rs`; provides layout for `buffer_manager.rs`.
+
+### `src/gui_framework/rendering/buffer_manager.rs`
+- **Purpose**: Manages Vulkan buffers (uniform, vertex, instance) and renderable pipelines.
+- **Key Structs**: `BufferManager { uniform_buffer, uniform_allocation, renderables, descriptor_set_layout, descriptor_pool }`.
+- **Key Methods**:
+  - `new(&mut VulkanContext, &Scene, vk::PipelineLayout) -> Self` - Sets up buffers and renderables.
+  - `update_offset(&mut self, &Device, &Allocator, usize, [f32; 2]) -> ()` - Updates object offset buffer.
+  - `update_instance_offset(&mut self, &Device, &Allocator, usize, usize, [f32; 2]) -> ()` - Updates instance offset buffer.
+  - `cleanup(self, &mut VulkanContext) -> ()` - Frees buffer resources.
+- **Notes**: Used by `render_engine.rs`; manages descriptor sets and pipelines.
 
 ### `src/gui_framework/rendering/shader_utils.rs`
 - **Purpose**: Loads compiled shader modules.

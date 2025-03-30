@@ -25,10 +25,11 @@ Studio_Whip/
                     controller.rs
                 rendering/
                     command_buffers.rs
-                    buffer_manager.rs
-                    pipeline_manager.rs
                     renderable.rs
                     render_engine.rs
+                    pipeline_manager.rs
+                    buffer_manager.rs
+                    resize_handler.rs  // New
                     shader_utils.rs
                     swapchain.rs
                     mod.rs
@@ -53,7 +54,7 @@ Studio_Whip/
             tasks.md
             modules.md
             roadmap.md
-            documentation_prompt.d
+            documentation_prompt.md
             tasks_instruction_prompt.md
             modules_plan.md
         utilities/
@@ -62,10 +63,6 @@ Studio_Whip/
         build.rs
         compile_shaders.ps1
         compile_shaders.sh
-
-
-
-
 
 
 ## Modules and Their Functions
@@ -125,16 +122,14 @@ Studio_Whip/
 - **Key Structs**: `Renderable { vertex_buffer, pipeline, depth, offset_uniform, instance_buffer, ... }`.
 
 ### `src/gui_framework/rendering/render_engine.rs`
-- **Purpose**: Orchestrates Vulkan rendering by delegating to `pipeline_manager.rs` and `buffer_manager.rs`.
+- **Purpose**: Orchestrates Vulkan rendering by delegating to `pipeline_manager.rs`, `buffer_manager.rs`, and `resize_handler.rs`.
 - **Key Structs**: `Renderer { vulkan_renderables, pipeline_layout, uniform_buffer, descriptor_set, ... }`.
 - **Key Methods**:
   - `new(&mut VulkanContext, vk::Extent2D, &Scene) -> Self` - Initializes renderer with delegated setup.
-  - `update_offset(&mut self, &Device, &Allocator, usize, [f32; 2]) -> ()` - Updates object offset.
-  - `update_instance_offset(&mut self, &Device, &Allocator, usize, usize, [f32; 2]) -> ()` - Updates instance offset.
-  - `resize_renderer(&mut self, &mut VulkanContext, &mut Scene, u32, u32) -> ()` - Adjusts for window resize.
-  - `render(&mut self, &mut VulkanContext, &Scene) -> ()` - Renders frame with offset sync.
+  - `resize_renderer(&mut self, &mut VulkanContext, &mut Scene, u32, u32) -> ()` - Delegates to `ResizeHandler`.
+  - `render(&mut self, &mut VulkanContext, &Scene) -> ()` - Renders frame with offset sync via `BufferManager`.
   - `cleanup(self, &mut VulkanContext) -> ()` - Delegates cleanup to submodules.
-- **Notes**: Reduced scope; syncs offsets from `Scene`; depends on `pipeline_manager.rs` and `buffer_manager.rs`.
+- **Notes**: Reduced scope; syncs offsets via `BufferManager`; depends on `pipeline_manager.rs`, `buffer_manager.rs`, `resize_handler.rs`.
 
 ### `src/gui_framework/rendering/pipeline_manager.rs`
 - **Purpose**: Manages Vulkan pipeline creation and descriptor set setup.
@@ -145,14 +140,21 @@ Studio_Whip/
 - **Notes**: Used by `render_engine.rs`; provides layout for `buffer_manager.rs`.
 
 ### `src/gui_framework/rendering/buffer_manager.rs`
-- **Purpose**: Manages Vulkan buffers (uniform, vertex, instance) and renderable pipelines.
+- **Purpose**: Manages Vulkan buffers (uniform, vertex, instance) and renderable pipelines, including offset updates.
 - **Key Structs**: `BufferManager { uniform_buffer, uniform_allocation, renderables, descriptor_set_layout, descriptor_pool }`.
 - **Key Methods**:
   - `new(&mut VulkanContext, &Scene, vk::PipelineLayout) -> Self` - Sets up buffers and renderables.
-  - `update_offset(&mut self, &Device, &Allocator, usize, [f32; 2]) -> ()` - Updates object offset buffer.
-  - `update_instance_offset(&mut self, &Device, &Allocator, usize, usize, [f32; 2]) -> ()` - Updates instance offset buffer.
-  - `cleanup(self, &mut VulkanContext) -> ()` - Frees buffer resources.
-- **Notes**: Used by `render_engine.rs`; manages descriptor sets and pipelines.
+  - `update_offset(&mut Vec<Renderable>, &Device, &Allocator, usize, [f32; 2]) -> ()` - Updates object offset buffer.
+  - `update_instance_offset(&mut Vec<Renderable>, &Device, &Allocator, usize, usize, [f32; 2]) -> ()` - Updates instance offset buffer.
+  - `cleanup(mut self, &mut VulkanContext) -> ()` - Frees buffer resources.
+- **Notes**: Used by `render_engine.rs` for buffer management and offset syncing.
+
+### `src/gui_framework/rendering/resize_handler.rs`
+- **Purpose**: Handles window resizing, updating swapchain, framebuffers, and renderable vertices.
+- **Key Structs**: `ResizeHandler` (stateless).
+- **Key Methods**:
+  - `resize(&mut VulkanContext, &mut Scene, &mut Vec<Renderable>, vk::PipelineLayout, vk::DescriptorSet, u32, u32, &mut Allocation) -> ()` - Adjusts rendering for new window size.
+- **Notes**: Used by `render_engine.rs` for resize operations.
 
 ### `src/gui_framework/rendering/shader_utils.rs`
 - **Purpose**: Loads compiled shader modules.

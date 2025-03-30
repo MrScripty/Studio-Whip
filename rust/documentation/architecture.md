@@ -8,8 +8,8 @@
    - **Role**: Initializes and manages Vulkan resources (instance, device, swapchain, etc.).
    - **Key Modules**: `vulkan_context.rs`, `vulkan_setup.rs`.
 2. **Rendering Engine (`rendering/`)**
-   - **Role**: Executes the Vulkan rendering pipeline with support for instancing, split into pipeline and buffer management.
-   - **Key Modules**: `render_engine.rs`, `pipeline_manager.rs`, `buffer_manager.rs`, `command_buffers.rs`, `renderable.rs`, `swapchain.rs`, `shader_utils.rs`.
+   - **Role**: Executes the Vulkan rendering pipeline with instancing, split into pipeline, buffer, and resize management.
+   - **Key Modules**: `render_engine.rs`, `pipeline_manager.rs`, `buffer_manager.rs`, `resize_handler.rs`, `command_buffers.rs`, `renderable.rs`, `swapchain.rs`, `shader_utils.rs`.
 3. **Scene Management (`scene/`)**
    - **Role**: Manages renderable objects with pooling, instancing, and logical grouping.
    - **Key Modules**: `scene.rs`, `group.rs`.
@@ -26,15 +26,15 @@
 1. `main.rs` initializes `VulkanContext` and `Scene`, populates objects/instances, and launches `EventLoop`.
 2. `window_handler.rs` configures Vulkan via `vulkan_setup.rs` and initializes `Renderer`.
 3. Mouse events are routed to `controller.rs`, which updates `Scene` offsets for objects or instances.
-4. `render_engine.rs` orchestrates rendering: `pipeline_manager.rs` sets up pipelines/descriptors, `buffer_manager.rs` manages buffers, and rendering proceeds via `command_buffers.rs` and `swapchain.rs` with instancing.
+4. `render_engine.rs` orchestrates rendering: `pipeline_manager.rs` sets up pipelines/descriptors, `buffer_manager.rs` manages buffers and offset updates, `resize_handler.rs` handles window resizing, and rendering proceeds via `command_buffers.rs` and `swapchain.rs` with instancing.
 
 ## Key Interactions
 - **`Scene` ↔ `Renderer`**: `Scene` supplies objects and instances; `Renderer` renders them with depth sorting and instancing via `buffer_manager.rs`.
 - **`InteractionController` ↔ `Scene`**: Updates object/instance offsets using pool indices.
-- **`VulkanContext` ↔ `Renderer`**: Provides Vulkan resources, accessed by `pipeline_manager.rs` and `buffer_manager.rs`.
+- **`VulkanContext` ↔ `Renderer`**: Provides Vulkan resources, accessed by `pipeline_manager.rs`, `buffer_manager.rs`, and `resize_handler.rs`.
 - **`WindowHandler` ↔ All Components**: Orchestrates event handling and rendering.
-- **`Scene` ↔ `GroupManager`**: Manages logical groups for object organization.
 - **`PipelineManager` ↔ `BufferManager`**: `PipelineManager` provides pipeline layout and descriptor sets; `BufferManager` uses them for buffer setup.
+- **`Renderer` ↔ `ResizeHandler`**: `Renderer` delegates resize operations to `ResizeHandler`.
 
 ## Current Capabilities
 - 2D GUI with depth-sorted objects using orthographic projection.
@@ -65,5 +65,5 @@
 ## Notes
 - Vulkan’s inverted Y-axis is adjusted in `controller.rs` for mouse input and in `scene.rs` for hit detection.
 - Logical grouping redesign ensures no direct rendering impact, managed via `GroupManager`.
-- `render_engine.rs` now delegates buffer and pipeline tasks, reducing its scope.
+- `render_engine.rs` delegates to `pipeline_manager.rs`, `buffer_manager.rs`, and `resize_handler.rs`, reducing its scope.
 - `main.rs` serves as a functional testbed for GUI features (e.g., dragging, instancing).

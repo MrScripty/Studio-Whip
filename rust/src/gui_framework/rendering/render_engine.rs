@@ -8,7 +8,7 @@ use crate::gui_framework::rendering::renderable::Renderable;
 use crate::gui_framework::rendering::swapchain::{create_swapchain, create_framebuffers};
 use crate::gui_framework::rendering::command_buffers::record_command_buffers;
 use crate::gui_framework::rendering::pipeline_manager::PipelineManager;
-use crate::gui_framework::rendering::buffer_manager::BufferManager; // Add this line
+use crate::gui_framework::rendering::buffer_manager::BufferManager;
 
 pub struct Renderer {
     vulkan_renderables: Vec<Renderable>,
@@ -98,37 +98,6 @@ impl Renderer {
         }
     }
 
-    pub fn update_offset(&mut self, device: &ash::Device, allocator: &vk_mem::Allocator, index: usize, offset: [f32; 2]) {
-        let renderable = &mut self.vulkan_renderables[index];
-        unsafe {
-            let data_ptr = allocator
-                .map_memory(&mut renderable.offset_allocation)
-                .unwrap()
-                .cast::<f32>();
-            data_ptr.copy_from_nonoverlapping(offset.as_ptr(), 2);
-            allocator.unmap_memory(&mut renderable.offset_allocation);
-
-            let buffer_info = vk::DescriptorBufferInfo {
-                buffer: renderable.offset_uniform,
-                offset: 0,
-                range: std::mem::size_of::<[f32; 2]>() as u64,
-            };
-            device.update_descriptor_sets(&[vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                p_next: std::ptr::null(),
-                dst_set: renderable.descriptor_set,
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                p_image_info: std::ptr::null(),
-                p_buffer_info: &buffer_info,
-                p_texel_buffer_view: std::ptr::null(),
-                _marker: PhantomData,
-            }], &[]);
-        }
-    }
-
     pub fn resize_renderer(&mut self, vulkan_context: &mut VulkanContext, scene: &mut Scene, width: u32, height: u32) {
         let device = vulkan_context.device.as_ref().unwrap();
         unsafe { device.device_wait_idle().unwrap() };
@@ -199,18 +168,6 @@ impl Renderer {
         record_command_buffers(vulkan_context, &self.vulkan_renderables, self.pipeline_layout, self.descriptor_set, extent);
     }
 
-    pub fn update_instance_offset(&mut self, _device: &ash::Device, allocator: &vk_mem::Allocator, object_index: usize, instance_id: usize, offset: [f32; 2]) {
-        let renderable = &mut self.vulkan_renderables[object_index];
-        if let Some(ref mut instance_allocation) = renderable.instance_allocation {
-            unsafe {
-                let data_ptr = allocator.map_memory(instance_allocation).unwrap().cast::<f32>();
-                let offset_ptr = data_ptr.add(instance_id * 2); // Each instance offset is 2 f32s
-                offset_ptr.copy_from_nonoverlapping(offset.as_ptr(), 2);
-                allocator.unmap_memory(instance_allocation);
-            }
-        }
-    }
-
     pub fn render(&mut self, platform: &mut VulkanContext, scene: &Scene) {
         let device = platform.device.as_ref().unwrap();
         let queue = platform.queue.unwrap();
@@ -222,9 +179,9 @@ impl Renderer {
         let allocator = platform.allocator.as_ref().unwrap();
 
         for (i, obj) in scene.pool.iter().enumerate() {
-            self.update_offset(device, allocator, i, obj.offset);
+            BufferManager::update_offset(&mut self.vulkan_renderables, device, allocator, i, obj.offset);
             for (j, instance) in obj.instances.iter().enumerate() {
-                self.update_instance_offset(device, allocator, i, j, instance.offset);
+                BufferManager::update_instance_offset(&mut self.vulkan_renderables, device, allocator, i, j, instance.offset);
             }
         }
 

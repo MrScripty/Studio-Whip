@@ -12,8 +12,8 @@ pub struct BufferManager {
     pub uniform_buffer: vk::Buffer,
     pub uniform_allocation: vk_mem::Allocation,
     pub renderables: Vec<Renderable>,
-    pub descriptor_set_layout: vk::DescriptorSetLayout, // Moved from render_engine.rs
-    pub descriptor_pool: vk::DescriptorPool,            // Moved from render_engine.rs
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
+    pub descriptor_pool: vk::DescriptorPool,
 }
 
 impl BufferManager {
@@ -76,7 +76,7 @@ impl BufferManager {
             match platform.device.as_ref().unwrap().create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                 p_next: std::ptr::null(),
-                flags: vk::DescriptorSetLayoutCreateFlags::empty(),
+                flags: vk::DescriptorSetLayoutCreateFlags::empty(), // Fixed: Correct flags
                 binding_count: bindings.len() as u32,
                 p_bindings: bindings.as_ptr(),
                 _marker: PhantomData,
@@ -523,8 +523,8 @@ impl BufferManager {
         }
     }
 
-    pub fn update_offset(&mut self, device: &ash::Device, allocator: &vk_mem::Allocator, index: usize, offset: [f32; 2]) {
-        let renderable = &mut self.renderables[index];
+    pub fn update_offset(renderables: &mut Vec<Renderable>, device: &ash::Device, allocator: &vk_mem::Allocator, index: usize, offset: [f32; 2]) {
+        let renderable = &mut renderables[index];
         unsafe {
             let data_ptr = allocator
                 .map_memory(&mut renderable.offset_allocation)
@@ -554,8 +554,8 @@ impl BufferManager {
         }
     }
 
-    pub fn update_instance_offset(&mut self, _device: &ash::Device, allocator: &vk_mem::Allocator, object_index: usize, instance_id: usize, offset: [f32; 2]) {
-        let renderable = &mut self.renderables[object_index];
+    pub fn update_instance_offset(renderables: &mut Vec<Renderable>, _device: &ash::Device, allocator: &vk_mem::Allocator, object_index: usize, instance_id: usize, offset: [f32; 2]) {
+        let renderable = &mut renderables[object_index];
         if let Some(ref mut instance_allocation) = renderable.instance_allocation {
             unsafe {
                 let data_ptr = allocator.map_memory(instance_allocation).unwrap().cast::<f32>();

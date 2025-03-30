@@ -1,5 +1,6 @@
 pub mod render_engine;
 pub mod pipeline_manager;
+pub mod buffer_manager;
 pub mod shader_utils;
 pub mod renderable;
 pub mod swapchain;

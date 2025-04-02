@@ -12,6 +12,7 @@ use crate::gui_framework::interaction::controller::InteractionController;
 use crate::gui_framework::event_bus::{EventBus, BusEvent as BusEvent, EventHandler};
 use std::sync::{Arc, Mutex};
 
+
 struct SceneEventHandler {
     scene_ref: Arc<Mutex<Scene>>,
 }

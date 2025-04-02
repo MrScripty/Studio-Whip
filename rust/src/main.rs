@@ -8,8 +8,14 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     let vulkan_context = VulkanContext::new();
-    let mut scene = Scene::new();
 
+    // Create the EventBus instance first
+    let event_bus = Arc::new(EventBus::new());
+
+    // Create the Scene instance, passing a clone of the event_bus Arc
+    let mut scene = Scene::new(event_bus.clone());
+
+    // --- Perform all scene setup BEFORE moving it into the Arc ---
     let width = 600.0;
     let height = 300.0;
 
@@ -66,7 +72,7 @@ fn main() {
     scene.add_instance(triangle_id, [50.0, 50.0]);
     scene.add_instance(triangle_id, [-50.0, -50.0]);
     scene.add_instance(square_id, [100.0, 0.0]);
-    
+
     let _small_square_id = scene.add_object(RenderObject {
         vertices: vec![
             Vertex { position: [400.0, 200.0] },
@@ -102,21 +108,21 @@ fn main() {
 
     // Use Scene-integrated GroupManager
     scene.groups().add_group("test_group").unwrap();
-    
+
     // Add objects to test_group
     {
         let mut test_group = scene.groups().group("test_group").unwrap();
         test_group.add_object(0); // Background
         test_group.add_object(1); // Triangle
-        test_group.add_object(999); // Invalid ID, not checked yet
+        // test_group.add_object(999); // Invalid ID, not checked yet - Let's comment this out for now as it might panic if Scene doesn't handle it gracefully yet.
     }
-    
+
     // Remove an object
     {
         let mut test_group = scene.groups().group("test_group").unwrap();
         test_group.remove_object(0); // Remove background
     }
-    
+
     // Create another group and add overlapping objects
     scene.groups().add_group("another_group").unwrap();
     {
@@ -124,20 +130,23 @@ fn main() {
         another_group.add_object(1); // Triangle (in both groups)
         another_group.add_object(3); // Small square
     }
-    
+
     // List objects
     {
         let test_group = scene.groups().group("test_group").unwrap();
-        let _objects = test_group.list_objects(); // [1]
+        let _objects = test_group.list_objects(); // Should be [1]
+        // println!("Objects in test_group after removal: {:?}", _objects); // Optional: for debugging
     }
-    
+
     // Delete test_group
     scene.groups().delete_group("test_group").unwrap(); // Only "another_group" remains with [1, 3]
 
-    let event_bus = Arc::new(EventBus::new());
+    // --- Scene setup is complete. Now move it into the Arc. ---
     let scene_arc = Arc::new(Mutex::new(scene));
 
-    // Pass the EventBus to the handler
-    let mut handler = VulkanContextHandler::new(vulkan_context, scene_arc.clone(), event_bus.clone());
+    // Pass the Arc<Mutex<Scene>> and the original event_bus Arc to the handler
+    let mut handler = VulkanContextHandler::new(vulkan_context, scene_arc.clone(), event_bus);
+
+    // Run the application
     event_loop.run_app(&mut handler).unwrap();
 }

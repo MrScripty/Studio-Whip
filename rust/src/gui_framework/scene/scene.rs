@@ -1,5 +1,7 @@
 use crate::Vertex;
 use super::group::GroupManager;
+use crate::gui_framework::event_bus::{EventBus, BusEvent};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct InstanceData {
@@ -88,21 +90,23 @@ impl HitTestable for RenderObject {
     }
 }
 
-#[derive(Debug)]
+//#[derive(Debug)]
 pub struct Scene {
     pub pool: ElementPool,
     groups: GroupManager,
     pub width: f32,
     pub height: f32,
+    event_bus: Arc<EventBus>,
 }
 
 impl Scene {
-    pub fn new() -> Self {
+    pub fn new(event_bus: Arc<EventBus>) -> Self {
         Scene {
             pool: ElementPool::new(10000),
             groups: GroupManager::new(),
             width: 600.0,
             height: 300.0,
+            event_bus,
         }
     }
 

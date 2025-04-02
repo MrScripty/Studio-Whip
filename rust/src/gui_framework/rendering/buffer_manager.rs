@@ -1,9 +1,9 @@
 use ash::vk;
-use vk_mem::Alloc;
+use vk_mem::{Alloc, Allocator}; // Added Allocator import
 use std::marker::PhantomData;
 use crate::Vertex;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use crate::gui_framework::scene::scene::Scene;
+use crate::gui_framework::scene::scene::{Scene, RenderObject}; // Added RenderObject import
 use crate::gui_framework::rendering::renderable::Renderable;
 use crate::gui_framework::rendering::shader_utils::load_shader;
 use glam::Mat4;
@@ -14,22 +14,23 @@ pub struct BufferManager {
     pub renderables: Vec<Renderable>,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_pool: vk::DescriptorPool,
+    // Removed descriptor_set, it's managed by PipelineManager now
 }
 
 impl BufferManager {
     pub fn new(platform: &mut VulkanContext, scene: &Scene, pipeline_layout: vk::PipelineLayout) -> Self {
+        let device = platform.device.as_ref().unwrap(); // Get device ref
+        let allocator = platform.allocator.as_ref().unwrap(); // Get allocator ref
+
+        // --- Uniform Buffer Setup ---
         let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -1.0, 1.0).to_cols_array();
         let (uniform_buffer, uniform_allocation) = {
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                p_next: std::ptr::null(),
-                flags: vk::BufferCreateFlags::empty(),
                 size: std::mem::size_of_val(&ortho) as u64,
                 usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 0,
-                p_queue_family_indices: std::ptr::null(),
-                _marker: PhantomData,
+                ..Default::default()
             };
             let allocation_info = vk_mem::AllocationCreateInfo {
                 usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -37,114 +38,86 @@ impl BufferManager {
                 ..Default::default()
             };
             unsafe {
-                match platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info) {
+                match allocator.create_buffer(&buffer_info, &allocation_info) {
                     Ok((buffer, mut allocation)) => {
-                        let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
-                            .unwrap()
-                            .cast::<f32>();
+                        let data_ptr = allocator.map_memory(&mut allocation).unwrap().cast::<f32>();
                         data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len());
-                        platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                        allocator.unmap_memory(&mut allocation);
                         (buffer, allocation)
                     }
-                    Err(e) => {
-                        println!("Failed to create uniform buffer: {:?}", e);
-                        panic!("Uniform buffer creation failed");
-                    }
+                    Err(e) => panic!("Uniform buffer creation failed: {:?}", e),
                 }
             }
         };
 
+        // --- Descriptor Set Layout (Common for all renderables) ---
         let descriptor_set_layout = unsafe {
             let bindings = [
+                // Binding 0: Projection Matrix (UBO)
                 vk::DescriptorSetLayoutBinding {
                     binding: 0,
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
-                    p_immutable_samplers: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 },
+                // Binding 1: Object Offset (UBO)
                 vk::DescriptorSetLayoutBinding {
                     binding: 1,
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
-                    p_immutable_samplers: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 },
             ];
-            match platform.device.as_ref().unwrap().create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
+            match device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-                p_next: std::ptr::null(),
-                flags: vk::DescriptorSetLayoutCreateFlags::empty(), // Fixed: Correct flags
                 binding_count: bindings.len() as u32,
                 p_bindings: bindings.as_ptr(),
-                _marker: PhantomData,
+                ..Default::default()
             }, None) {
                 Ok(layout) => layout,
-                Err(e) => {
-                    println!("Failed to create descriptor set layout: {:?}", e);
-                    panic!("Descriptor set layout creation failed");
-                }
+                Err(e) => panic!("Descriptor set layout creation failed: {:?}", e),
             }
         };
 
+        // --- Descriptor Pool (Sized for projection + all renderables) ---
         let descriptor_pool = unsafe {
             let pool_sizes = [
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: 2 * (1 + scene.pool.len() as u32),
+                    // Need 2 UBOs (proj, offset) per renderable + 1 for global projection (though not used directly here)
+                    descriptor_count: 2 * (scene.pool.len() as u32),
                 },
             ];
-            match platform.device.as_ref().unwrap().create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
+            match device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
-                p_next: std::ptr::null(),
-                flags: vk::DescriptorPoolCreateFlags::empty(),
-                max_sets: 1 + scene.pool.len() as u32,
+                // Allow individual sets to be freed if needed later
+                flags: vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
+                max_sets: scene.pool.len() as u32, // One set per renderable
                 pool_size_count: pool_sizes.len() as u32,
                 p_pool_sizes: pool_sizes.as_ptr(),
-                _marker: PhantomData,
+                ..Default::default()
             }, None) {
                 Ok(pool) => pool,
-                Err(e) => {
-                    println!("Failed to create descriptor pool: {:?}", e);
-                    panic!("Descriptor pool creation failed");
-                }
+                Err(e) => panic!("Descriptor pool creation failed: {:?}", e),
             }
         };
 
-        let descriptor_sets = unsafe {
-            let layouts = vec![descriptor_set_layout; 1 + scene.pool.len()];
-            match platform.device.as_ref().unwrap().allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                p_next: std::ptr::null(),
-                descriptor_pool,
-                descriptor_set_count: layouts.len() as u32,
-                p_set_layouts: layouts.as_ptr(),
-                _marker: PhantomData,
-            }) {
-                Ok(sets) => sets,
-                Err(e) => {
-                    println!("Failed to allocate descriptor sets: {:?}", e);
-                    panic!("Descriptor set allocation failed");
-                }
-            }
-        };
-
+        // --- Process Each Object in Scene ---
         let mut renderables = Vec::new();
-        for (i, obj) in scene.pool.iter().enumerate() {
+        const DEFAULT_INSTANCE_CAPACITY: u32 = 64; // Default capacity if creating instance buffer
+
+        for obj in scene.pool.iter() { // Iterate directly over objects in pool
+            // --- Vertex Buffer ---
             let vertices = &obj.vertices;
             let (vertex_buffer, vertex_allocation) = {
                 let buffer_info = vk::BufferCreateInfo {
                     s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::BufferCreateFlags::empty(),
                     size: (vertices.len() * std::mem::size_of::<Vertex>()) as u64,
                     usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                     sharing_mode: vk::SharingMode::EXCLUSIVE,
-                    queue_family_index_count: 0,
-                    p_queue_family_indices: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
                 let allocation_info = vk_mem::AllocationCreateInfo {
                     usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -152,34 +125,26 @@ impl BufferManager {
                     ..Default::default()
                 };
                 unsafe {
-                    match platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info) {
+                    match allocator.create_buffer(&buffer_info, &allocation_info) {
                         Ok((buffer, mut allocation)) => {
-                            let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
-                                .unwrap()
-                                .cast::<Vertex>();
+                            let data_ptr = allocator.map_memory(&mut allocation).unwrap().cast::<Vertex>();
                             data_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
-                            platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                            allocator.unmap_memory(&mut allocation);
                             (buffer, allocation)
                         }
-                        Err(e) => {
-                            println!("Failed to create vertex buffer: {:?}", e);
-                            panic!("Vertex buffer creation failed");
-                        }
+                        Err(e) => panic!("Vertex buffer creation failed: {:?}", e),
                     }
                 }
             };
 
+            // --- Offset Uniform Buffer ---
             let (offset_uniform, offset_allocation) = {
                 let buffer_info = vk::BufferCreateInfo {
                     s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::BufferCreateFlags::empty(),
                     size: std::mem::size_of::<[f32; 2]>() as u64,
                     usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
                     sharing_mode: vk::SharingMode::EXCLUSIVE,
-                    queue_family_index_count: 0,
-                    p_queue_family_indices: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
                 let allocation_info = vk_mem::AllocationCreateInfo {
                     usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -187,35 +152,33 @@ impl BufferManager {
                     ..Default::default()
                 };
                 unsafe {
-                    match platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info) {
+                    match allocator.create_buffer(&buffer_info, &allocation_info) {
                         Ok((buffer, mut allocation)) => {
-                            let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
-                                .unwrap()
-                                .cast::<f32>();
+                            let data_ptr = allocator.map_memory(&mut allocation).unwrap().cast::<f32>();
                             data_ptr.copy_from_nonoverlapping(obj.offset.as_ptr(), 2);
-                            platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
+                            allocator.unmap_memory(&mut allocation);
                             (buffer, allocation)
                         }
-                        Err(e) => {
-                            println!("Failed to create offset uniform buffer: {:?}", e);
-                            panic!("Offset uniform buffer creation failed");
-                        }
+                        Err(e) => panic!("Offset uniform buffer creation failed: {:?}", e),
                     }
                 }
             };
 
-            let (instance_buffer, instance_allocation, instance_count) = if !obj.instances.is_empty() {
+            // --- Instance Buffer (Conditional) ---
+            let enable_instancing = obj.is_draggable || !obj.instances.is_empty();
+            let mut instance_buffer_capacity = 0;
+
+            let (instance_buffer, instance_allocation, initial_instance_count) = if enable_instancing {
                 let instance_data: Vec<[f32; 2]> = obj.instances.iter().map(|i| i.offset).collect();
+                let initial_count = instance_data.len() as u32;
+                instance_buffer_capacity = std::cmp::max(initial_count, DEFAULT_INSTANCE_CAPACITY);
+
                 let buffer_info = vk::BufferCreateInfo {
                     s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::BufferCreateFlags::empty(),
-                    size: (instance_data.len() * std::mem::size_of::<[f32; 2]>()) as u64,
+                    size: (instance_buffer_capacity as usize * std::mem::size_of::<[f32; 2]>()) as u64,
                     usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                     sharing_mode: vk::SharingMode::EXCLUSIVE,
-                    queue_family_index_count: 0,
-                    p_queue_family_indices: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
                 let allocation_info = vk_mem::AllocationCreateInfo {
                     usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -223,273 +186,201 @@ impl BufferManager {
                     ..Default::default()
                 };
                 unsafe {
-                    match platform.allocator.as_ref().unwrap().create_buffer(&buffer_info, &allocation_info) {
+                    match allocator.create_buffer(&buffer_info, &allocation_info) {
                         Ok((buffer, mut allocation)) => {
-                            let data_ptr = platform.allocator.as_ref().unwrap().map_memory(&mut allocation)
-                                .unwrap()
-                                .cast::<f32>();
-                            data_ptr.copy_from_nonoverlapping(instance_data.as_ptr() as *const f32, instance_data.len() * 2);
-                            platform.allocator.as_ref().unwrap().unmap_memory(&mut allocation);
-                            (Some(buffer), Some(allocation), instance_data.len() as u32)
+                            if !instance_data.is_empty() {
+                                let data_ptr = allocator.map_memory(&mut allocation).unwrap().cast::<f32>();
+                                data_ptr.copy_from_nonoverlapping(instance_data.as_ptr() as *const f32, instance_data.len() * 2);
+                                allocator.unmap_memory(&mut allocation);
+                            }
+                            (Some(buffer), Some(allocation), initial_count)
                         }
-                        Err(e) => {
-                            println!("Failed to create instance buffer: {:?}", e);
-                            panic!("Instance buffer creation failed");
-                        }
+                        Err(e) => panic!("Instance buffer creation failed: {:?}", e),
                     }
                 }
             } else {
                 (None, None, 0)
             };
 
-            let descriptor_set = descriptor_sets[i + 1];
+            // --- Descriptor Set (Per Object) ---
+            let descriptor_set = unsafe {
+                match device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
+                    s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+                    descriptor_pool,
+                    descriptor_set_count: 1,
+                    p_set_layouts: &descriptor_set_layout,
+                    ..Default::default()
+                }) {
+                    Ok(sets) => sets[0],
+                    Err(e) => panic!("Failed to allocate descriptor set: {:?}", e),
+                }
+            };
+
+            // Update the descriptor set
             unsafe {
-                let buffer_infos = [
-                    vk::DescriptorBufferInfo {
-                        buffer: uniform_buffer,
-                        offset: 0,
-                        range: std::mem::size_of_val(&ortho) as u64,
-                    },
-                    vk::DescriptorBufferInfo {
-                        buffer: offset_uniform,
-                        offset: 0,
-                        range: std::mem::size_of::<[f32; 2]>() as u64,
-                    },
-                ];
+                let proj_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: uniform_buffer, // Use the shared projection buffer
+                    offset: 0,
+                    range: std::mem::size_of_val(&ortho) as u64,
+                };
+                let offset_buffer_info = vk::DescriptorBufferInfo {
+                    buffer: offset_uniform, // Use this object's offset buffer
+                    offset: 0,
+                    range: std::mem::size_of::<[f32; 2]>() as u64,
+                };
                 let write_sets = [
+                    // Write for binding 0 (Projection)
                     vk::WriteDescriptorSet {
                         s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                        p_next: std::ptr::null(),
                         dst_set: descriptor_set,
                         dst_binding: 0,
-                        dst_array_element: 0,
                         descriptor_count: 1,
                         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                        p_image_info: std::ptr::null(),
-                        p_buffer_info: &buffer_infos[0],
-                        p_texel_buffer_view: std::ptr::null(),
-                        _marker: PhantomData,
+                        p_buffer_info: &proj_buffer_info,
+                        ..Default::default()
                     },
+                    // Write for binding 1 (Offset)
                     vk::WriteDescriptorSet {
                         s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                        p_next: std::ptr::null(),
                         dst_set: descriptor_set,
                         dst_binding: 1,
-                        dst_array_element: 0,
                         descriptor_count: 1,
                         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                        p_image_info: std::ptr::null(),
-                        p_buffer_info: &buffer_infos[1],
-                        p_texel_buffer_view: std::ptr::null(),
-                        _marker: PhantomData,
+                        p_buffer_info: &offset_buffer_info,
+                        ..Default::default()
                     },
                 ];
-                platform.device.as_ref().unwrap().update_descriptor_sets(&write_sets, &[]);
+                device.update_descriptor_sets(&write_sets, &[]);
             }
 
-            let vertex_shader = load_shader(platform.device.as_ref().unwrap(), &obj.vertex_shader_filename);
-            let fragment_shader = load_shader(platform.device.as_ref().unwrap(), &obj.fragment_shader_filename);
+            // --- Shaders ---
+            let vertex_shader = load_shader(device, &obj.vertex_shader_filename);
+            let fragment_shader = load_shader(device, &obj.fragment_shader_filename);
 
+            // --- Pipeline (Conditional Instancing) ---
             let pipeline = {
                 let vertex_stage = vk::PipelineShaderStageCreateInfo {
                     s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineShaderStageCreateFlags::empty(),
                     stage: vk::ShaderStageFlags::VERTEX,
                     module: vertex_shader,
                     p_name: c"main".as_ptr(),
-                    p_specialization_info: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
                 let fragment_stage = vk::PipelineShaderStageCreateInfo {
                     s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineShaderStageCreateFlags::empty(),
                     stage: vk::ShaderStageFlags::FRAGMENT,
                     module: fragment_shader,
                     p_name: c"main".as_ptr(),
-                    p_specialization_info: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
                 let stages = [vertex_stage, fragment_stage];
 
-                let (vertex_attributes, vertex_bindings) = if obj.instances.is_empty() {
+                let (vertex_attributes, vertex_bindings) = if enable_instancing {
                     (
-                        vec![vk::VertexInputAttributeDescription {
-                            location: 0,
-                            binding: 0,
-                            format: vk::Format::R32G32_SFLOAT,
-                            offset: 0,
-                        }],
-                        vec![vk::VertexInputBindingDescription {
-                            binding: 0,
-                            stride: std::mem::size_of::<Vertex>() as u32,
-                            input_rate: vk::VertexInputRate::VERTEX,
-                        }],
+                        vec![
+                            vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: 0 },
+                            vk::VertexInputAttributeDescription { location: 1, binding: 1, format: vk::Format::R32G32_SFLOAT, offset: 0 },
+                        ],
+                        vec![
+                            vk::VertexInputBindingDescription { binding: 0, stride: std::mem::size_of::<Vertex>() as u32, input_rate: vk::VertexInputRate::VERTEX },
+                            vk::VertexInputBindingDescription { binding: 1, stride: std::mem::size_of::<[f32; 2]>() as u32, input_rate: vk::VertexInputRate::INSTANCE },
+                        ],
                     )
                 } else {
                     (
-                        vec![
-                            vk::VertexInputAttributeDescription {
-                                location: 0,
-                                binding: 0,
-                                format: vk::Format::R32G32_SFLOAT,
-                                offset: 0,
-                            },
-                            vk::VertexInputAttributeDescription {
-                                location: 1,
-                                binding: 1,
-                                format: vk::Format::R32G32_SFLOAT,
-                                offset: 0,
-                            },
-                        ],
-                        vec![
-                            vk::VertexInputBindingDescription {
-                                binding: 0,
-                                stride: std::mem::size_of::<Vertex>() as u32,
-                                input_rate: vk::VertexInputRate::VERTEX,
-                            },
-                            vk::VertexInputBindingDescription {
-                                binding: 1,
-                                stride: std::mem::size_of::<[f32; 2]>() as u32,
-                                input_rate: vk::VertexInputRate::INSTANCE,
-                            },
-                        ],
+                         vec![vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: 0 }],
+                         vec![vk::VertexInputBindingDescription { binding: 0, stride: std::mem::size_of::<Vertex>() as u32, input_rate: vk::VertexInputRate::VERTEX }],
                     )
                 };
+
                 let vertex_input = vk::PipelineVertexInputStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineVertexInputStateCreateFlags::empty(),
                     vertex_binding_description_count: vertex_bindings.len() as u32,
                     p_vertex_binding_descriptions: vertex_bindings.as_ptr(),
                     vertex_attribute_description_count: vertex_attributes.len() as u32,
                     p_vertex_attribute_descriptions: vertex_attributes.as_ptr(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
 
                 let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineInputAssemblyStateCreateFlags::empty(),
                     topology: if vertices.len() == 3 { vk::PrimitiveTopology::TRIANGLE_LIST } else { vk::PrimitiveTopology::TRIANGLE_FAN },
                     primitive_restart_enable: vk::FALSE,
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
 
                 let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
                 let dynamic_state = vk::PipelineDynamicStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineDynamicStateCreateFlags::empty(),
                     dynamic_state_count: dynamic_states.len() as u32,
                     p_dynamic_states: dynamic_states.as_ptr(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
                 let viewport_state = vk::PipelineViewportStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineViewportStateCreateFlags::empty(),
                     viewport_count: 1,
-                    p_viewports: std::ptr::null(),
                     scissor_count: 1,
-                    p_scissors: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
-
                 let rasterization_state = vk::PipelineRasterizationStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineRasterizationStateCreateFlags::empty(),
-                    depth_clamp_enable: vk::FALSE,
-                    rasterizer_discard_enable: vk::FALSE,
                     polygon_mode: vk::PolygonMode::FILL,
                     cull_mode: vk::CullModeFlags::NONE,
-                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-                    depth_bias_enable: vk::FALSE,
-                    depth_bias_constant_factor: 0.0,
-                    depth_bias_clamp: 0.0,
-                    depth_bias_slope_factor: 0.0,
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE, // Adjust if needed
                     line_width: 1.0,
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
-
                 let multisample_state = vk::PipelineMultisampleStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineMultisampleStateCreateFlags::empty(),
                     rasterization_samples: vk::SampleCountFlags::TYPE_1,
-                    sample_shading_enable: vk::FALSE,
-                    min_sample_shading: 0.0,
-                    p_sample_mask: std::ptr::null(),
-                    alpha_to_coverage_enable: vk::FALSE,
-                    alpha_to_one_enable: vk::FALSE,
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
-
                 let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
-                    blend_enable: vk::FALSE,
-                    src_color_blend_factor: vk::BlendFactor::ONE,
-                    dst_color_blend_factor: vk::BlendFactor::ZERO,
-                    color_blend_op: vk::BlendOp::ADD,
-                    src_alpha_blend_factor: vk::BlendFactor::ONE,
-                    dst_alpha_blend_factor: vk::BlendFactor::ZERO,
-                    alpha_blend_op: vk::BlendOp::ADD,
+                    blend_enable: vk::FALSE, // Basic: no blending
                     color_write_mask: vk::ColorComponentFlags::RGBA,
+                    ..Default::default()
                 };
                 let color_blend_state = vk::PipelineColorBlendStateCreateInfo {
                     s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineColorBlendStateCreateFlags::empty(),
-                    logic_op_enable: vk::FALSE,
-                    logic_op: vk::LogicOp::COPY,
                     attachment_count: 1,
                     p_attachments: &color_blend_attachment,
-                    blend_constants: [0.0; 4],
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
 
                 let pipeline_info = vk::GraphicsPipelineCreateInfo {
                     s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
-                    p_next: std::ptr::null(),
-                    flags: vk::PipelineCreateFlags::empty(),
-                    stage_count: 2,
+                    stage_count: stages.len() as u32,
                     p_stages: stages.as_ptr(),
                     p_vertex_input_state: &vertex_input,
                     p_input_assembly_state: &input_assembly,
-                    p_tessellation_state: std::ptr::null(),
                     p_viewport_state: &viewport_state,
                     p_rasterization_state: &rasterization_state,
                     p_multisample_state: &multisample_state,
-                    p_depth_stencil_state: std::ptr::null(),
                     p_color_blend_state: &color_blend_state,
                     p_dynamic_state: &dynamic_state,
-                    layout: pipeline_layout,
-                    render_pass: platform.render_pass.unwrap(),
+                    layout: pipeline_layout, // Use the layout passed in
+                    render_pass: platform.render_pass.unwrap(), // Assumes render pass exists
                     subpass: 0,
-                    base_pipeline_handle: vk::Pipeline::null(),
-                    base_pipeline_index: -1,
-                    _marker: PhantomData,
+                    ..Default::default()
                 };
 
                 unsafe {
-                    match platform.device.as_ref().unwrap().create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None) {
+                    match device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None) {
                         Ok(pipelines) => pipelines[0],
-                        Err(e) => {
-                            println!("Failed to create graphics pipeline: {:?}", e);
-                            panic!("Graphics pipeline creation failed");
-                        }
+                        Err((_, e)) => panic!("Graphics pipeline creation failed: {:?}", e), // Use Err((_, e)) for tuple result
                     }
                 }
             };
 
-            let min_x = vertices.iter().map(|v| v.position[0]).fold(f32::INFINITY, f32::min);
-            let max_x = vertices.iter().map(|v| v.position[0]).fold(f32::NEG_INFINITY, f32::max);
-            let min_y = vertices.iter().map(|v| v.position[1]).fold(f32::INFINITY, f32::min);
-            let max_y = vertices.iter().map(|v| v.position[1]).fold(f32::NEG_INFINITY, f32::max);
+            // --- Calculate Bounding Box Info ---
+            let (min_x, max_x, min_y, max_y) = vertices.iter().fold(
+                (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY),
+                |acc, v| (acc.0.min(v.position[0]), acc.1.max(v.position[0]), acc.2.min(v.position[1]), acc.3.max(v.position[1]))
+            );
             let center_x = (min_x + max_x) / 2.0;
             let center_y = (min_y + max_y) / 2.0;
 
+            // --- Create Renderable ---
             renderables.push(Renderable {
                 vertex_buffer,
                 vertex_allocation,
@@ -505,14 +396,16 @@ impl BufferManager {
                 on_window_resize_move: obj.on_window_resize_move,
                 original_positions: vertices.iter().map(|v| v.position).collect(),
                 fixed_size: [max_x - min_x, max_y - min_y],
-                center_ratio: [center_x / 600.0, center_y / 300.0],
+                center_ratio: [center_x / 600.0, center_y / 300.0], // Assuming initial 600x300 window
                 instance_buffer,
                 instance_allocation,
-                instance_count,
+                instance_count: initial_instance_count,
+                instance_buffer_capacity,
             });
         }
 
-        renderables.sort_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap());
+        // Sort by depth after processing all objects
+        renderables.sort_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
 
         Self {
             uniform_buffer,
@@ -523,60 +416,106 @@ impl BufferManager {
         }
     }
 
-    pub fn update_offset(renderables: &mut Vec<Renderable>, device: &ash::Device, allocator: &vk_mem::Allocator, index: usize, offset: [f32; 2]) {
+    // Update main object offset UBO
+    pub fn update_offset(renderables: &mut Vec<Renderable>, _device: &ash::Device, allocator: &vk_mem::Allocator, index: usize, offset: [f32; 2]) {
+         if index >= renderables.len() { return; } // Bounds check
         let renderable = &mut renderables[index];
         unsafe {
-            let data_ptr = allocator
-                .map_memory(&mut renderable.offset_allocation)
-                .unwrap()
-                .cast::<f32>();
+            let data_ptr = allocator.map_memory(&mut renderable.offset_allocation).unwrap().cast::<f32>();
             data_ptr.copy_from_nonoverlapping(offset.as_ptr(), 2);
             allocator.unmap_memory(&mut renderable.offset_allocation);
-
-            let buffer_info = vk::DescriptorBufferInfo {
-                buffer: renderable.offset_uniform,
-                offset: 0,
-                range: std::mem::size_of::<[f32; 2]>() as u64,
-            };
-            device.update_descriptor_sets(&[vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                p_next: std::ptr::null(),
-                dst_set: renderable.descriptor_set,
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                p_image_info: std::ptr::null(),
-                p_buffer_info: &buffer_info,
-                p_texel_buffer_view: std::ptr::null(),
-                _marker: PhantomData,
-            }], &[]);
+            // No need to update descriptor set here, the buffer content changed but the binding is the same.
         }
     }
 
+    // Update an existing instance's offset in the instance buffer (for dragging)
     pub fn update_instance_offset(renderables: &mut Vec<Renderable>, _device: &ash::Device, allocator: &vk_mem::Allocator, object_index: usize, instance_id: usize, offset: [f32; 2]) {
+        if object_index >= renderables.len() { return; } // Bounds check
         let renderable = &mut renderables[object_index];
         if let Some(ref mut instance_allocation) = renderable.instance_allocation {
-            unsafe {
-                let data_ptr = allocator.map_memory(instance_allocation).unwrap().cast::<f32>();
-                let offset_ptr = data_ptr.add(instance_id * 2); // Each instance offset is 2 f32s
-                offset_ptr.copy_from_nonoverlapping(offset.as_ptr(), 2);
-                allocator.unmap_memory(instance_allocation);
+            // Check if instance_id is within the *currently active* instances
+            if instance_id < renderable.instance_count as usize {
+                unsafe {
+                    let data_ptr = allocator.map_memory(instance_allocation).unwrap().cast::<f32>();
+                    let buffer_offset_bytes = instance_id * std::mem::size_of::<[f32; 2]>();
+                    let offset_ptr = (data_ptr as *mut u8).add(buffer_offset_bytes).cast::<f32>();
+                    offset_ptr.copy_from_nonoverlapping(offset.as_ptr(), 2);
+                    allocator.unmap_memory(instance_allocation);
+                }
+            } else {
+                 eprintln!("[BufferManager] Warning: update_instance_offset called for instance_id {} >= current count {} on object {}", instance_id, renderable.instance_count, object_index);
             }
         }
     }
 
+    // Update instance buffer for a NEW instance (called via event)
+    pub fn update_instance_buffer(
+        renderables: &mut Vec<Renderable>,
+        _device: &ash::Device, // Keep device if needed later
+        allocator: &vk_mem::Allocator,
+        object_id: usize,
+        instance_id: usize, // ID from the event
+        offset: [f32; 2],
+    ) {
+        if object_id >= renderables.len() {
+            eprintln!("[BufferManager] Error: update_instance_buffer called with invalid object_id {}", object_id);
+            return;
+        }
+
+        let renderable = &mut renderables[object_id];
+
+        if renderable.instance_buffer.is_none() || renderable.instance_allocation.is_none() {
+             eprintln!("[BufferManager] Error: update_instance_buffer called for object {} which has no instance buffer.", object_id);
+             return;
+        }
+
+        // Check if the instance_id provided matches the next available slot
+        if instance_id != renderable.instance_count as usize {
+            eprintln!("[BufferManager] Warning: Instance event ID {} does not match expected next slot {} for object {}. Sync issue?", instance_id, renderable.instance_count, object_id);
+            // Proceeding anyway for now
+        }
+
+        // Check capacity
+        if renderable.instance_count >= renderable.instance_buffer_capacity {
+            eprintln!("[BufferManager] Warning: Instance buffer full for object {} (capacity {}). Cannot add new instance.", object_id, renderable.instance_buffer_capacity);
+            // TODO: Implement buffer resizing logic here
+            return;
+        }
+
+        // Write to the next available slot
+        if let Some(ref mut instance_allocation) = renderable.instance_allocation {
+            unsafe {
+                let data_ptr = allocator.map_memory(instance_allocation).unwrap().cast::<f32>();
+                let buffer_offset_bytes = renderable.instance_count as usize * std::mem::size_of::<[f32; 2]>();
+                let offset_ptr = (data_ptr as *mut u8).add(buffer_offset_bytes).cast::<f32>();
+                offset_ptr.copy_from_nonoverlapping(offset.as_ptr(), 2);
+                allocator.unmap_memory(instance_allocation);
+            }
+            // Increment active instance count for this renderable
+            renderable.instance_count += 1;
+            // println!("[BufferManager] Added instance {} to object {}. New count: {}", instance_id, object_id, renderable.instance_count);
+        }
+    }
+
+    // Cleanup resources
     pub fn cleanup(mut self, platform: &mut VulkanContext) {
         let device = platform.device.as_ref().unwrap();
         let allocator = platform.allocator.as_ref().unwrap();
         unsafe {
-            for mut renderable in self.renderables {
+            // Free descriptor sets before destroying pool
+            let sets_to_free: Vec<vk::DescriptorSet> = self.renderables.iter().map(|r| r.descriptor_set).collect();
+            if !sets_to_free.is_empty() {
+                 // Use try_catch if FREE_DESCRIPTOR_SET flag wasn't set on pool, otherwise unwrap is fine
+                 device.free_descriptor_sets(self.descriptor_pool, &sets_to_free).unwrap();
+            }
+
+            for mut renderable in self.renderables { // Takes ownership
                 device.destroy_pipeline(renderable.pipeline, None);
                 device.destroy_shader_module(renderable.vertex_shader, None);
                 device.destroy_shader_module(renderable.fragment_shader, None);
                 allocator.destroy_buffer(renderable.vertex_buffer, &mut renderable.vertex_allocation);
                 allocator.destroy_buffer(renderable.offset_uniform, &mut renderable.offset_allocation);
-                if let (Some(instance_buffer), Some(mut instance_allocation)) = (renderable.instance_buffer, renderable.instance_allocation) {
+                if let (Some(instance_buffer), Some(mut instance_allocation)) = (renderable.instance_buffer.take(), renderable.instance_allocation.take()) {
                     allocator.destroy_buffer(instance_buffer, &mut instance_allocation);
                 }
             }

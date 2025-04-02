@@ -127,9 +127,16 @@ impl Scene {
     }
 
     pub fn add_instance(&mut self, object_id: usize, offset: [f32; 2]) -> usize {
-        let instance_data = InstanceData { offset };
-        self.pool.elements[object_id].instances.push(instance_data);
-        self.pool.elements[object_id].instances.len() - 1
+        if object_id < self.pool.elements.len() {
+            let obj = &mut self.pool.elements[object_id];
+            let instance_data = InstanceData { offset };
+            obj.instances.push(instance_data);
+            let instance_id = obj.instances.len() - 1;
+            self.event_bus.publish(BusEvent::InstanceAdded(object_id, instance_id, offset));
+            instance_id // Return the new instance ID
+        } else {
+            panic!("Attempted to add instance to non-existent object_id: {}", object_id);
+        }
     }
 
     pub fn pick_object_at(&self, x: f32, y: f32) -> Option<(usize, Option<usize>)> {

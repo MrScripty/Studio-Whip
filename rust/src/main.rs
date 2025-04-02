@@ -8,14 +8,8 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     let vulkan_context = VulkanContext::new();
-
-    // Create the EventBus instance first
     let event_bus = Arc::new(EventBus::new());
-
-    // Create the Scene instance, passing a clone of the event_bus Arc
     let mut scene = Scene::new(event_bus.clone());
-
-    // --- Perform all scene setup BEFORE moving it into the Arc ---
     let width = 600.0;
     let height = 300.0;
 

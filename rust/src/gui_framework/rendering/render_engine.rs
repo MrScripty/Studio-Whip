@@ -9,6 +9,9 @@ use crate::gui_framework::rendering::command_buffers::record_command_buffers;
 use crate::gui_framework::rendering::pipeline_manager::PipelineManager;
 use crate::gui_framework::rendering::buffer_manager::BufferManager;
 use crate::gui_framework::rendering::resize_handler::ResizeHandler;
+use crate::gui_framework::event_bus::{EventHandler, BusEvent};
+use std::sync::{Arc, Mutex};
+use std::any::Any;
 
 pub struct Renderer {
     vulkan_renderables: Vec<Renderable>,
@@ -18,15 +21,16 @@ pub struct Renderer {
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set: vk::DescriptorSet,
+    pending_instance_updates: Arc<Mutex<Vec<(usize, usize, [f32; 2])>>>,
 }
 
 impl Renderer {
     pub fn new(platform: &mut VulkanContext, extent: vk::Extent2D, scene: &Scene) -> Self {
         let surface_format = create_swapchain(platform, extent);
         create_framebuffers(platform, extent, surface_format);
-    
         let pipeline_mgr = PipelineManager::new(platform, scene);
         let buffer_mgr = BufferManager::new(platform, scene, pipeline_mgr.pipeline_layout);
+        let pending_instance_updates = Arc::new(Mutex::new(Vec::new()));
 
         unsafe {
             let buffer_info = vk::DescriptorBufferInfo {
@@ -95,6 +99,7 @@ impl Renderer {
             descriptor_set_layout: buffer_mgr.descriptor_set_layout,
             descriptor_pool: buffer_mgr.descriptor_pool,
             descriptor_set: pipeline_mgr.descriptor_set,
+            pending_instance_updates,
         }
     }
 
@@ -211,4 +216,22 @@ impl Renderer {
             }
         }
     }
+}
+
+impl EventHandler for Renderer {
+    fn handle(&mut self, event: &BusEvent) {
+        match event {
+            BusEvent::InstanceAdded(object_id, instance_id, offset) => {
+                // Lock the queue and add the update task
+                let mut queue = self.pending_instance_updates.lock().unwrap();
+                queue.push((*object_id, *instance_id, *offset));
+                // We don't need to request redraw here, as the render loop will process it.
+                // println!("[Renderer EventHandler] Queued InstanceAdded: obj={}, inst={}, off={:?}", object_id, instance_id, offset); // Optional debug log
+            }
+            // Handle other events Renderer might care about later
+            _ => {}
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any { self }
 }

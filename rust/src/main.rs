@@ -1,6 +1,8 @@
 use winit::event_loop::{EventLoop, ControlFlow};
 use rusty_whip::gui_framework::{VulkanContext, Scene, RenderObject, VulkanContextHandler};
 use rusty_whip::Vertex;
+use rusty_whip::gui_framework::EventBus;
+use std::sync::{Arc, Mutex};
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
@@ -132,6 +134,10 @@ fn main() {
     // Delete test_group
     scene.groups().delete_group("test_group").unwrap(); // Only "another_group" remains with [1, 3]
 
-    let mut handler = VulkanContextHandler::new(vulkan_context, scene);
+    let event_bus = Arc::new(EventBus::new());
+    let scene_arc = Arc::new(Mutex::new(scene));
+
+    // Pass the EventBus to the handler
+    let mut handler = VulkanContextHandler::new(vulkan_context, scene_arc.clone(), event_bus.clone());
     event_loop.run_app(&mut handler).unwrap();
 }

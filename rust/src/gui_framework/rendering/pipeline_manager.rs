@@ -1,5 +1,5 @@
 use ash::vk;
-use std::marker::PhantomData;
+use std::marker::PhantomData; // Keep PhantomData if used in layout creation
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::gui_framework::scene::scene::Scene;
 
@@ -7,7 +7,7 @@ pub struct PipelineManager {
     pub pipeline_layout: vk::PipelineLayout,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_pool: vk::DescriptorPool,
-    pub descriptor_set: vk::DescriptorSet,
+    pub descriptor_set: vk::DescriptorSet, // Global projection set
 }
 
 impl PipelineManager {
@@ -22,81 +22,76 @@ impl PipelineManager {
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
-                    p_immutable_samplers: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 },
                 vk::DescriptorSetLayoutBinding {
                     binding: 1,
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::VERTEX,
-                    p_immutable_samplers: std::ptr::null(),
-                    _marker: PhantomData,
+                    ..Default::default()
                 },
             ];
             match device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-                p_next: std::ptr::null(),
-                flags: vk::DescriptorSetLayoutCreateFlags::empty(),
                 binding_count: bindings.len() as u32,
                 p_bindings: bindings.as_ptr(),
-                _marker: PhantomData,
+                ..Default::default()
             }, None) {
                 Ok(layout) => layout,
                 Err(e) => panic!("Failed to create descriptor set layout: {:?}", e),
             }
         };
 
-        // Descriptor pool
+        // Descriptor pool (Increased sizes)
         let descriptor_pool = unsafe {
+            let num_renderables = scene.pool.len() as u32;
+            let max_total_sets = 1 + num_renderables;
+            let ubo_descriptors_needed = 1 + (2 * num_renderables);
+
             let pool_sizes = [
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: 2 * (1 + scene.pool.len() as u32),
+                    descriptor_count: ubo_descriptors_needed * 2, // Generous count
                 },
             ];
             match device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
-                p_next: std::ptr::null(),
-                flags: vk::DescriptorPoolCreateFlags::empty(),
-                max_sets: 1 + scene.pool.len() as u32,
+                flags: vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
+                max_sets: max_total_sets * 2, // Generous count
                 pool_size_count: pool_sizes.len() as u32,
                 p_pool_sizes: pool_sizes.as_ptr(),
-                _marker: PhantomData,
+                ..Default::default()
             }, None) {
                 Ok(pool) => pool,
                 Err(e) => panic!("Failed to create descriptor pool: {:?}", e),
             }
         };
 
-        // Allocate descriptor sets (projection + renderables)
-        let descriptor_sets = unsafe {
-            let layouts = vec![descriptor_set_layout; 1 + scene.pool.len()];
-            match device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                p_next: std::ptr::null(),
-                descriptor_pool,
-                descriptor_set_count: layouts.len() as u32,
-                p_set_layouts: layouts.as_ptr(),
-                _marker: PhantomData,
-            }) {
-                Ok(sets) => sets,
-                Err(e) => panic!("Failed to allocate descriptor sets: {:?}", e),
-            }
+        // Allocate the *global* descriptor set
+        // --- CORRECTED ALLOCATION ---
+        let descriptor_set = unsafe {
+             match device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
+                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+                 descriptor_pool,
+                 descriptor_set_count: 1,
+                 p_set_layouts: &descriptor_set_layout,
+                 ..Default::default()
+             }) {
+                 Ok(sets) => sets[0], // Assign the first (and only) allocated set
+                 Err(e) => panic!("Failed to allocate global descriptor set: {:?}", e),
+             }
         };
-        let descriptor_set = descriptor_sets[0];
+        // --- END CORRECTION ---
+
 
         // Pipeline layout
         let pipeline_layout = unsafe {
             match device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo {
                 s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
-                p_next: std::ptr::null(),
-                flags: vk::PipelineLayoutCreateFlags::empty(),
                 set_layout_count: 1,
-                p_set_layouts: &descriptor_set_layout,
-                push_constant_range_count: 0,
-                p_push_constant_ranges: std::ptr::null(),
-                _marker: PhantomData,
+                p_set_layouts: &descriptor_set_layout, // Use the single layout
+                ..Default::default()
             }, None) {
                 Ok(layout) => layout,
                 Err(e) => panic!("Failed to create pipeline layout: {:?}", e),
@@ -107,16 +102,17 @@ impl PipelineManager {
             pipeline_layout,
             descriptor_set_layout,
             descriptor_pool,
-            descriptor_set,
+            descriptor_set, // Store the allocated global set
         }
     }
 
-    pub fn cleanup(self, platform: &mut VulkanContext) {
-        let device = platform.device.as_ref().unwrap();
+    // cleanup remains the same
+    pub fn cleanup(self, device: &ash::Device) {
         unsafe {
             device.destroy_pipeline_layout(self.pipeline_layout, None);
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            // Freeing individual sets happens in BufferManager::cleanup
+            device.destroy_descriptor_pool(self.descriptor_pool, None); // Destroy pool after sets are freed
         }
     }
 }

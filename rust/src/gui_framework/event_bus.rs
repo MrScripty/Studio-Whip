@@ -14,7 +14,6 @@ pub trait EventHandler: Send + Sync {
     fn as_any(&self) -> &dyn Any;
 }
 
-// Type alias remains the same
 type HandlerVec = Vec<Arc<Mutex<dyn EventHandler>>>;
 
 #[derive(Clone, Default)]
@@ -43,8 +42,6 @@ impl EventBus {
         let mut subs = self.subscribers.lock().unwrap();
         subs.push(handler_dyn_arc);
     }
-    // --- EDIT END ---
-
 
     pub fn publish(&self, event: BusEvent) {
         let subs_guard = self.subscribers.lock().unwrap();
@@ -57,6 +54,16 @@ impl EventBus {
             } else {
                  eprintln!("[EventBus] Warning: Could not lock an event handler mutex.");
             }
+        }
+    }
+
+    pub fn clear(&self) {
+        // Lock the subscriber list
+        if let Ok(mut subs) = self.subscribers.lock() {
+            // Clear the vector, dropping all contained Arcs
+            subs.clear();
+        } else {
+            eprintln!("[EventBus] Warning: Could not lock subscribers mutex to clear.");
         }
     }
 }

@@ -9,9 +9,9 @@ use crate::gui_framework::scene::scene::Scene;
 use crate::gui_framework::context::vulkan_setup::{setup_vulkan, cleanup_vulkan};
 use crate::gui_framework::rendering::render_engine::Renderer;
 use crate::gui_framework::interaction::controller::InteractionController;
-use crate::gui_framework::event_bus::{EventBus, BusEvent as BusEvent, EventHandler};
+use crate::gui_framework::event_bus::{EventBus, BusEvent, EventHandler};
 use std::sync::{Arc, Mutex};
-
+// Removed unused Any import
 
 struct SceneEventHandler {
     scene_ref: Arc<Mutex<Scene>>,
@@ -19,26 +19,21 @@ struct SceneEventHandler {
 
 impl EventHandler for SceneEventHandler {
     fn handle(&mut self, event: &BusEvent) {
-        //println!("[EventHandler] Received event: {:?}", event); // <<< ADD LOG
         match event {
             BusEvent::ObjectMoved(index, delta, instance_id) => {
                 let mut scene = self.scene_ref.lock().unwrap();
-                // Call the existing public method on Scene
                 scene.translate_object(*index, delta[0], delta[1], *instance_id);
             }
-            // Handle other events Scene might care about later
             _ => {}
         }
     }
-
-    // Implement as_any if downcasting is ever needed
     fn as_any(&self) -> &dyn std::any::Any { self }
 }
 
 pub struct VulkanContextHandler {
     vulkan_context: VulkanContext,
     scene: Arc<Mutex<Scene>>,
-    renderer: Option<Renderer>,
+    renderer: Option<Arc<Mutex<Renderer>>>,
     resizing: bool,
     controller: InteractionController,
     event_bus: Arc<EventBus>,
@@ -70,10 +65,15 @@ impl ApplicationHandler for VulkanContextHandler {
                 height: window_inner_size.height,
             };
             setup_vulkan(&mut self.vulkan_context, window);
-            self.renderer = Some(Renderer::new(&mut self.vulkan_context, extent, &self.scene.lock().unwrap()));
+
+            let renderer_instance = Renderer::new(&mut self.vulkan_context, extent, &self.scene.lock().unwrap());
+            let renderer_arc = Arc::new(Mutex::new(renderer_instance));
+            self.renderer = Some(renderer_arc.clone());
 
             let scene_handler = SceneEventHandler { scene_ref: self.scene.clone() };
-            self.event_bus.subscribe(scene_handler);
+            self.event_bus.subscribe_handler(scene_handler);
+
+            self.event_bus.subscribe_arc(renderer_arc);
         }
     }
 
@@ -81,17 +81,16 @@ impl ApplicationHandler for VulkanContextHandler {
         match event {
             WindowEvent::CloseRequested => {
                 println!("The close button was pressed; stopping");
-                if let Some(renderer) = self.renderer.take() {
-                    renderer.cleanup(&mut self.vulkan_context);
-                }
+                let _ = self.renderer.take();
                 cleanup_vulkan(&mut self.vulkan_context);
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
                 if !self.resizing {
-                    if let Some(renderer) = &mut self.renderer {
-                        // Pass locked scene to render
-                        renderer.render(&mut self.vulkan_context, &self.scene.lock().unwrap());
+                    if let Some(renderer_arc) = &self.renderer {
+                        let mut renderer_guard = renderer_arc.lock().unwrap();
+                        let scene_guard = self.scene.lock().unwrap();
+                        renderer_guard.render(&mut self.vulkan_context, &scene_guard);
                     }
                     if let Some(window) = &self.vulkan_context.window {
                         window.request_redraw();
@@ -100,26 +99,22 @@ impl ApplicationHandler for VulkanContextHandler {
             }
             WindowEvent::Resized(size) => {
                 self.resizing = true;
-                if let Some(renderer) = &mut self.renderer {
-                    renderer.resize_renderer(&mut self.vulkan_context, &mut self.scene.lock().unwrap(), size.width, size.height);
+                if let Some(renderer_arc) = &mut self.renderer {
+                    let mut renderer_guard = renderer_arc.lock().unwrap();
+                    let mut scene_guard = self.scene.lock().unwrap();
+                    renderer_guard.resize_renderer(&mut self.vulkan_context, &mut scene_guard, size.width, size.height);
                 }
                 self.resizing = false;
-                if let Some(window) = &self.vulkan_context.window {
-                }
             }
             WindowEvent::MouseInput { state: _state, button, .. } => {
                 if button == MouseButton::Left {
                     let wrapped_event = Event::WindowEvent { event, window_id: _id };
-                    // Lock the scene ONLY for the initial pick operation within the controller
                     let scene_guard = self.scene.lock().unwrap();
                     self.controller.handle_event(&wrapped_event, Some(&*scene_guard), None, self.vulkan_context.window.as_ref().unwrap(), &self.event_bus);
-                    // scene_guard is dropped here, releasing the lock BEFORE the next event
                 }
             }
             WindowEvent::CursorMoved { position: _position, .. } => {
                 let wrapped_event = Event::WindowEvent { event, window_id: _id };
-                // DO NOT lock the scene here. The controller doesn't need scene access during drag.
-                // Pass None for the scene argument.
                 self.controller.handle_event(&wrapped_event, None, None, self.vulkan_context.window.as_ref().unwrap(), &self.event_bus);
             }
             _ => (),

@@ -1,218 +1,130 @@
 # Tasks for `rusty_whip` GUI Framework Enhancements (March 19, 2025)
 
 ## Overview
-These tasks enhance `gui_framework` to support a divider system in `gui_app`, adding efficient element creation, grouping, instancing, and input handling. The framework remains generic, with `gui_app` building the specific divider GUI atop it. Recent focus: refactoring `render_engine.rs` for modularity and preparing for an event-driven architecture.
+These tasks enhance `gui_framework` to support a divider system in `gui_app`, adding efficient element creation, grouping, instancing, and input handling. The framework remains generic, with `gui_app` building the specific divider GUI atop it. Recent focus: Implementing an event bus and refactoring rendering components.
 
 ## Task 1: Implement Event Bus and Convert Existing Functionality
 - **Goal**: Introduce an event bus to decouple components and convert current interactions (dragging, instancing) to use it.
-- **Affected Modules**:
-  - New `src/gui_framework/event_bus.rs`
-  - `src/gui_framework/interaction/controller.rs`
-  - `src/gui_framework/scene/scene.rs`
-  - `src/gui_framework/rendering/render_engine.rs`
-  - `src/gui_framework/window/window_handler.rs`
-  - `src/gui_framework/mod.rs`
-- **Status**: Not started
-- **Steps**:
-  1. **Create `event_bus.rs`**:
-     - Define `enum Event { ObjectMoved(usize, [f32; 2], Option<usize>), InstanceAdded(usize, [f32; 2]), ObjectPicked(usize, Option<usize>), RedrawRequested, ... }`.
-     - Define `trait EventHandler { fn handle(&mut self, event: &Event); }`.
-     - Implement `struct EventBus { subscribers: HashMap<TypeId, Vec<Box<dyn EventHandler>>> }` with `subscribe<T: 'static>(&mut self, handler: impl EventHandler + 'static)` and `publish(&self, event: Event)`.
-  2. **Integrate Event Bus**:
-     - Add `bus: &EventBus` to `VulkanContextHandler` in `window_handler.rs`, initialize in `main.rs`.
-     - Pass `bus` to `InteractionController`, `Scene`, and `Renderer`.
-  3. **Convert Dragging**:
-     - Update `controller.rs` `handle_event` to emit `ObjectMoved(index, [dx, dy], instance_id)` instead of calling `Scene::translate_object`.
-     - Make `Scene` implement `EventHandler`, update `RenderObject` offsets in `handle(Event::ObjectMoved)`.
-  4. **Convert Instancing**:
-     - Update `Scene::add_instance` to emit `InstanceAdded(object_id, offset)`; `Renderer` subscribes to sync `instance_buffer`.
-  5. **Convert Rendering Triggers**:
-     - `controller.rs` emits `RedrawRequested` on input; `render_engine.rs` subscribes to call `render`.
-  6. **Test**:
-     - In `main.rs`, drag an object/instance, verify `Scene` updates and `Renderer` redraws via events.
-     - Add an instance, confirm `Renderer` syncs without direct calls.
-- **Constraints**: Lightweight, single-threaded initially; no new dependencies beyond `std`.
-- **Notes**: Replaces direct calls with pub-sub; foundation for P2P and new features.
+- **Status**: **Complete**
+- **Summary**:
+    - Created `event_bus.rs` with `EventBus`, `BusEvent`, and `EventHandler`.
+    - Modified `InteractionController` to publish `ObjectMoved`/`ObjectPicked` events.
+    - Modified `Scene` to publish `InstanceAdded` events.
+    - Implemented `SceneEventHandler` (in `window_handler.rs`) to handle `ObjectMoved` and update `Scene` state.
+    - Refactored `Renderer` to implement `EventHandler`, handle `InstanceAdded` via an internal queue, and delegate buffer/pipeline management to `BufferManager`/`PipelineManager`.
+    - Updated `WindowHandler` to manage `Arc<Mutex<>>` state, subscribe handlers, and ensure correct cleanup order (`EventBus::clear`, `Renderer::cleanup`, `cleanup_vulkan`).
+    - Corrected instancing draw calls in `command_buffers.rs`.
+- **Affected Modules**: `event_bus.rs`, `interaction/controller.rs`, `scene/scene.rs`, `rendering/*`, `window/window_handler.rs`, `context/*`, `main.rs`, `lib.rs`, `gui_framework/mod.rs`.
 
-## Task 2 (In Progress): Redesign Grouping System for Logical Organization
-- **Goal**: Redesign groups as named, logical containers for batch operations on `RenderObject`s, decoupled from rendering and interaction, supporting multiple group membership per object.
-- **Affected Modules**: 
-  - `src/gui_framework/scene/scene.rs`
-  - `src/gui_framework/scene/group.rs`
-  - `src/gui_framework/mod.rs`
-- **Status**: In progress; Steps 1-4 complete, Step 5 pending, Step 6 optional
+## Task 2: Redesign Grouping System for Logical Organization
+- **Goal**: Redesign groups as named, logical containers decoupled from rendering/interaction, supporting multiple group membership per object. Prepare for batch operations.
+- **Affected Modules**: `src/gui_framework/scene/scene.rs`, `src/gui_framework/scene/group.rs`, `src/gui_framework/mod.rs`.
+- **Status**: In progress; Steps 1-4 complete, Step 5 moved to Task 3, Step 6 deferred.
 - **Steps**:
-  1. **Clean Up Old Group Logic** (Complete):
-     - Removed `groups: Vec<Group>` field from `Scene` struct.
-     - Removed methods `add_group(&mut self, elements: Vec<RenderObject>, is_draggable: bool) -> usize` and `add_to_group(&mut self, group_id: usize, elements: Vec<RenderObject>)` from `scene.rs`.
-     - Updated `pick_object_at(&self, x: f32, y: f32) -> Option<(usize, Option<usize>)>` to return only pool indices, removing group ID prioritization.
-     - Updated `translate_object(&mut self, index: usize, dx: f32, dy: f32, instance_id: Option<usize>)` to handle object/instance dragging only, removing group translation logic.
-     - Updated `main.rs` to remove old group creation (replaced with individual object adds).
-     - Tested: Dragging works on individual objects/instances, no group interference.
-  2. **Create `group.rs` with `Group` and `GroupManager`** (Complete):
-     - Defined `Group { name: String, object_ids: Vec<usize> }` for named groups with pool indices.
-     - Defined `GroupManager { groups: Vec<Group> }` with methods:
-       - `new(&mut self, name: &str) -> Result<(), GroupError>`: Creates a unique named group.
-       - `delete(&mut self, name: &str) -> Result<(), GroupError>`: Deletes a group.
-       - `edit(&mut self, name: &str) -> Result<GroupEditor, GroupError>`: Returns editor for group modifications.
-       - `groups_for_object(&self, object_id: usize) -> Vec<&str>`: Lists groups an object belongs to.
-     - Defined error enum `GroupError { DuplicateName, GroupNotFound }`.
-     - Tested: Create/delete groups, query empty membership.
-  3. **Add `GroupEditor` to `group.rs`** (Complete):
-     - Defined `GroupEditor<'a> { group: &'a mut Group, scene: &'a mut Scene }` for editing a group with access to `Scene`.
-     - Implemented:
-       - `add_object(&mut self, object_id: usize)`: Adds an object to the group.
-       - `remove_object(&mut self, object_id: usize)`: Removes an object from the group.
-     - Tested: Add/remove objects, verified `object_ids` updates.
-  4. **Integrate `GroupManager` into `Scene`** (Complete):
-     - Added `groups: GroupManager` to `Scene` struct.
-     - Updated `Scene::new` to initialize `GroupManager`.
-     - Added `Scene::groups(&mut self) -> &mut GroupManager` method.
-     - Updated `src/gui_framework/mod.rs` with `pub mod group;`.
-     - Tested: Accessed `scene.groups()`, created a group.
-  5. **Implement Generic Batch Updates** (Pending, moved to Task 3):
-     - Add `visible: bool` to `RenderObject` (default `true`) as a testable field.
-     - Implement `GroupEditor::set_field<T>(&mut self, field: &str, value: T) -> Result<(), FieldError>`:
-       - Supports all fields (e.g., `is_draggable`, `visible`, `offset`, `depth`) unless excluded.
-       - Uses generics for type safety, with pattern matching on field names.
-       - Define `FieldError { InvalidField, TypeMismatch, InvalidObject }`.
-     - Test: Set `is_draggable`, `offset`, verify updates and type mismatch errors.
-  6. **Optional Renderer Adjustment** (Deferred):
-     - Modify `render_engine.rs` to skip rendering `!visible` objects.
-     - Test: Hide a group via `set_field("visible", false)`, confirm objects disappear.
-- **Constraints**: 
-  - Groups have no rendering impact; `RenderObject`s remain independent.
-  - Objects can belong to multiple groups; no field exclusions unless justified.
-- **Notes**: 
-  - Steps 1-4 complete; Step 5 moved to Task 3 for batch updates post-event bus.
-  - Step 6 optional and deferred until visibility needed.
+    1.  **Clean Up Old Group Logic** (Complete)
+    2.  **Create `group.rs` with `Group` and `GroupManager`** (Complete)
+    3.  **Add `GroupEditor` to `group.rs`** (Complete)
+    4.  **Integrate `GroupManager` into `Scene`** (Complete)
+    5.  **Implement Generic Batch Updates** (Moved to Task 3)
+    6.  **Optional Renderer Adjustment** (Deferred)
+- **Constraints**: Groups are purely logical. Objects can be in multiple groups.
+- **Notes**: Foundation for batch operations is laid.
 
-## Task 3: Complete Group Batch Updates
+## Task 3: Implement Group Batch Updates via Events
 - **Goal**: Add generic batch update functionality to `GroupEditor` for efficient group operations using the event bus.
-- **Affected Modules**: 
-  - `src/gui_framework/scene/group.rs`
-  - `src/gui_framework/scene/scene.rs`
+- **Affected Modules**: `src/gui_framework/scene/group.rs`, `src/gui_framework/scene/scene.rs`, `src/gui_framework/event_bus.rs`.
 - **Status**: Not started
 - **Steps**:
-  1. **Add Visibility Field**: Add `visible: bool` to `RenderObject` (default `true`).
-  2. **Implement Batch Updates**: Add `GroupEditor::set_field<T>(&mut self, field: &str, value: T) -> Result<(), FieldError>`:
-     - Supports fields like `is_draggable`, `visible`, `offset`, `depth`.
-     - Emits `Event::FieldUpdated(object_id, field, value)` for each object.
-     - Define `FieldError { InvalidField, TypeMismatch, InvalidObject }`.
-  3. **Handle Events**: Update `Scene` to process `FieldUpdated` events, applying changes to `RenderObject`s.
-  4. **Test**: In `main.rs`, create a group, set `visible` to `false`, verify event-driven updates.
-- **Constraints**: Uses event bus; no rendering impact.
-- **Notes**: Completes Task 2’s remaining goal; renderer adjustment deferred.
+    1.  **Add Visibility Field**: Add `visible: bool` to `RenderObject` (default `true`).
+    2.  **Implement Batch Updates**: Add `GroupEditor::set_field<T>(&mut self, field: &str, value: T) -> Result<(), FieldError>`:
+        *   Supports fields like `is_draggable`, `visible`, `offset`, `depth`.
+        *   Emits `BusEvent::FieldUpdated(object_id, field_name: String, value: Box<dyn Any + Send + Sync>)` for each object via `EventBus`. (Event definition needs refinement for generic values).
+        *   Define `FieldError { InvalidField, TypeMismatch, InvalidObject }`.
+    3.  **Handle Events**: Update `Scene` (or a dedicated handler) to subscribe to `FieldUpdated` events, dynamically apply changes to `RenderObject` fields using reflection or matching.
+    4.  **Test**: In `main.rs`, create a group, use `set_field` (e.g., set `visible` to `false`), verify event publishing and state updates in `Scene`.
+- **Constraints**: Uses event bus; rendering impact depends on field updated (e.g., `visible`). Requires careful handling of generic event data.
+- **Notes**: Completes Task 2’s remaining goal; renderer adjustment for visibility (Task 2, Step 6) can be done after this.
 
 ## Task 4: Implement Keyboard Hotkey System
 - **Goal**: Add a configurable hotkey system using a TOML file to map keys to events, gracefully handling undefined hotkeys.
-- **Affected Modules**:
-  - `src/gui_framework/interaction/controller.rs`
-  - New `src/gui_framework/input/hotkeys.rs`
-  - `src/gui_framework/mod.rs`
+- **Affected Modules**: `src/gui_framework/interaction/controller.rs`, New `src/gui_framework/input/hotkeys.rs`, `src/gui_framework/mod.rs`, `src/gui_framework/event_bus.rs`.
 - **Status**: Not started
 - **Steps**:
-  1. **Create `hotkeys.rs`**:
-     - Define `struct HotkeyConfig { hotkeys: HashMap<String, Option<String>> }` (e.g., "Ctrl+/" -> Some("print_hello"), "Ctrl+Space" -> None).
-     - Implement `load_config(path: &str) -> Result<Self, HotkeyError>` to parse TOML (using `toml` crate).
-     - Define `HotkeyError { ParseError, FileNotFound }`.
-  2. **Update `InteractionController`**:
-     - Add `hotkeys: HotkeyConfig` to struct.
-     - Extend `handle_event` to emit `Event::HotkeyPressed(key)` for keyboard events from `winit`.
-  3. **Handle Hotkeys**: Subscriber (e.g., `main.rs`) processes `HotkeyPressed`, logs action or "No action defined" for `None`.
-  4. **Integrate with `mod.rs`**: Export `hotkeys.rs`.
-  5. **Test**:
-     - Create `hotkeys.toml` with `Ctrl+/ = "print_hello"`, `Ctrl+. = "print_world"`, `Ctrl+Space = ""`.
-     - Load in `main.rs`, press hotkeys, verify CLI output via events.
-- **Constraints**: Use `toml` crate; null/empty mappings emit events but are no-ops unless subscribed.
-- **Notes**: Ctrl+Space reserved for Task 7; leverages event bus.
+    1.  Create `hotkeys.rs` with `HotkeyConfig` struct and `load_config` function (using `toml` crate). Define `HotkeyError`.
+    2.  Update `InteractionController` to load config and emit `BusEvent::HotkeyPressed(action: Option<String>)` on keyboard input matching a defined hotkey.
+    3.  Handle `HotkeyPressed` events in a subscriber (e.g., `main.rs` or dedicated handler) to perform actions or log "No action".
+    4.  Integrate `hotkeys.rs` into `gui_framework/mod.rs`.
+    5.  Test with `hotkeys.toml`.
+- **Constraints**: Use `toml` crate. Relies on `EventBus`.
+- **Notes**: Ctrl+Space potentially reserved for Task 7.
 
 ## Task 5: Add Button Functionality
 - **Goal**: Extend `gui_framework` to support button behavior on any `RenderObject` via events.
-- **Affected Modules**:
-  - `src/gui_framework/scene/scene.rs`
-  - `src/gui_framework/interaction/controller.rs`
+- **Affected Modules**: `src/gui_framework/scene/scene.rs`, `src/gui_framework/interaction/controller.rs`, `src/gui_framework/event_bus.rs`.
 - **Status**: Not started
 - **Steps**:
-  1. **Update `RenderObject`**: Add `is_button: bool` and `action_id: Option<usize>` (ID for action, e.g., 1 = "Save").
-  2. **Handle Button Clicks**: Extend `controller.rs` `handle_event` to emit `Event::ButtonClicked(action_id)` for `is_button` objects via `pick_object_at`.
-  3. **Test**: Add a button-enabled object in `main.rs`, click it, verify `main.rs` logs "Button X clicked" via event subscription.
+    1.  Update `RenderObject`: Add `is_button: bool` and `action_id: Option<String>` (using String for flexibility).
+    2.  Update `InteractionController::handle_event`: If a clicked object (`ObjectPicked` event source) has `is_button = true`, publish `BusEvent::ButtonClicked(action_id: Option<String>)`.
+    3.  Test: Add a button object in `main.rs`, subscribe to `ButtonClicked` in `main.rs`, verify log output on click.
 - **Constraints**: Event-driven; rendering unchanged.
 - **Notes**: `action_id` triggers events; subscribers define behavior.
 
 ## Task 6: Add Text Display with Rendering Module
-- **Goal**: Support static text display (e.g., field weights) with an extensible rendering module.
-- **Affected Modules**:
-  - `src/gui_framework/scene/scene.rs`
-  - `src/gui_framework/rendering/renderable.rs`
-  - New `src/gui_framework/rendering/text_renderer.rs`
-  - New shaders (e.g., `text.vert`, `text.frag`)
-  - `src/gui_framework/rendering/mod.rs`
+- **Goal**: Support static text display with an extensible rendering module (placeholder initially).
+- **Affected Modules**: `src/gui_framework/scene/scene.rs`, `src/gui_framework/rendering/renderable.rs`, New `src/gui_framework/rendering/text_renderer.rs`, New shaders (`text.vert`, `text.frag`), `src/gui_framework/rendering/mod.rs`, `src/gui_framework/rendering/buffer_manager.rs`.
 - **Status**: Not started
 - **Steps**:
-  1. **Update `RenderObject`**: Add `text: Option<String>` and `font_size: f32`.
-  2. **Create `text_renderer.rs`**:
-     - Define `trait TextRenderable { render_text(&self, &mut VulkanContext, &RenderObject, &mut Vec<vk::CommandBuffer>); }`.
-     - Implement `struct TextRenderer` with placeholder rendering (e.g., colored rectangles per character).
-  3. **Update `buffer_manager.rs`**: Call `TextRenderer::render_text` for text-enabled objects.
-  4. **Test**: Add a text object in `main.rs`, verify placeholder display.
-- **Constraints**: Placeholder rendering initially; extensible for future features.
-- **Notes**: Prepares for Task 7 text editing.
+    1.  Update `RenderObject`: Add `text: Option<String>` and `font_size: f32`.
+    2.  Create `text_renderer.rs` with `TextRenderer` struct and placeholder rendering logic (e.g., colored quads).
+    3.  Integrate `TextRenderer` into `BufferManager` or `Renderer` to draw text for relevant objects.
+    4.  Test: Add a text object in `main.rs`, verify placeholder display.
+- **Constraints**: Placeholder rendering initially.
+- **Notes**: Prepares for Task 7 text editing. Requires new shaders.
 
 ## Task 7: Implement Text Editing
 - **Goal**: Add support for editable text fields using events.
-- **Affected Modules**:
-  - `src/gui_framework/scene/scene.rs`
-  - `src/gui_framework/interaction/controller.rs`
-  - `src/gui_framework/rendering/renderable.rs`
-  - `src/gui_framework/rendering/text_renderer.rs`
+- **Affected Modules**: `src/gui_framework/scene/scene.rs`, `src/gui_framework/interaction/controller.rs`, `src/gui_framework/rendering/renderable.rs`, `src/gui_framework/rendering/text_renderer.rs`, `src/gui_framework/event_bus.rs`.
 - **Status**: Not started
 - **Steps**:
-  1. **Track Active Field**: Add `active_text_id: Option<usize>` to `Scene`.
-  2. **Handle Keyboard Input**: Extend `controller.rs` to emit `Event::TextEdited(id, text)` for keyboard events on active fields.
-  3. **Update `Scene`**: Subscribe to `TextEdited`, update `RenderObject` text.
-  4. **Render Cursor**: Add `cursor_pos: usize` to `RenderObject`, update `text_renderer.rs` to render a blinking line.
-  5. **Test**: Click a text field in `main.rs`, type characters, verify updates via events.
-- **Constraints**: Basic ASCII input; defer advanced rendering.
-- **Notes**: Event-driven; builds on Task 6.
+    1.  Track active text field (e.g., `active_text_object_id: Option<usize>` in `InteractionController` or `Scene`).
+    2.  Update `InteractionController`: On click (`ObjectPicked`), set active field if object has text. Handle keyboard input (`winit::event::KeyEvent`), publish `BusEvent::TextEdited(object_id: usize, new_text: String)`. Handle focus loss (e.g., click elsewhere) to clear active field.
+    3.  Update `Scene` (or handler): Subscribe to `TextEdited`, update `RenderObject::text`.
+    4.  Update `TextRenderer`: Render a cursor based on active field state and cursor position (add `cursor_pos: usize` to `RenderObject` or manage in `InteractionController`).
+    5.  Test: Click a text field, type, verify updates via events and visual cursor/text changes.
+- **Constraints**: Basic ASCII input; defer advanced rendering/layout. Event-driven.
+- **Notes**: Builds on Task 6.
 
 ## Task 8: Add Radial Pie Context Menu
-- **Goal**: Implement a popup pie-style context menu triggered by Ctrl+Space, with dynamic options on a semi-transparent torus.
-- **Affected Modules**:
-  - New `src/gui_framework/rendering/pie_menu.rs`
-  - `src/gui_framework/interaction/controller.rs`
-  - `src/gui_framework/scene/scene.rs`
-  - `src/gui_framework/rendering/text_renderer.rs`
-  - New shaders (`pie_menu.vert`, `pie_menu.frag`)
-  - `src/gui_framework/rendering/mod.rs`
+- **Goal**: Implement a popup pie-style context menu triggered by a hotkey (e.g., Ctrl+Space), with dynamic options.
+- **Affected Modules**: New `src/gui_framework/ui/pie_menu.rs`, `src/gui_framework/interaction/controller.rs`, `src/gui_framework/scene/scene.rs`, `src/gui_framework/rendering/text_renderer.rs`, New shaders (`pie_menu.vert`, `pie_menu.frag`), `src/gui_framework/event_bus.rs`, `src/gui_framework/mod.rs`.
 - **Status**: Not started
 - **Steps**:
-  1. **Create `pie_menu.rs`**:
-     - Define `PieMenu { options: Vec<PieOption>, center: [f32; 2], radius: f32, inner_radius: f32, opacity: f32 }` and `PieOption { label: String, action_id: usize }`.
-     - Implement `new(center: [f32; 2], options: Vec<PieOption>) -> Self` with torus geometry.
-     - Render torus with custom shader, position text via `text_renderer.rs` evenly along radius.
-  2. **Update `Scene`**: Add `active_menu: Option<PieMenu>`.
-  3. **Handle Trigger**: In `controller.rs`, emit `Event::ShowPieMenu(position)` on Ctrl+Space; `Scene` subscribes to set `active_menu`.
-  4. **Handle Selection**: Emit `Event::MenuOptionSelected(action_id)` on click; subscriber processes action.
-  5. **Render Menu**: Extend `buffer_manager.rs` to call `PieMenu::render` if `active_menu` exists.
-  6. **Test**: Press Ctrl+Space, verify torus menu with text options; select an option, confirm event.
-- **Constraints**: Event-driven; torus with no middle, semi-transparent.
-- **Notes**: Prepares for GUI builder; uses Task 6 text rendering.
+    1.  Create `pie_menu.rs` with `PieMenu` struct (options, geometry) and `PieOption` struct (label, action_id). Implement rendering logic (torus, text placement using `TextRenderer`).
+    2.  Update `Scene` or a UI manager: Add `active_menu: Option<PieMenu>`.
+    3.  Update `InteractionController`: Handle hotkey (Task 4) `BusEvent::HotkeyPressed("show_pie_menu")`. Publish `BusEvent::ShowPieMenu(position: [f32; 2], context: ContextEnum)`.
+    4.  Update `Scene`/UI manager: Subscribe to `ShowPieMenu`, create `PieMenu` based on context, set `active_menu`.
+    5.  Update `InteractionController`: Handle clicks when `active_menu` is Some. Determine selected option based on click position relative to menu geometry. Publish `BusEvent::MenuOptionSelected(action_id: String)`. Clear `active_menu`.
+    6.  Update `Renderer`/`BufferManager`: Draw `active_menu` if it exists.
+    7.  Test: Trigger menu via hotkey, verify display, select option, verify event.
+- **Constraints**: Event-driven; uses Task 6 text rendering. Requires hotkey system (Task 4).
+- **Notes**: Prepares for GUI builder interactions.
 
-## Task 9 (Pending): Initial `gui_app/dividers.rs` Outline
-- **Goal**: Sketch divider system using enhanced API.
-- **Affected Modules**: New `src/gui_app/dividers.rs`
+## Task 9: Initial `gui_app/dividers.rs` Outline
+- **Goal**: Sketch a basic divider system for layout management using the enhanced framework API.
+- **Affected Modules**: New `src/gui_app/dividers.rs`, `src/main.rs`.
 - **Status**: Not started
 - **Steps**:
-  1. Define `Divider` struct with properties (e.g., position, size, orientation).
-  2. Implement `DividerSystem` to manage dividers using `Scene` API (e.g., `add_object`).
-  3. Test in `main.rs`: Add a divider, verify rendering and interaction.
-- **Constraints**: Initial sketch; defer full implementation until event bus and GUI features are ready.
-- **Notes**: Builds on event-driven framework.
+    1.  Define `Divider` struct (position, orientation, associated panels/regions).
+    2.  Implement `DividerSystem` to manage `Divider` objects using `Scene::add_object` for visual representation and interaction.
+    3.  Handle dragging (`ObjectMoved` events for divider objects) to update layout logic (resize adjacent regions - details TBD).
+    4.  Test in `main.rs`: Add a divider, verify rendering and basic dragging via events.
+- **Constraints**: Initial sketch; full layout logic deferred. Builds on event-driven framework.
+- **Notes**: Connects framework features to a specific application need.
 
 ## Dependencies
-- Relies on `Scene` for state, `Renderer` for rendering, `EventBus` (Task 1) for communication.
+- Relies on `Scene` for state, `Renderer` for rendering, `EventBus` for communication.
 
 ## Future Considerations
 - Build interactive GUI layout system post-Task 9.
-- Enhance `text_renderer.rs` for markdown, syntax highlighting, code folding.
+- Enhance `text_renderer.rs` for advanced features (fonts, markdown, etc.).
+- Implement instance buffer resizing in `BufferManager`.

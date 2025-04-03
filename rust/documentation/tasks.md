@@ -121,6 +121,24 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
     6.  Test in `main.rs`: Enable the divider system, add a divider, verify rendering, drag the divider, and subscribe to/log `RegionResized` events.
 - **Constraints**: Builds on framework primitives. Needs clear API separation between internal management and end-user configuration/events. Layout logic calculates new region dimensions; rendering content within those regions is the application's responsibility.
 
+## Task 10: Enhance Prompt Tool - Code Signature Stripping
+- **Goal**: Add a new option to `utilities/llm_prompt_tool.sh` that processes Rust files, stripping out function bodies while retaining signatures, `impl` blocks, structs, comments, and other surrounding code.
+- **Affected Modules**: `utilities/llm_prompt_tool.sh`.
+- **Status**: Not started
+- **Steps**:
+    1.  Add a new option (e.g., "5) Get Code Signatures") to the script's user menu.
+    2.  Implement the file discovery logic for `.rs` files, similar to option "2) Get All Code".
+    3.  Implement the core function body stripping logic. This should aim to:
+        *   Identify function definitions (`fn name(...) [-> RetType] {`).
+        *   Output the function signature line(s).
+        *   Replace the entire function body (`{...}`) with a placeholder like `{ /* Function body stripped */ }`.
+        *   Handle functions within `impl` blocks correctly.
+        *   Preserve surrounding code like `use`, `mod`, `struct`, `enum`, comments, attributes, etc.
+    4.  Integrate the stripping logic into the file processing loop for the new option.
+    5.  Clearly comment the limitations of the stripping logic (e.g., potential issues with complex macros, unusual formatting, or deeply nested items).
+    6.  Test the new option on the project's codebase.
+- **Constraints**: Implementation will be in Bash, likely using text processing tools (`sed`, `awk`, or line-by-line processing with state). Perfect parsing is difficult; aim for common cases.
+
 ## Deferred Features (For Future Consideration)
 - Text: Markdown rendering, syntax highlighting (`tree-sitter`), code folding.
 - Text: Advanced editing (complex selections, IME support).

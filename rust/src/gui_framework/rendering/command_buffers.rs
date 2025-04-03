@@ -107,6 +107,9 @@ pub fn record_command_buffers(
 
             // --- Draw Renderables ---
             for renderable in renderables {
+                if !renderable.visible {
+                    continue; // Skip drawing this object if it's not visible
+                }
                 // Bind the pipeline for this renderable
                 device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, renderable.pipeline);
 

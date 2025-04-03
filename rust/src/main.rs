@@ -28,6 +28,7 @@ fn main() {
         offset: [0.0, 0.0],
         is_draggable: false,
         instances: Vec::new(),
+        visible: true,
     });
 
     let triangle_id = scene.add_object(RenderObject {
@@ -44,6 +45,7 @@ fn main() {
         offset: [0.0, 0.0],
         is_draggable: true,
         instances: Vec::new(),
+        visible: true,
     });
 
     let square_id = scene.add_object(RenderObject {
@@ -61,6 +63,7 @@ fn main() {
         offset: [0.0, 0.0],
         is_draggable: true,
         instances: Vec::new(),
+        visible: true,
     });
 
     scene.add_instance(triangle_id, [50.0, 50.0]);
@@ -82,6 +85,7 @@ fn main() {
         offset: [0.0, 0.0],
         is_draggable: true,
         instances: Vec::new(),
+        visible: true,
     });
     let _vertical_rect_id = scene.add_object(RenderObject {
         vertices: vec![
@@ -98,6 +102,7 @@ fn main() {
         offset: [0.0, 0.0],
         is_draggable: true,
         instances: Vec::new(),
+        visible: false, //Object wont be rendered, but it still exists in the scene!
     });
 
     // Use Scene-integrated GroupManager

@@ -67,6 +67,7 @@ pub struct RenderObject {
     pub offset: [f32; 2],
     pub is_draggable: bool,
     pub instances: Vec<InstanceData>,
+    pub visible: bool,
 }
 
 pub trait HitTestable {

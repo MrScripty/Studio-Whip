@@ -19,5 +19,6 @@ pub struct Renderable {
     pub instance_buffer: Option<vk::Buffer>,
     pub instance_allocation: Option<vk_mem::Allocation>,
     pub instance_count: u32,
-    pub instance_buffer_capacity: u32, 
+    pub instance_buffer_capacity: u32,
+    pub visible: bool,
 }

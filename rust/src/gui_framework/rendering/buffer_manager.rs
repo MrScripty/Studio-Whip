@@ -349,6 +349,7 @@ impl BufferManager {
                 instance_allocation,
                 instance_count: initial_instance_count,
                 instance_buffer_capacity,
+                visible: obj.visible,
             });
         }
 

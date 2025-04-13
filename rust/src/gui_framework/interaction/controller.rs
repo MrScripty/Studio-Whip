@@ -1,13 +1,11 @@
-// /mnt/c/Users/jerem/Desktop/Studio-Whip/rust/src/gui_framework/interaction/controller.rs
-
 use winit::event::{Event, WindowEvent, ElementState, MouseButton, KeyEvent};
 use winit::keyboard::{PhysicalKey, KeyCode};
 use winit::window::Window;
-use crate::{Scene, Renderer}; // Assuming Renderer might be needed later, keep for now
+use crate::{Scene, Renderer};
 use crate::gui_framework::event_bus::{EventBus, BusEvent};
-use crate::gui_framework::interaction::hotkeys::{HotkeyConfig, format_key_event, HotkeyError};
+use crate::gui_framework::interaction::hotkeys::{HotkeyConfig, HotkeyError};
 use directories::ProjectDirs;
-use std::path::{Path, PathBuf}; // Import Path
+use std::path::PathBuf;
 use std::fs;
 use std::sync::Arc;
 

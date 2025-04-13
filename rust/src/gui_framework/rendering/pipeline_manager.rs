@@ -1,5 +1,4 @@
 use ash::vk;
-use std::marker::PhantomData; // Keep PhantomData if used in layout creation
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::gui_framework::scene::scene::Scene;
 

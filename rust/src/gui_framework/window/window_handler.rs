@@ -1,7 +1,7 @@
 // /mnt/c/Users/jerem/Desktop/Studio-Whip/rust/src/gui_framework/window/window_handler.rs
 
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, MouseButton, Event};
+use winit::event::{WindowEvent, Event};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 use winit::dpi::PhysicalSize;
@@ -13,7 +13,7 @@ use crate::gui_framework::rendering::render_engine::Renderer;
 use crate::gui_framework::interaction::controller::InteractionController;
 use crate::gui_framework::event_bus::{EventBus, BusEvent, EventHandler};
 use std::sync::{Arc, Mutex};
-use std::any::Any; // Keep Any for SceneEventHandler
+use std::any::Any;
 
 // Handles events related to Scene state changes (like ObjectMoved)
 struct SceneEventHandler {

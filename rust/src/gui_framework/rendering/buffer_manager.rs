@@ -1,9 +1,8 @@
 use ash::vk;
-use vk_mem::{Alloc, Allocator};
-use std::marker::PhantomData;
+use vk_mem::Alloc;
 use crate::Vertex;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use crate::gui_framework::scene::scene::{Scene, RenderObject};
+use crate::gui_framework::scene::scene::Scene;
 use crate::gui_framework::rendering::renderable::Renderable;
 use crate::gui_framework::rendering::shader_utils::load_shader;
 use glam::Mat4;

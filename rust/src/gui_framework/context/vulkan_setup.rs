@@ -1,8 +1,7 @@
 use ash::vk;
-use ash::{Entry};
+use ash::Entry;
 use ash_window;
 use std::ffi::CStr;
-use std::marker::PhantomData; // Keep PhantomData
 use std::sync::Arc;
 use vk_mem::Allocator;
 use winit::window::Window;

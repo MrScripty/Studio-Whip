@@ -1,8 +1,6 @@
 use ash::vk;
-use std::marker::PhantomData;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::gui_framework::scene::scene::Scene;
-use crate::gui_framework::rendering::renderable::Renderable; // Keep Renderable import if needed elsewhere
 use crate::gui_framework::rendering::swapchain::{create_swapchain, create_framebuffers};
 use crate::gui_framework::rendering::command_buffers::record_command_buffers;
 use crate::gui_framework::rendering::pipeline_manager::PipelineManager;
@@ -11,7 +9,7 @@ use crate::gui_framework::rendering::resize_handler::ResizeHandler;
 use crate::gui_framework::event_bus::{EventHandler, BusEvent};
 use std::sync::{Arc, Mutex};
 use std::any::Any;
-use glam::Mat4; // Import Mat4
+use glam::Mat4;
 
 pub struct Renderer {
     pipeline_manager: PipelineManager,

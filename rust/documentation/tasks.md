@@ -1,7 +1,7 @@
 # Tasks for `rusty_whip` GUI Framework Enhancements (March 19, 2025 - Updated)
 
 ## Overview
-These tasks enhance `gui_framework` to support a future divider system in `gui_app`, adding efficient element creation, grouping, instancing, and input handling. The framework remains generic, with `gui_app` building specific UIs atop it. Recent focus: Implementing event bus, refactoring rendering, logical grouping, and batch updates via events.
+These tasks enhance `gui_framework` to support a future divider system in `gui_app`, adding efficient element creation, grouping, instancing, and input handling. The framework remains generic, with `gui_app` building specific UIs atop it. Recent focus: Implementing event bus, refactoring rendering, logical grouping, batch updates via events, visibility toggling, and a configurable hotkey system. The main event loop now uses `EventLoop::run` within `main.rs`.
 
 ## Task 1: Implement Event Bus and Convert Existing Functionality
 - **Goal**: Introduce an event bus to decouple components and convert current interactions (dragging, instancing) to use it.
@@ -11,133 +11,104 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
 ## Task 2: Redesign Grouping System for Logical Organization
 - **Goal**: Redesign groups as named, logical containers decoupled from rendering/interaction, supporting multiple group membership per object. Prepare for batch operations.
 - **Affected Modules**: `src/gui_framework/scene/scene.rs`, `src/gui_framework/scene/group.rs`, `src/gui_framework/mod.rs`.
-- **Status**: **Complete** (Steps 1-4 done; Step 5 moved to Task 3; Step 6 moved to Task 3.1).
+- **Status**: **Complete**
 - **Summary**: Created `group.rs` with `GroupManager`/`GroupEditor`, integrated into `Scene`.
 
 ## Task 3: Implement Group Batch Update Trigger via Events
 - **Goal**: Add functionality to `GroupEditor` to efficiently *trigger* updates for all objects within a group by publishing *individual* `FieldUpdated` events for each object. Supports fields like `visible`, `is_draggable`, `offset`, `depth`.
-- **Affected Modules**: `src/gui_framework/scene/group.rs`, `src/gui_framework/scene/scene.rs`, `src/gui_framework/event_bus.rs`, `src/gui_framework/window/window_handler.rs`.
+- **Affected Modules**: `src/gui_framework/scene/group.rs`, `src/gui_framework/scene/scene.rs`, `src/gui_framework/event_bus.rs`, `src/main.rs` (event handling).
 - **Status**: **Complete**
-- **Summary**: Added `visible` state flag to `RenderObject`. Added `FieldError` enum. Added `FieldUpdated` variant to `BusEvent` (using `Arc<dyn Any + Send + Sync>`). Implemented `GroupEditor::set_field` to publish individual events for group members. Updated `SceneEventHandler` to handle `FieldUpdated` and modify `RenderObject` state. Tested in `main.rs`.
-- **Notes**: This implements batch *triggering*, not a single batch processing event. Changing `depth` requires renderer re-sorting (not implemented). Changing `visible` requires renderer modification (Task 3.1).
+- **Summary**: Added `visible` state flag to `RenderObject`. Added `FieldError` enum. Added `FieldUpdated` variant to `BusEvent` (using `Arc<dyn Any + Send + Sync>`). Implemented `GroupEditor::set_field` to publish individual events for group members. Updated `SceneEventHandler` (subscribed in `main.rs`) to handle `FieldUpdated` and modify `RenderObject` state. Tested in `main.rs`.
+- **Notes**: Implements batch *triggering*. Changing `depth` requires renderer re-sorting (not implemented). Changing `visible` requires renderer modification (Task 3.1).
 
 ## Task 3.1: Implement Visibility Check in Renderer
-- **Goal**: Modify the rendering loop to query and respect the `RenderObject.visible` state flag, skipping draw calls for non-visible objects. (Deferred from Task 2, Step 6).
-- **Affected Modules**: `src/gui_framework/rendering/render_engine.rs` or `src/gui_framework/rendering/command_buffers.rs`.
-- **Status**: Not started
-- **Steps**:
-    1. Modify `Renderer::render` or `record_command_buffers` to check the visibility state (likely from the corresponding `Renderable` which should mirror `RenderObject.visible`) before binding/drawing.
-    2. Test: Use `set_field("visible", false)` from Task 3 in `main.rs` and verify that the corresponding objects are no longer drawn.
-- **Constraints**: Requires access to the visibility state during rendering command generation.
+- **Goal**: Modify the rendering loop to query and respect the `RenderObject.visible` state flag, skipping draw calls for non-visible objects.
+- **Affected Modules**: `src/gui_framework/rendering/renderable.rs`, `src/gui_framework/rendering/buffer_manager.rs`, `src/gui_framework/rendering/command_buffers.rs`.
+- **Status**: **Complete**
+- **Summary**: Added `visible: bool` field to `Renderable`. Updated `BufferManager::new` to copy visibility state from `RenderObject` to `Renderable`. Modified `record_command_buffers` to check `renderable.visible` before issuing draw commands. Tested by setting initial visibility in `main.rs`.
 
 ## Task 4: Implement Keyboard Hotkey System
-- **Goal**: Add a configurable hotkey system using a TOML file to map keys to events, gracefully handling undefined hotkeys. Use `Ctrl+Esc` for closing the window.
-- **Affected Modules**: `src/gui_framework/interaction/controller.rs`, New `src/gui_framework/input/hotkeys.rs`, `src/gui_framework/mod.rs`, `src/gui_framework/event_bus.rs`.
-- **Status**: Not started
-- **Steps**:
-    1. Add `toml` dependency to `Cargo.toml`.
-    2. Create `hotkeys.rs` with `HotkeyConfig` struct and `load_config` function. Define `HotkeyError`.
-    3. Update `InteractionController` to load config and emit `BusEvent::HotkeyPressed(action: Option<String>)` on keyboard input matching a defined hotkey (incl. handling `Ctrl+Esc` to perhaps emit a specific "CloseRequested" action string).
-    4. Handle `HotkeyPressed` events in a subscriber (e.g., `main.rs` or `window_handler.rs`). The handler for the "CloseRequested" action would trigger `event_loop.exit()`. Other actions log "No action" or perform defined tasks.
-    5. Integrate `hotkeys.rs` into `gui_framework/mod.rs`.
-    6. Test with `hotkeys.toml` including the `Ctrl+Esc` mapping.
-- **Constraints**: Use `toml` crate. Relies on `EventBus`.
+- **Goal**: Add a configurable hotkey system using a TOML file (`user/hotkeys.toml`) to map keys/modifiers to action strings, gracefully handling undefined hotkeys. Use `Escape` key for closing the window via event bus and proxy.
+- **Affected Modules**: `src/gui_framework/interaction/controller.rs`, `src/gui_framework/interaction/hotkeys.rs`, `src/gui_framework/mod.rs`, `src/gui_framework/event_bus.rs`, `src/main.rs`, `build.rs`, `Cargo.toml`.
+- **Status**: **Complete**
+- **Summary**: Added `toml` and `thiserror` dependencies. Created `hotkeys.rs` for config loading/parsing (`HotkeyConfig`, `HotkeyError`) and key formatting (`format_key_event`). Updated `InteractionController` to load config relative to executable (using path from `build.rs`), track modifier state (`current_modifiers`, handles `ModifiersChanged`), and publish `BusEvent::HotkeyPressed(Some(action_string))` on recognized key presses. Updated `build.rs` (`copy_user_files`) to copy `user/hotkeys.toml` to the target directory. Updated `main.rs` to use `EventLoop::run` and `EventLoopProxy<UserEvent>`, added `HotkeyActionHandler` subscriber that listens for `HotkeyPressed(Some("CloseRequested"))` and sends `UserEvent::Exit` via proxy to trigger clean shutdown. Tested `Escape`, `Ctrl+S`, `Alt+P`.
+- **Constraints**: Uses `EventBus` and `EventLoopProxy`. Relies on `build.rs` copying config.
 
 ## Task 5: Add Button Functionality
 - **Goal**: Extend `gui_framework` to support button behavior on any `RenderObject` via events, using a state flag.
-- **Affected Modules**: `src/gui_framework/scene/scene.rs`, `src/gui_framework/interaction/controller.rs`, `src/gui_framework/event_bus.rs`.
+- **Affected Modules**: `src/gui_framework/scene/scene.rs`, `src/gui_framework/interaction/controller.rs`, `src/gui_framework/event_bus.rs`, `src/main.rs` (testing/handling).
 - **Status**: Not started
 - **Steps**:
-    1. Update `RenderObject`: Add `is_button: bool` state flag and `action_id: Option<String>`. Update instantiations.
+    1. Update `RenderObject`: Add `is_button: bool` state flag and `action_id: Option<String>`. Update instantiations in `main.rs`.
     2. Update `InteractionController::handle_event`: On receiving `ObjectPicked`, check if the corresponding `RenderObject.is_button` state flag is true. If yes, publish `BusEvent::ButtonClicked(action_id: Option<String>)`.
-    3. Test: Add a button object in `main.rs`, subscribe to `ButtonClicked` in `main.rs`, verify log output on click.
+    3. Test: Add a button object in `main.rs`, subscribe a handler in `main.rs` to `ButtonClicked`, verify log output on click.
 - **Constraints**: Event-driven; relies on state flag; rendering unchanged.
 
 ## Task 6: Text Handling - Layout and Rendering Foundation
 - **Goal**: Integrate `cosmic-text` for layout/shaping and implement a custom Vulkan bitmap glyph atlas renderer. Display static sample text (English/Chinese placeholder).
-- **Affected Modules**: New `src/gui_framework/rendering/text_renderer/mod.rs`, `src/gui_framework/rendering/text_renderer/glyph_atlas.rs`, `src/gui_framework/rendering/buffer_manager.rs` (integration), `src/gui_framework/rendering/render_engine.rs` (integration), `src/gui_framework/scene/scene.rs` (add text objects), `src/main.rs` (testing), New shaders (`glyph.vert`, `glyph.frag`).
+- **Affected Modules**: New `src/gui_framework/rendering/text_renderer/mod.rs`, `src/gui_framework/rendering/text_renderer/glyph_atlas.rs`, `src/gui_framework/rendering/buffer_manager.rs` (integration), `src/gui_framework/rendering/render_engine.rs` (integration), `src/gui_framework/scene/scene.rs` (add text objects), `src/main.rs` (testing, initialization), New shaders (`glyph.vert`, `glyph.frag`).
 - **Status**: Not started
 - **Steps**:
-    1. Add dependencies: `cosmic-text`, `fontdb`, `swash` (likely transitive via cosmic-text), potentially `rectangle-pack`.
-    2. Create `glyph_atlas.rs` module to manage Vulkan `vk::Image` atlas, handle glyph rasterization requests via `swash`, manage packing, upload bitmaps to GPU, and track UV coordinates.
-    3. Create `text_renderer.rs` module to:
-        *   Hold `cosmic_text::FontSystem`, `SwashCache`.
-        *   Provide an API to add/update text buffers (`cosmic_text::Buffer`).
-        *   Trigger `cosmic-text` shaping/layout.
-        *   Interact with `GlyphAtlasManager` to ensure glyphs are rasterized and in the atlas.
-        *   Generate vertex data (quads) for visible glyphs based on layout results and atlas UVs.
-    4. Integrate the text renderer into the main rendering loop (`render_engine.rs` / `buffer_manager.rs`):
-        *   Initialize/cleanup text rendering resources.
-        *   Manage dynamic vertex buffers for glyph quads.
-        *   Create and manage Vulkan pipeline/shaders for glyph rendering.
-        *   Bind atlas texture and draw glyph quads.
-    5. Modify `RenderObject` or create a new `TextObject` struct in `scene.rs` to hold text data.
-    6. Test in `main.rs`: Create text objects with sample English and Chinese text, verify they are rendered correctly.
-- **Constraints**: Focus on bitmap rendering. Requires significant Vulkan integration work. Defer SDF rendering. Supports English now, lays foundation for Chinese.
+    1. Add dependencies: `cosmic-text`, `fontdb`, `swash`, potentially `rectangle-pack`.
+    2. Create `glyph_atlas.rs` module (Vulkan `vk::Image` atlas, rasterization via `swash`, packing, GPU upload, UV tracking).
+    3. Create `text_renderer.rs` module (`cosmic_text::FontSystem`, `SwashCache`, API for text buffers, layout triggering, glyph atlas interaction, vertex generation).
+    4. Integrate text renderer into `main.rs` initialization and the rendering loop (`render_engine.rs` / `buffer_manager.rs`): resource management, dynamic vertex buffers, pipeline/shaders, atlas binding, drawing.
+    5. Modify `RenderObject` or create `TextObject` in `scene.rs`.
+    6. Test in `main.rs`: Create text objects, verify rendering.
+- **Constraints**: Focus on bitmap rendering. Requires significant Vulkan integration. Defer SDF rendering.
 
 ## Task 7: Text Handling - Editing & Interaction
 - **Goal**: Integrate `yrs` (`YText`) for collaborative data storage. Implement basic mouse/keyboard editing for text objects.
-- **Affected Modules**: `src/gui_framework/interaction/controller.rs`, `src/gui_framework/scene/scene.rs` (manage `YText` instances or refs), `src/gui_framework/rendering/text_renderer/mod.rs` (update from `YText`, render cursor), `src/main.rs` (testing).
+- **Affected Modules**: `src/gui_framework/interaction/controller.rs`, `src/gui_framework/scene/scene.rs` (manage `YText`), `src/gui_framework/rendering/text_renderer/mod.rs` (update from `YText`, render cursor), `src/main.rs` (testing).
 - **Status**: Not started
 - **Steps**:
     1. Add dependency: `yrs`.
-    2. Replace/Augment text storage in `scene.rs` with `yrs::Text` (or references to a shared `YDoc`).
-    3. Modify `InteractionController` to:
-        *   Track focused text object.
-        *   Handle keyboard events (chars, backspace, delete, potentially arrows) by generating `YText` operations (e.g., `ytext.insert`, `ytext.remove_range`).
-        *   Handle mouse clicks to calculate text position using `cosmic-text` layout info and set cursor position.
-    4. Modify `TextRenderer` / main loop to observe changes in `YText` (likely via callbacks or polling) and trigger re-layout/re-rendering.
-    5. Modify `TextRenderer` to draw a cursor based on the current cursor position state.
-    6. Test: Create an editable text object, type text, delete text, move cursor with mouse, verify visual updates.
-- **Constraints**: Basic editing first. Defer complex selections, advanced cursor movement. Focus on local editing triggering CRDT ops; actual P2P sync is later.
+    2. Replace/Augment text storage in `scene.rs` with `yrs::Text`.
+    3. Modify `InteractionController` to track focus, handle keyboard input (generate `YText` ops), handle mouse clicks (calculate position, set cursor).
+    4. Modify `TextRenderer` / main loop to observe `YText` changes and trigger re-layout/re-rendering.
+    5. Modify `TextRenderer` to draw cursor.
+    6. Test in `main.rs`: Create editable text object, edit, move cursor, verify updates.
+- **Constraints**: Basic editing first. Defer complex selections, advanced cursor movement. Focus on local editing; P2P sync later.
 
 ## Task 8: Implement Radial Pie Context Menu
 - **Goal**: Implement a popup pie-style context menu triggered by a hotkey (e.g., Ctrl+Space), with dynamic options.
-- **Affected Modules**: New `src/gui_framework/ui/pie_menu.rs`, `src/gui_framework/interaction/controller.rs`, `src/gui_framework/scene/scene.rs`, `src/gui_framework/rendering/text_renderer/mod.rs` (for labels), New shaders (`pie_menu.vert`, `pie_menu.frag`), `src/gui_framework/event_bus.rs`, `src/gui_framework/mod.rs`.
+- **Affected Modules**: New `src/gui_framework/ui/pie_menu.rs`, `src/gui_framework/interaction/controller.rs`, `src/gui_framework/scene/scene.rs` (or UI manager), `src/gui_framework/rendering/text_renderer/mod.rs` (labels), New shaders (`pie_menu.vert`, `pie_menu.frag`), `src/gui_framework/event_bus.rs`, `src/gui_framework/mod.rs`, `src/main.rs` (handling).
 - **Status**: Not started
 - **Steps**:
-    1. Create `pie_menu.rs` with `PieMenu` struct (options, geometry) and `PieOption` struct (label, action_id). Implement rendering logic (using standard shapes and Task 6 text rendering for labels).
-    2. Update `Scene` or a UI manager: Add `active_menu: Option<PieMenu>`.
-    3. Update `InteractionController`: Handle hotkey (Task 4) `BusEvent::HotkeyPressed("show_pie_menu")`. Publish `BusEvent::ShowPieMenu(position: [f32; 2], context: ContextEnum)`.
-    4. Update `Scene`/UI manager: Subscribe to `ShowPieMenu`, create `PieMenu` based on context, set `active_menu`.
-    5. Update `InteractionController`: Handle clicks when `active_menu` is Some. Determine selected option based on click position relative to menu geometry. Publish `BusEvent::MenuOptionSelected(action_id: String)`. Clear `active_menu`.
-    6. Update `Renderer`/`BufferManager`/`TextRenderer`: Draw `active_menu` if it exists.
-    7. Test: Trigger menu via hotkey, verify display, select option, verify event.
+    1. Create `pie_menu.rs` (`PieMenu`, `PieOption`, rendering logic using shapes/text).
+    2. Update `Scene` or UI manager: Add `active_menu: Option<PieMenu>`.
+    3. Update `InteractionController`: Handle `BusEvent::HotkeyPressed("show_pie_menu")`. Publish `BusEvent::ShowPieMenu(position, context)`.
+    4. Update `Scene`/UI manager: Subscribe to `ShowPieMenu`, create `PieMenu`, set `active_menu`.
+    5. Update `InteractionController`: Handle clicks when `active_menu` is Some. Determine selection, publish `BusEvent::MenuOptionSelected(action_id)`. Clear `active_menu`.
+    6. Update `Renderer`/`BufferManager`/`TextRenderer`: Draw `active_menu`.
+    7. Test: Trigger menu, verify display, select option, verify event.
 - **Constraints**: Event-driven; uses Task 6 text rendering. Requires hotkey system (Task 4).
 
 ## Task 9: Implement Optional Divider System in Framework
 - **Goal**: Implement an optional divider system *within* the `gui_framework` for managing resizable layout regions. Provide an API for end-users to enable and configure it.
-- **Affected Modules**: New `src/gui_framework/ui/dividers.rs`, `src/gui_framework/scene/scene.rs` (or new UI manager), `src/gui_framework/interaction/controller.rs` (potential focus/context), `src/gui_framework/mod.rs` (API exposure), `src/main.rs` (testing).
+- **Affected Modules**: New `src/gui_framework/ui/dividers.rs`, `src/gui_framework/scene/scene.rs` (or UI manager), `src/gui_framework/interaction/controller.rs`, `src/gui_framework/mod.rs`, `src/main.rs` (testing/handling).
 - **Status**: Not started
 - **Steps**:
-    1.  Define `Divider` struct (visual representation via `RenderObject`, orientation, constraints, associated regions/IDs) and `DividerSystem` struct within `dividers.rs`.
-    2.  Integrate `DividerSystem` management into `Scene` (or a new higher-level UI state manager within the framework if `Scene` becomes too cluttered). Provide methods like `Scene::enable_dividers()`, `Scene::add_divider(...)`.
-    3.  Use `Scene::add_object` internally to create the visual representation of dividers (likely simple rectangles). Ensure they are marked `is_draggable`.
-    4.  Handle `ObjectMoved` events for divider objects within the `DividerSystem` (or a dedicated event handler). Implement logic to:
-        *   Constrain divider movement (e.g., within parent bounds, minimum region sizes).
-        *   Calculate resulting region size changes based on divider movement.
-        *   Publish new events like `RegionResized { region_id: usize, new_rect: Rect }` via the main `EventBus` for the application layer to react to.
-    5.  Expose the necessary configuration and `RegionResized` event handling capabilities through the public API of `gui_framework`.
-    6.  Test in `main.rs`: Enable the divider system, add a divider, verify rendering, drag the divider, and subscribe to/log `RegionResized` events.
-- **Constraints**: Builds on framework primitives. Needs clear API separation between internal management and end-user configuration/events. Layout logic calculates new region dimensions; rendering content within those regions is the application's responsibility.
+    1.  Define `Divider`, `DividerSystem` in `dividers.rs`.
+    2.  Integrate `DividerSystem` into `Scene` or UI manager. Provide API (`enable_dividers`, `add_divider`).
+    3.  Use `Scene::add_object` for visual representation (draggable rectangles).
+    4.  Handle `ObjectMoved` for dividers. Constrain movement, calculate region changes, publish `RegionResized` event.
+    5.  Expose configuration and `RegionResized` handling via public API.
+    6.  Test in `main.rs`: Enable system, add divider, drag, log `RegionResized`.
+- **Constraints**: Builds on framework primitives. Needs clear API separation. Layout logic calculates dimensions; rendering content within regions is application's responsibility.
 
 ## Task 10: Enhance Prompt Tool - Code Signature Stripping
 - **Goal**: Add a new option to `utilities/llm_prompt_tool.sh` that processes Rust files, stripping out function bodies while retaining signatures, `impl` blocks, structs, comments, and other surrounding code.
 - **Affected Modules**: `utilities/llm_prompt_tool.sh`.
 - **Status**: Not started
 - **Steps**:
-    1.  Add a new option (e.g., "5) Get Code Signatures") to the script's user menu.
-    2.  Implement the file discovery logic for `.rs` files, similar to option "2) Get All Code".
-    3.  Implement the core function body stripping logic. This should aim to:
-        *   Identify function definitions (`fn name(...) [-> RetType] {`).
-        *   Output the function signature line(s).
-        *   Replace the entire function body (`{...}`) with a placeholder like `{ /* Function body stripped */ }`.
-        *   Handle functions within `impl` blocks correctly.
-        *   Preserve surrounding code like `use`, `mod`, `struct`, `enum`, comments, attributes, etc.
-    4.  Integrate the stripping logic into the file processing loop for the new option.
-    5.  Clearly comment the limitations of the stripping logic (e.g., potential issues with complex macros, unusual formatting, or deeply nested items).
-    6.  Test the new option on the project's codebase.
-- **Constraints**: Implementation will be in Bash, likely using text processing tools (`sed`, `awk`, or line-by-line processing with state). Perfect parsing is difficult; aim for common cases.
+    1.  Add new menu option (e.g., "5) Get Code Signatures").
+    2.  Implement `.rs` file discovery.
+    3.  Implement function body stripping logic (identify `fn`, replace `{...}` with placeholder, preserve surrounding code).
+    4.  Integrate into file processing loop.
+    5.  Comment limitations (macros, formatting).
+    6.  Test on project codebase.
+- **Constraints**: Bash implementation (`sed`, `awk`, etc.). Aim for common cases.
 
 ## Deferred Features (For Future Consideration)
 - Text: Markdown rendering, syntax highlighting (`tree-sitter`), code folding.

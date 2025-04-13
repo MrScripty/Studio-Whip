@@ -177,7 +177,7 @@ pub fn cleanup_vulkan(app: &mut VulkanContext) {
     }
 
     // Destroy the surface
-    if let (Some(instance), Some(surface_loader), Some(surface)) = (app.instance.as_ref(), app.surface_loader.as_ref(), app.surface.take()) {
+    if let (Some(_instance), Some(surface_loader), Some(surface)) = (app.instance.as_ref(), app.surface_loader.as_ref(), app.surface.take()) {
          println!("[cleanup_vulkan] Destroying surface...");
          unsafe { surface_loader.destroy_surface(surface, None); }
          println!("[cleanup_vulkan] Surface destroyed.");

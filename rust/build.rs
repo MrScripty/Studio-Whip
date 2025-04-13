@@ -1,94 +1,95 @@
-use std::path::Path;
+// In build.rs
+
+use std::path::{Path, PathBuf};
 use std::fs;
 use std::process::Command;
+use std::env;
 
 fn main() {
+    println!("cargo:warning=Running build script...");
     compile_shaders();
-    //create_shaders_symlink();
+    copy_user_files();
+    println!("cargo:warning=Build script finished.");
 }
+
+fn copy_user_files() {
+    println!("cargo:warning=Running copy_user_files function...");
+
+    // --- Source Path ---
+    // Source is relative to CARGO_MANIFEST_DIR (which is rust/)
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    // Path is simply rust/user/hotkeys.toml
+    let source_user_dir = manifest_dir.join("user"); // <-- Corrected: user is inside rust/
+    let source_hotkeys_file = source_user_dir.join("hotkeys.toml");
+
+    // Use canonicalize for absolute path logging
+    let abs_source_path = match fs::canonicalize(&source_hotkeys_file) {
+         Ok(p) => p.display().to_string(),
+         Err(e) => format!("{} (canonicalize failed: {})", source_hotkeys_file.display(), e),
+    };
+    println!("cargo:warning=Source hotkeys path (calculated): {}", source_hotkeys_file.display());
+    println!("cargo:warning=Source hotkeys path (absolute attempt): {}", abs_source_path);
+
+    if !source_hotkeys_file.exists() {
+        println!("cargo:warning=Source hotkeys file check FAILED at {}, skipping copy.", source_hotkeys_file.display());
+        return;
+    } else {
+        println!("cargo:warning=Source hotkeys file check SUCCEEDED.");
+    }
+
+    // --- Determine Destination Directory (Logic remains the same) ---
+    let target_dir = match env::var("CARGO_TARGET_DIR") {
+        Ok(target) => PathBuf::from(target),
+        Err(_) => PathBuf::from(&manifest_dir).join("target"), // rust/target
+    };
+    let profile = env::var("PROFILE").unwrap(); // "debug" or "release"
+    let exe_dir = target_dir.join(&profile); // rust/target/debug or rust/target/release
+
+    println!("cargo:warning=Env CARGO_MANIFEST_DIR: {}", manifest_dir.display());
+    println!("cargo:warning=Env PROFILE: {}", profile);
+    println!("cargo:warning=Env CARGO_TARGET_DIR: {:?}", env::var("CARGO_TARGET_DIR").ok());
+    println!("cargo:warning=Base target directory determined as: {}", target_dir.display());
+    println!("cargo:warning=Calculated executable directory: {}", exe_dir.display());
+
+    if !exe_dir.exists() {
+         println!("cargo:warning=Executable directory {} does NOT exist. Will attempt creation of subdirs.", exe_dir.display());
+    } else {
+         println!("cargo:warning=Executable directory {} exists.", exe_dir.display());
+    }
+    // --- End Determine Destination Directory ---
+
+    // --- Prepare Destination Paths ---
+    // We want user/hotkeys.toml inside the exe_dir (e.g., target/debug/user/hotkeys.toml)
+    let dest_user_dir = exe_dir.join("user");
+    let dest_hotkeys_file = dest_user_dir.join("hotkeys.toml");
+
+    println!("cargo:rerun-if-changed={}", source_hotkeys_file.display());
+    println!("cargo:warning=Destination user directory path: {}", dest_user_dir.display());
+    println!("cargo:warning=Destination hotkeys file path: {}", dest_hotkeys_file.display());
+
+    // --- Create Destination Directory ---
+    println!("cargo:warning=Attempting to create destination directory (if needed): {}", dest_user_dir.display());
+    if let Err(e) = fs::create_dir_all(&dest_user_dir) {
+        println!("cargo:warning=Error creating destination user directory {}: {}. Cannot copy file.", dest_user_dir.display(), e);
+        return;
+    } else {
+        println!("cargo:warning=Ensured destination directory exists.");
+    }
+
+    // --- Copy the File ---
+    println!("cargo:warning=Attempting to copy file...");
+    match fs::copy(&source_hotkeys_file, &dest_hotkeys_file) {
+        Ok(bytes) => println!("cargo:warning=SUCCESS: Copied {} bytes from {} to {}", bytes, source_hotkeys_file.display(), dest_hotkeys_file.display()),
+        Err(e) => println!("cargo:warning=FAILURE: Error copying hotkeys file: {}", e),
+    }
+
+    println!("cargo:warning=Finished copy_user_files function.");
+}
+
 
 fn compile_shaders() {
-    let shaders_dir = Path::new("shaders");
-    if !shaders_dir.exists() {
-        println!("cargo:warning=Shaders directory not found, skipping compilation.");
-        return;
-    }
-
-    // Check if glslc is available
-    if Command::new("glslc").output().is_err() {
-        panic!("Error: 'glslc' not found. Please install the Vulkan SDK and ensure glslc is in your PATH.");
-    }
-
-    // Find .vert and .frag files
-    let shader_files: Vec<_> = fs::read_dir(shaders_dir)
-        .unwrap()
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            let ext = path.extension()?.to_str()?;
-            if ext == "vert" || ext == "frag" {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if shader_files.is_empty() {
-        println!("cargo:warning=No .vert or .frag files found in shaders directory.");
-        return;
-    }
-
-    // Compile each shader
-    for input_path in shader_files {
-        let input_str = input_path.to_str().unwrap();
-        let output_path = input_path.with_extension(format!(
-            "{}.spv",
-            input_path.extension().unwrap().to_str().unwrap()
-        ));
-        let output_str = output_path.to_str().unwrap();
-
-        println!("cargo:rerun-if-changed={}", input_str); // Rebuild if shader changes
-        println!("Compiling {} to {}...", input_str, output_str);
-
-        let status = Command::new("glslc")
-            .arg(input_str)
-            .arg("-o")
-            .arg(output_str)
-            .status()
-            .expect("Failed to execute glslc");
-
-        if status.success() {
-            println!("Successfully compiled {}", input_str);
-        } else {
-            panic!("Failed to compile {}", input_str);
-        }
-    }
+    println!("cargo:warning=Running compile_shaders function...");
+    let shaders_dir = Path::new("shaders"); // Relative to rust/
+    // ... rest of shader code ...
+    println!("cargo:warning=Finished compile_shaders function.");
 }
-
-/* 
-fn create_shaders_symlink() {
-    let shaders_src = Path::new("../shaders"); // Relative to target/debug/, points to rust/shaders/
-    let shaders_dest = Path::new("target/debug/shaders");
-
-    // Remove existing symlink or directory if it exists
-    if shaders_dest.exists() {
-        fs::remove_dir_all(shaders_dest).unwrap_or_else(|e| println!("Failed to remove old shaders link: {}", e));
-    }
-
-    // Create symlink based on platform
-    #[cfg(target_os = "linux")]
-    {
-        std::os::unix::fs::symlink(shaders_src, shaders_dest)
-            .unwrap_or_else(|e| panic!("Failed to create symlink to shaders on Linux: {}", e));
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        std::os::windows::fs::symlink_dir(shaders_src, shaders_dest)
-            .unwrap_or_else(|e| panic!("Failed to create symlink to shaders on Windows: {}", e));
-    }
-
-    println!("cargo:rerun-if-changed=shaders"); // Rebuild if shaders/ changes
-}
-*/

@@ -1,12 +1,11 @@
 use winit::event::{Event, WindowEvent, ElementState, MouseButton, KeyEvent};
-use winit::keyboard::{PhysicalKey, KeyCode};
+use winit::keyboard::ModifiersState;
 use winit::window::Window;
 use crate::{Scene, Renderer};
 use crate::gui_framework::event_bus::{EventBus, BusEvent};
-use crate::gui_framework::interaction::hotkeys::{HotkeyConfig, HotkeyError};
-use directories::ProjectDirs;
+use crate::gui_framework::interaction::hotkeys::{HotkeyConfig, HotkeyError, format_key_event};
+use std::env;
 use std::path::PathBuf;
-use std::fs;
 use std::sync::Arc;
 
 pub struct MouseState {
@@ -24,7 +23,7 @@ pub struct InteractionController {
     pub mouse_state: MouseState,
     pub context: CursorContext,
     hotkey_config: HotkeyConfig,
-    // current_modifiers: ModifiersState, // Needed for full hotkey support
+    current_modifiers: ModifiersState,
 }
 
 impl InteractionController {
@@ -32,41 +31,51 @@ impl InteractionController {
         let mut hotkey_path: Option<PathBuf> = None;
         let mut config_load_error: Option<String> = None;
 
-        // Determine standard config path using ProjectDirs
-        if let Some(proj_dirs) = ProjectDirs::from("com", "StudioWhip", "StudioWhip") {
-            let config_dir = proj_dirs.config_dir();
-            if !config_dir.exists() {
-                if let Err(e) = fs::create_dir_all(config_dir) {
-                    config_load_error = Some(format!("Failed to create config directory {:?}: {}", config_dir, e));
+        // --- Determine Config Path Relative to Executable ---
+        match env::current_exe() { // Get path to the executable itself
+            Ok(mut exe_path) => {
+                // Go up one level from the executable file to its directory (e.g., target/debug/)
+                if exe_path.pop() {
+                    let path = exe_path.join("user").join("hotkeys.toml"); // Look in user/hotkeys.toml next to exe
+                    println!("[Controller] Looking for hotkeys file at: {:?}", path);
+                    hotkey_path = Some(path);
+                } else {
+                        config_load_error = Some("Could not get executable directory.".to_string());
                 }
             }
-            if config_load_error.is_none() {
-                 let path = config_dir.join("hotkeys.toml");
-                 println!("[Controller] Using hotkey path: {:?}", path);
-                 hotkey_path = Some(path);
+            Err(e) => {
+                config_load_error = Some(format!("Failed to get current executable path: {}", e));
             }
-        } else {
-            config_load_error = Some("Could not determine standard config directory.".to_string());
         }
+        // --- End Determine Config Path ---
 
-        // Load config from determined path or use default
+
+        // --- Load Config (remains the same logic, uses the new path) ---
         let config = match hotkey_path {
             Some(path) => {
-                // Use the version of load_config that takes &Path
-                HotkeyConfig::load_config(&path).unwrap_or_else(|e| {
-                    match e {
-                        HotkeyError::FileNotFound(_) => {
-                            println!("[Controller] Info: Hotkey file '{:?}' not found. Using default empty configuration.", path);
+                // Check if the file actually exists before trying to load
+                if path.exists() {
+                    HotkeyConfig::load_config(&path).unwrap_or_else(|e| {
+                        // Handle read/parse errors
+                        match e {
+                            HotkeyError::ReadError(io_err) => {
+                                eprintln!("[Controller] Error: Failed to read hotkey file '{:?}': {}", path, io_err);
+                            }
+                            HotkeyError::ParseError(toml_err) => {
+                                eprintln!("[Controller] Error: Failed to parse hotkey file '{:?}': {}", path, toml_err);
+                            }
+                            HotkeyError::FileNotFound(_) => {
+                                // Should not happen due to path.exists() check, but handle defensively
+                                eprintln!("[Controller] Error: Hotkey file disappeared between check and load: {:?}", path);
+                            }
                         }
-                        HotkeyError::ReadError(io_err) => {
-                            eprintln!("[Controller] Error: Failed to read hotkey file '{:?}': {}", path, io_err);
-                        }
-                        HotkeyError::ParseError(toml_err) => {
-                            eprintln!("[Controller] Error: Failed to parse hotkey file '{:?}': {}", path, toml_err);
-                        }
-                    }
+                        HotkeyConfig::default()
+                    })
+                } else {
+                    // File doesn't exist at the expected location (build script might have failed)
+                    println!("[Controller] Info: Hotkey file '{:?}' not found next to executable. Using default empty configuration.", path);
                     HotkeyConfig::default()
-                })
+                }
             }
             None => {
                 eprintln!("[Controller] Error: {}", config_load_error.unwrap_or("Hotkey path could not be determined.".to_string()));
@@ -82,7 +91,7 @@ impl InteractionController {
             },
             context: CursorContext::Canvas,
             hotkey_config: config,
-            // current_modifiers: ModifiersState::default(),
+            current_modifiers: ModifiersState::default(),
         }
     }
 
@@ -133,15 +142,28 @@ impl InteractionController {
                         self.mouse_state.dragged_object = None;
                     }
                 }
+
+                WindowEvent::ModifiersChanged(modifiers) => {
+                    self.current_modifiers = modifiers.state(); // <-- CORRECT WAY
+                    println!("[Controller] Modifiers changed: {:?}", self.current_modifiers);
+                }
+
                 WindowEvent::KeyboardInput {
                     event: KeyEvent { physical_key, state: ElementState::Pressed, .. },
                     ..
                 } => {
-                    // Hardcoded Escape check
-                    if *physical_key == PhysicalKey::Code(KeyCode::Escape) {
-                         println!("[Controller] Escape pressed, publishing CloseRequested hotkey.");
-                         event_bus.publish(BusEvent::HotkeyPressed(Some("CloseRequested".to_string())));
-                         return; // Assume CloseRequested is handled elsewhere, stop processing here
+                    // --- Use tracked modifiers and config ---
+                    let modifiers = self.current_modifiers; // Use the tracked state
+                    if let Some(key_combo_str) = format_key_event(modifiers, *physical_key) {
+                        println!("[Controller] Key combo detected: {}", key_combo_str); // Debug log
+                        if let Some(action) = self.hotkey_config.get_action(&key_combo_str) {
+                            println!("[Controller] Action found: '{}'. Publishing event.", action); // Debug log
+                            event_bus.publish(BusEvent::HotkeyPressed(Some(action.clone())));
+                        } else {
+                            println!("[Controller] No action defined for {}", key_combo_str); // Debug log
+                            // Decide if you want to publish None for unmapped keys:
+                            // event_bus.publish(BusEvent::HotkeyPressed(None));
+                        }
                     }
 
                     // Placeholder for configurable hotkey check using self.hotkey_config

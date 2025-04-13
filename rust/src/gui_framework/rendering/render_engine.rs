@@ -111,7 +111,7 @@ impl Renderer {
     }
 
     pub fn resize_renderer(&mut self, vulkan_context: &mut VulkanContext, scene: &mut Scene, width: u32, height: u32) {
-        println!("[Renderer::render] Frame start");
+        //println!("[Renderer::render] Frame start");
         // Delegate resize, passing necessary components
         ResizeHandler::resize(
             vulkan_context,
@@ -134,7 +134,7 @@ impl Renderer {
         let render_finished_semaphore = platform.render_finished_semaphore.unwrap();
         let fence = platform.fence.unwrap();
         let allocator = platform.allocator.as_ref().unwrap();
-        println!("[Renderer::render] Frame start");
+        //println!("[Renderer::render] Frame start");
 
         // Process pending instance updates
         let updates_to_process = {
@@ -166,18 +166,18 @@ impl Renderer {
             }
         }
 
-        println!("[Renderer::render] Waiting for fence...");
+        //println!("[Renderer::render] Waiting for fence...");
         // Render sequence
         unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }.unwrap();
-        println!("[Renderer::render] Resetting fence...");
+        //println!("[Renderer::render] Resetting fence...");
         unsafe { device.reset_fences(&[fence]) }.unwrap();
-        println!("[Renderer::render] Acquiring next image...");
+        //println!("[Renderer::render] Acquiring next image...");
 
         let (image_index, _) = unsafe {
             swapchain_loader.acquire_next_image(swapchain, u64::MAX, image_available_semaphore, vk::Fence::null())
         }.unwrap();
         platform.current_image = image_index as usize;
-        println!("[Renderer::render] Acquired image index: {}", image_index);
+        //println!("[Renderer::render] Acquired image index: {}", image_index);
 
         let submit_info = vk::SubmitInfo {
             s_type: vk::StructureType::SUBMIT_INFO,
@@ -191,7 +191,7 @@ impl Renderer {
             ..Default::default()
         };
         unsafe { device.queue_submit(queue, &[submit_info], fence) }.unwrap();
-        println!("[Renderer::render] Command buffer submitted");
+        //println!("[Renderer::render] Command buffer submitted");
 
         let present_info = vk::PresentInfoKHR {
             s_type: vk::StructureType::PRESENT_INFO_KHR,

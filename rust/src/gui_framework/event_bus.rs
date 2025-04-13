@@ -7,6 +7,7 @@ pub enum BusEvent {
     InstanceAdded(usize, usize, [f32; 2]),
     ObjectPicked(usize, Option<usize>),
     RedrawRequested,
+    HotkeyPressed(Option<String>),
 }
 
 pub trait EventHandler: Send + Sync {

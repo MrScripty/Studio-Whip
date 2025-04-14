@@ -52,6 +52,32 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
     5.  **Testing:** Run the application. Click the `RenderObject` for which a callback was registered. Verify that the output from the test callback appears in the console.
 - **Constraints**: Event-driven; relies on hit detection; uses a central router pattern defined in the application (`main.rs`) rather than the framework itself. Requires closures to have a `'static` lifetime.
 
+## Task 5.5: Migrate Scene and Event Management to Bevy ECS
+- **Goal**: Replace the custom `Scene`, `ElementPool`, `RenderObject`, `EventBus`, `EventHandler`, `InteractionController`, `ClickRouter`, and associated logic with `bevy_ecs`. Refactor existing rendering and interaction logic into Bevy Systems operating on Components within a `bevy_ecs::World`.
+- **Status**: **Not Started**
+- **Steps**:
+    1.  **Add Dependency:** Add `bevy_ecs` to `Cargo.toml`. Consider if `bevy_app` is useful for setup.
+    2.  **Define Core Components:** Create initial component structs (e.g., `Transform { position, depth, scale }`, `RenderableShape { vertices, shader_info }`, `Visibility { visible }`, `Interaction { clickable, draggable }`, potentially `Hierarchy { parent }`).
+    3.  **Define Core Resources:** Identify and define global data needed by systems (e.g., `WindowSize { width, height }`, `InputState`, potentially `VulkanHandles`).
+    4.  **Refactor `main.rs`:**
+        *   Replace `Scene`/`EventBus` setup with `bevy_ecs::World` initialization (or `bevy_app::App`).
+        *   Replace initial object creation with entity spawning (`world.spawn((Transform{...}, RenderableShape{...}, ...))`).
+        *   Remove old event subscriptions (`HotkeyActionHandler`, `SceneEventHandler`, `ClickRouter`).
+        *   Integrate the Bevy schedule (e.g., `world.run_schedule(...)` or `app.update()`) into the `winit` event loop.
+        *   Add core systems to the schedule.
+    5.  **Create Core Systems:**
+        *   **InputSystem:** Processes `winit` events, updates `InputState` resource, maybe sends Bevy input events (e.g., `KeyboardInput`, `MouseInput`).
+        *   **InteractionSystem:** Queries entities with `Transform` and `Interaction` components. Uses `InputState` resource for mouse position/clicks. Performs hit-testing. Manages drag state (potentially via a `Dragging { target: Entity }` component or resource). Publishes Bevy events (e.g., `EntityClicked { entity: Entity }`, `EntityDragged { entity: Entity, delta: Vec2 }`).
+        *   **MovementSystem:** Responds to `EntityDragged` events (or similar) by updating `Transform` components.
+        *   **HotkeySystem:** Reads `InputState` resource, checks against loaded hotkey configuration (config loading logic might become a setup system or resource), publishes Bevy events like `HotkeyActionTriggered { action: String }`.
+        *   **ApplicationControlSystem:** Responds to `HotkeyActionTriggered` (e.g., for "CloseRequested") or `winit` events to manage application lifecycle (e.g., sending `AppExit` event).
+        *   **RenderingSystem:** Queries entities with `Transform`, `RenderableShape`, `Visibility`. Collects data for visible entities and passes it to the Vulkan backend (`Renderer`/`BufferManager`).
+    6.  **Refactor Vulkan Backend (`Renderer`, `BufferManager`, etc.):**
+        *   Modify interfaces to accept lists/iterators of component data (e.g., `Vec<(TransformData, ShapeData)>`) from the `RenderingSystem` instead of pulling from the old `Scene`.
+        *   The core Vulkan API calls remain, but data sourcing changes. Cleanup logic needs careful review.
+    7.  **Remove Obsolete Code:** Delete `src/gui_framework/scene/`, `src/gui_framework/event_bus.rs`, `src/gui_framework/interaction/controller.rs`. Remove old handlers and structs (`RenderObject`, `InstanceData`, `EventHandler`, etc.) from `main.rs` and `lib.rs`/`gui_framework/mod.rs`. Update `gui_framework/mod.rs` exports.
+- **Impact:** This is a major refactor touching most framework parts. It replaces the core data storage and logic flow with an ECS pattern, enabling better composition and scalability. Requires updating all subsequent tasks.
+
 ## Task 6: Text Handling - Layout and Rendering Foundation
 - **Goal**: Integrate `cosmic-text` for layout/shaping and implement a custom Vulkan bitmap glyph atlas renderer. Display static sample text (English/Chinese placeholder).
 - **Affected Modules**: New `src/gui_framework/rendering/text_renderer/mod.rs`, `src/gui_framework/rendering/text_renderer/glyph_atlas.rs`, `src/gui_framework/rendering/buffer_manager.rs` (integration), `src/gui_framework/rendering/render_engine.rs` (integration), `src/gui_framework/scene/scene.rs` (add text objects), `src/main.rs` (testing, initialization), New shaders (`glyph.vert`, `glyph.frag`).

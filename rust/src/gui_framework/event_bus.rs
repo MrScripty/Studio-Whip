@@ -6,6 +6,7 @@ pub enum BusEvent {
     ObjectMoved(usize, [f32; 2], Option<usize>),
     InstanceAdded(usize, usize, [f32; 2]),
     ObjectPicked(usize, Option<usize>),
+    ObjectClicked(usize, Option<usize>),
     RedrawRequested,
     HotkeyPressed(Option<String>),
 }

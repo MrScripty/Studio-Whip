@@ -113,7 +113,7 @@ impl InteractionController {
                         if let Some(scene_ref) = scene { // Scene ref is expected here
                             if let Some(target) = scene_ref.pick_object_at(pos[0], pos[1]) {
                                 self.mouse_state.dragged_object = Some(target);
-                                event_bus.publish(BusEvent::ObjectPicked(target.0, target.1));
+                                event_bus.publish(BusEvent::ObjectClicked(target.0, target.1));
                             }
                         } else {
                              // This case indicates an issue in window_handler not providing scene on press

@@ -1,4 +1,4 @@
-# Modules Documentation for `rusty_whip` (March 19, 2025)
+# Modules Documentation for `rusty_whip`
 
 ## Project Overview: `rusty_whip`
 ### Purpose

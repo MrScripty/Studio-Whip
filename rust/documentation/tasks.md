@@ -1,4 +1,4 @@
-# Tasks for `rusty_whip` GUI Framework Enhancements (March 19, 2025 - Updated)
+# Tasks for `rusty_whip` GUI Framework Enhancements
 
 ## Overview
 These tasks enhance `gui_framework` to support a future divider system in `gui_app`, adding efficient element creation, grouping, instancing, and input handling. The framework remains generic, with `gui_app` building specific UIs atop it. Recent focus: Implementing event bus, refactoring rendering, logical grouping, batch updates via events, visibility toggling, and a configurable hotkey system. The main event loop now uses `EventLoop::run` within `main.rs`.

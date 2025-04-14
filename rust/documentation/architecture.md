@@ -1,4 +1,4 @@
-# Architecture Overview for `rusty_whip` (March 19, 2025)
+# Architecture Overview for `rusty_whip`
 
 ## Purpose
 `rusty_whip` is an advanced 2D and 3D content generation application for digital entertainment production, leveraging GPU-accelerated AI diffusion/inference, multimedia creation (2D video, stills, animation, audio), and story-driven workflows, with plans for quantum-resistant P2P networking. Current focus: 2D GUI with Vulkan-based rendering, click-and-drag functionality, instancing, logical grouping, visibility toggling, a configurable hotkey system, generic click handling, and an event bus for decoupled communication.

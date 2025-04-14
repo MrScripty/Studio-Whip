@@ -34,15 +34,23 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
 - **Summary**: Added `toml` and `thiserror` dependencies. Created `hotkeys.rs` for config loading/parsing (`HotkeyConfig`, `HotkeyError`) and key formatting (`format_key_event`). Updated `InteractionController` to load config relative to executable (using path from `build.rs`), track modifier state (`current_modifiers`, handles `ModifiersChanged`), and publish `BusEvent::HotkeyPressed(Some(action_string))` on recognized key presses. Updated `build.rs` (`copy_user_files`) to copy `user/hotkeys.toml` to the target directory. Updated `main.rs` to use `EventLoop::run` and `EventLoopProxy<UserEvent>`, added `HotkeyActionHandler` subscriber that listens for `HotkeyPressed(Some("CloseRequested"))` and sends `UserEvent::Exit` via proxy to trigger clean shutdown. Tested `Escape`, `Ctrl+S`, `Alt+P`.
 - **Constraints**: Uses `EventBus` and `EventLoopProxy`. Relies on `build.rs` copying config.
 
-## Task 5: Add Button Functionality
-- **Goal**: Extend `gui_framework` to support button behavior on any `RenderObject` via events, using a state flag.
-- **Affected Modules**: `src/gui_framework/scene/scene.rs`, `src/gui_framework/interaction/controller.rs`, `src/gui_framework/event_bus.rs`, `src/main.rs` (testing/handling).
+## Task 5: Add Generic Click Handling via Event Router
+- **Goal**: Implement a generic mechanism to handle mouse clicks on any `RenderObject` by publishing an `ObjectClicked` event and providing an easy way for the application to register specific callback functions for different object IDs using a central router.
+- **Affected Modules**: `src/gui_framework/event_bus.rs`, `src/gui_framework/interaction/controller.rs`, `src/main.rs` (for router definition, instantiation, and testing).
 - **Status**: Not started
 - **Steps**:
-    1. Update `RenderObject`: Add `is_button: bool` state flag and `action_id: Option<String>`. Update instantiations in `main.rs`.
-    2. Update `InteractionController::handle_event`: On receiving `ObjectPicked`, check if the corresponding `RenderObject.is_button` state flag is true. If yes, publish `BusEvent::ButtonClicked(action_id: Option<String>)`.
-    3. Test: Add a button object in `main.rs`, subscribe a handler in `main.rs` to `ButtonClicked`, verify log output on click.
-- **Constraints**: Event-driven; relies on state flag; rendering unchanged.
+    1.  **Event Bus:** Add a new variant `ObjectClicked(usize, Option<usize>)` to the `BusEvent` enum in `src/gui_framework/event_bus.rs`. This event will carry the ID of the clicked object and the optional ID of the specific instance clicked.
+    2.  **Interaction Controller:** Modify `InteractionController::handle_event` in `src/gui_framework/interaction/controller.rs`. In the `WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }` handler, when `scene.pick_object_at()` returns a target `(object_id, instance_id)`, publish `BusEvent::ObjectClicked(object_id, instance_id)` instead of `BusEvent::ObjectPicked`.
+    3.  **Click Router (Definition):** Define a new struct `ClickRouter` within `src/main.rs`.
+        *   Give it a field like `callbacks: std::collections::HashMap<usize, Box<dyn FnMut(usize, Option<usize>) + 'static>>`.
+        *   Implement a `new()` function.
+        *   Implement the `EventHandler` trait for `ClickRouter`. The `handle` method should check for `BusEvent::ObjectClicked`, look up the `object_id` in the `callbacks` map, and execute the associated closure if found.
+    4.  **Click Router (API & Usage):**
+        *   Implement a public method `register_click_handler(&mut self, object_id: usize, callback: impl FnMut(usize, Option<usize>) + 'static)` on `ClickRouter` in `src/main.rs` to add callbacks to the map.
+        *   In `main.rs`, instantiate the `ClickRouter`, wrap it in `Arc<Mutex<>>`, and subscribe it to the `EventBus` using `event_bus.subscribe_arc()`.
+        *   After creating scene objects and getting their IDs, lock the router and use `register_click_handler` to add at least one test callback (e.g., using `println!`) associated with a specific `RenderObject` ID.
+    5.  **Testing:** Run the application. Click the `RenderObject` for which a callback was registered. Verify that the output from the test callback appears in the console.
+- **Constraints**: Event-driven; relies on hit detection; uses a central router pattern defined in the application (`main.rs`) rather than the framework itself. Requires closures to have a `'static` lifetime.
 
 ## Task 6: Text Handling - Layout and Rendering Foundation
 - **Goal**: Integrate `cosmic-text` for layout/shaping and implement a custom Vulkan bitmap glyph atlas renderer. Display static sample text (English/Chinese placeholder).

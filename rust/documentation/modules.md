@@ -2,12 +2,12 @@
 
 ## Project Overview: `rusty_whip`
 ### Purpose
-`rusty_whip` is an advanced 2D & 3D content generation application with GPU-accelerated AI diffusion/inference, multimedia creation, and story-driven workflows, targeting P2P networking. Current focus: 2D GUI with Vulkan rendering, click-and-drag, instancing, logical grouping, visibility toggling, and a configurable hotkey system, all driven by an event bus.
+`rusty_whip` is an advanced 2D & 3D content generation application with GPU-accelerated AI diffusion/inference, multimedia creation, and story-driven workflows, targeting P2P networking. Current focus: 2D GUI with Vulkan rendering, click-and-drag, instancing, logical grouping, visibility toggling, a configurable hotkey system, generic click handling, all driven by an event bus.
 ### Current State
 - 2D GUI: Depth-sorted objects, orthographic projection, resizing, event-driven dragging/instancing, logical grouping, visibility checks during rendering.
-- Features Implemented: Event bus, mouse picking/dragging via events, instancing via events (fixed capacity buffer), group management (logical-only), Vulkan resource management refactored (`PipelineManager`, `BufferManager`), visibility flag (`RenderObject.visible`, `Renderable.visible`), configurable hotkey system (`hotkeys.toml`, `InteractionController`, `EventLoopProxy`), build script copies user config.
+- Features Implemented: Event bus (`ObjectClicked` added), mouse picking/dragging via events, generic click handling via `ClickRouter` pattern (in `main.rs`), instancing via events (fixed capacity buffer), group management (logical-only), Vulkan resource management refactored (`PipelineManager`, `BufferManager`), visibility flag (`RenderObject.visible`, `Renderable.visible`), configurable hotkey system (`hotkeys.toml`, `InteractionController`, `EventLoopProxy`), build script copies user config.
 - Features Skipped: Instance buffer resizing, resize conflict handling, context switching, undo; batch group operations pending.
-- Task 1 (Event Bus), Task 2 (Grouping), Task 3 (Group Batch Trigger), Task 3.1 (Visibility), Task 4 (Hotkeys) are **Complete**.
+- Task 1 (Event Bus), Task 2 (Grouping), Task 3 (Group Batch Trigger), Task 3.1 (Visibility), Task 4 (Hotkeys), Task 5 (Generic Click Handling) are **Complete**.
 - Application structure uses `EventLoop::run` with state managed in `main.rs` closure; `VulkanContextHandler` removed.
 
 ## Module Structure
@@ -22,10 +22,10 @@ Studio_Whip/
                     vulkan_context.rs
                     vulkan_setup.rs
                     mod.rs
-                event_bus.rs
+                event_bus.rs        # Updated
                 interaction/
-                    controller.rs
-                    hotkeys.rs      # New
+                    controller.rs   # Updated
+                    hotkeys.rs
                     mod.rs
                 rendering/
                     buffer_manager.rs
@@ -44,17 +44,17 @@ Studio_Whip/
                 # window/ directory removed
                 mod.rs
             lib.rs
-            main.rs             # Major changes
+            main.rs             # Updated
         shaders/
             # ... shader files ...
-        user/                   # New (source location for user files)
+        user/
             hotkeys.toml
         Documentation/
             # ... docs ...
         utilities/
             # ... utils ...
         Cargo.toml
-        build.rs                # Updated
+        build.rs
         compile_shaders.ps1
         compile_shaders.sh
 
@@ -67,10 +67,20 @@ Studio_Whip/
 - **Notes**: Public exports include `Renderer`, `Scene`, `EventBus`, `InteractionController`, etc.
 
 ### `src/main.rs`
-- **Purpose**: Entry point; sets up `winit` `EventLoop` with user events, manages core application state (`VulkanContext`, `Scene`, `Renderer`, `InteractionController`, `Window`) via `Option` fields within the `run` closure, handles the main event loop (`Resumed`, `WindowEvent`, `UserEvent`, `LoopExiting`, `AboutToWait`), creates `EventLoopProxy`, initializes `EventBus`, subscribes handlers (`HotkeyActionHandler`, `SceneEventHandler`, `Renderer`), populates initial `Scene`, and orchestrates cleanup on exit.
-- **Key Structs**: `UserEvent { Exit }`, `HotkeyActionHandler { proxy }`, `SceneEventHandler { scene_ref }`.
-- **Key Methods**: `main() -> ()`, `impl EventHandler for HotkeyActionHandler { handle(...) }`, `impl EventHandler for SceneEventHandler { handle(...) }`.
-- **Notes**: Uses `EventLoop::run` closure model. State managed locally. `HotkeyActionHandler` uses proxy to send `UserEvent::Exit`. Cleanup logic resides in `Event::LoopExiting`. Replaces `VulkanContextHandler`.
+- **Purpose**: Entry point; sets up `winit` `EventLoop` with user events, manages core application state (`VulkanContext`, `Scene`, `Renderer`, `InteractionController`, `Window`) via `Option` fields within the `run` closure, handles the main event loop, creates `EventLoopProxy`, initializes `EventBus`, defines and manages application-level event handlers like `ClickRouter`, subscribes handlers (`HotkeyActionHandler`, `SceneEventHandler`, `Renderer`, `ClickRouter`), populates initial `Scene`, registers test click callbacks, and orchestrates cleanup on exit.
+- **Key Structs**:
+    - `UserEvent { Exit }`
+    - `HotkeyActionHandler { proxy }`
+    - `SceneEventHandler { scene_ref }`
+    - `ClickRouter { callbacks: HashMap<usize, Box<Mutex<dyn FnMut(usize, Option<usize>) + Send + 'static>>> }`
+- **Key Methods**:
+    - `main() -> ()`
+    - `impl EventHandler for HotkeyActionHandler { handle(&mut self, event: &BusEvent) }`
+    - `impl EventHandler for SceneEventHandler { handle(&mut self, event: &BusEvent) }`
+    - `impl EventHandler for ClickRouter { handle(&mut self, event: &BusEvent) }`
+    - `ClickRouter::new() -> Self`
+    - `ClickRouter::register_click_handler(&mut self, object_id: usize, callback: impl FnMut(...) + Send + 'static)`
+- **Notes**: Uses `EventLoop::run` closure model. State managed locally via `Option` and `Arc<Mutex<>>`. `ClickRouter` provides application-specific click handling. Cleanup logic resides in `Event::LoopExiting`. Replaces `VulkanContextHandler`.
 
 ### `src/gui_framework/mod.rs`
 - **Purpose**: Re-exports submodules and key types (e.g., `Renderer`, `Scene`, `EventBus`, `InteractionController`).
@@ -93,21 +103,21 @@ Studio_Whip/
 ### `src/gui_framework/event_bus.rs`
 - **Purpose**: Decouples components via a publish-subscribe event system.
 - **Key Structs**: `EventBus { subscribers: Arc<Mutex<Vec<Arc<Mutex<dyn EventHandler>>>>> }`.
-- **Key Enums**: `BusEvent { ObjectMoved(usize, [f32; 2], Option<usize>), InstanceAdded(usize, usize, [f32; 2]), ObjectPicked(usize, Option<usize>), RedrawRequested, HotkeyPressed(Option<String>) }`.
+- **Key Enums**: `BusEvent { ObjectMoved(usize, [f32; 2], Option<usize>), InstanceAdded(usize, usize, [f32; 2]), ObjectPicked(usize, Option<usize>), ObjectClicked(usize, Option<usize>), RedrawRequested, HotkeyPressed(Option<String>) }`.
 - **Key Traits**: `EventHandler: Send + Sync { handle(&mut self, event: &BusEvent), as_any(&self) -> &dyn Any }`.
-- **Key Methods**: `new() -> Self`, `subscribe_handler<H: EventHandler + 'static>(&self, H)`, `subscribe_arc<T: EventHandler + 'static>(&self, Arc<Mutex<T>>)`, `publish(&self, BusEvent)`, `clear(&self)`.
-- **Notes**: `HotkeyPressed` event added. `clear()` called during `Event::LoopExiting`.
+- **Key Methods**: `new() -> Self`, `subscribe_handler<H: EventHandler + 'static>(&self, H)`, `subscribe_arc<T: EventHandler + Send + Sync + 'static>(&self, Arc<Mutex<T>>)`, `publish(&self, BusEvent)`, `clear(&self)`.
+- **Notes**: `ObjectClicked` event added for generic click actions. `clear()` called during `Event::LoopExiting`. `subscribe_arc` requires `Send + Sync` on `T`.
 
 ### `src/gui_framework/interaction/mod.rs`
 - **Purpose**: Re-exports interaction controller and hotkey components.
 
 ### `src/gui_framework/interaction/controller.rs`
-- **Purpose**: Handles mouse and keyboard input, loads hotkey configuration, tracks modifier state, and publishes interaction events (`ObjectMoved`, `ObjectPicked`, `HotkeyPressed`) via the `EventBus`.
+- **Purpose**: Handles mouse and keyboard input, loads hotkey configuration, tracks modifier state, performs hit-testing via `Scene`, and publishes interaction events (`ObjectMoved`, `ObjectClicked`, `HotkeyPressed`) via the `EventBus`.
 - **Key Structs**: `MouseState { is_dragging, last_position, dragged_object }`, `CursorContext { Canvas, Other }`, `InteractionController { mouse_state, context, hotkey_config, current_modifiers }`.
 - **Key Methods**:
   - `new() -> Self` - Loads hotkey config from file relative to executable.
-  - `handle_event(&mut self, event: &Event<()>, scene: Option<&Scene>, _renderer: Option<&mut Renderer>, window: &Window, event_bus: &Arc<EventBus>) -> ()` - Processes `winit` events (MouseInput, CursorMoved, ModifiersChanged, KeyboardInput), updates `current_modifiers`, uses `format_key_event` and `hotkey_config` to identify actions, publishes events to `event_bus`.
-- **Notes**: Depends on `hotkeys.rs` for config loading and formatting. State includes `current_modifiers`.
+  - `handle_event(&mut self, event: &Event<()>, scene: Option<&Scene>, _renderer: Option<&mut Renderer>, window: &Window, event_bus: &Arc<EventBus>) -> ()` - Processes `winit` events, updates `current_modifiers`, uses `format_key_event` and `hotkey_config`, calls `scene.pick_object_at` on mouse press, publishes `ObjectClicked` on hit, publishes `ObjectMoved` during drag, publishes `HotkeyPressed`.
+- **Notes**: Depends on `hotkeys.rs` and `scene.rs`. Publishes `ObjectClicked` instead of `ObjectPicked` on mouse press hit detection. State includes `current_modifiers`.
 
 ### `src/gui_framework/interaction/hotkeys.rs`
 - **Purpose**: Defines hotkey configuration loading from TOML, error handling, and key event formatting logic.
@@ -175,11 +185,11 @@ Studio_Whip/
 - **Purpose**: Re-exports scene management modules.
 
 ### `src/gui_framework/scene/scene.rs`
-- **Purpose**: Manages application state: renderable objects (`ElementPool` containing `RenderObject` with `visible` flag), logical groups (`GroupManager`), window dimensions. Publishes `InstanceAdded` events. Object state updated via `SceneEventHandler`.
-- **Key Structs**: `RenderObject { ..., is_draggable: bool, instances: Vec<InstanceData>, visible: bool }`, `InstanceData { offset: [f32; 2] }`, `ElementPool { elements, free_indices }`, `Scene { pool, groups, width, height, event_bus: Arc<EventBus> }`.
+- **Purpose**: Manages application state: renderable objects (`ElementPool` containing `RenderObject` with `visible` flag), logical groups (`GroupManager`), window dimensions. Publishes `InstanceAdded` events. Object state updated via `SceneEventHandler`. Provides hit-testing capability.
+- **Key Structs**: `RenderObject { vertices, vertex_shader_filename, fragment_shader_filename, depth, on_window_resize_scale, on_window_resize_move, offset, is_draggable, instances, visible }`, `InstanceData { offset: [f32; 2] }`, `ElementPool { elements, free_indices }`, `Scene { pool, groups, width, height, event_bus: Arc<EventBus> }`.
 - **Key Traits**: `HitTestable { contains(...) -> bool }`.
 - **Key Methods**: `new(...) -> Self`, `groups(...) -> &mut GroupManager`, `add_object(...) -> usize`, `add_instance(...) -> usize`, `pick_object_at(...) -> Option<(usize, Option<usize>)>`, `translate_object(...) -> ()`, `update_dimensions(...) -> ()`.
-- **Notes**: `visible` flag added to `RenderObject`. State managed via `Arc<Mutex<>>` in `main.rs`.
+- **Notes**: `visible` flag added to `RenderObject`. `pick_object_at` used by `InteractionController`. State managed via `Arc<Mutex<>>` in `main.rs`.
 
 ### `src/gui_framework/scene/group.rs`
 - **Purpose**: Manages named, logical groups of object pool indices for organization.

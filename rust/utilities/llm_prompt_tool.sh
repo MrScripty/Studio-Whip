@@ -190,7 +190,7 @@ case "$option" in
 
     4) # Custom Code List
         echo "Running Custom Code List..."
-        echo "Please paste the space-seperated file-path list and press Enter"
+        echo "Please paste the space-separated file-path list and press Enter"
         read -r custom_files
         # Convert the space-separated list into a temporary file for processing
         echo "$custom_files" | tr ' ' '\n' | sort > "$file_list"
@@ -198,12 +198,18 @@ case "$option" in
         first_file=true
         prev_dir=""
         while read -r file; do
-            if [ -f "$file" ] && [[ "$file" == *.rs ]]; then  # Ensure file exists and is .rs
+            if [ -f "$file" ] && ([[ "$file" == *.rs ]] || [[ "$file" == *.toml ]]); then  # Check for .rs or .toml
                 current_dir=$(dirname "$file")
+                # Determine file type for append_content
+                if [[ "$file" == *.rs ]]; then
+                    file_type="rust"
+                elif [[ "$file" == *.toml ]]; then
+                    file_type="toml"
+                fi
                 # Special handling for first file (no leading divider)
                 if $first_file; then
                     echo "Processing $file"
-                    append_content "$file" "rust"
+                    append_content "$file" "$file_type"
                     first_file=false
                 else
                     # Add dividing line if switching directories
@@ -212,19 +218,13 @@ case "$option" in
                         echo "" >> "$temp_file"
                     fi
                     echo "Processing $file"
-                    append_content "$file" "rust"
+                    append_content "$file" "$file_type"
                 fi
                 prev_dir="$current_dir"
             else
-                echo "Warning: $file not found or not a .rs file"
+                echo "Warning: $file not found or not a .rs or .toml file"
             fi
         done < "$file_list"
-        ;;
-
-    *)
-        echo "Invalid option: $option. Please choose 1, 2, 3, or 4."
-        rm "$temp_file" "$file_list"
-        exit 1
         ;;
 esac
 

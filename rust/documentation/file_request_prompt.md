@@ -1,1 +1,7 @@
-I need you to determine which existing files from the codebase, are required to complete the tasks outlined in `tasks.md`. Format your response as a space-separated bash list of full file paths (e.g., `/home/deck/Desktop/Rust/Studio-Whip/rust/src/gui_framework/scene/scene.rs /home/deck/Desktop/Rust/Studio-Whip/rust/src/gui_framework/rendering/render_engine.rs`). Only include files that currently exist in the codebase—do not include files that would need to be created. Provide the list inside a code block without additional explanation or formatting beyond the space-separated paths.
+I need you to determine which existing files from the codebase, are required to complete the next or current task to work on outlined in `tasks.md`. Format your response as: 
+
+These are the files for <continuing/starting> task <task #, Step #>
+<Single line description of the task / Step>
+``<space seperated file path list>`` 
+
+Use a space-separated list of full file paths. Only include files that currently exist in the codebase. Do not include files that would need to be created.

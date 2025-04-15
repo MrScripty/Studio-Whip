@@ -230,7 +230,7 @@ esac
 
 # Add final instructions if content was added
 if [ -s "$temp_file" ]; then
-    echo "Do you understand? Next I will give you step by step instructions." >> "$temp_file"
+    echo "" >> "$temp_file"
 else
     echo "No content to copy."
 fi

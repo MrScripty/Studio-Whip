@@ -4,20 +4,25 @@ use ash_window;
 use std::ffi::CStr;
 use std::sync::Arc;
 use vk_mem::Allocator;
-use winit::window::Window;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 
-pub fn setup_vulkan(app: &mut VulkanContext, window: Arc<Window>) {
+pub fn setup_vulkan(app: &mut VulkanContext, window: &winit::window::Window) {
+    // Get handles directly from the window reference
+    let display_handle = window.display_handle()
+        .expect("Failed to get display handle from winit window")
+        .as_raw(); // Get the RawDisplayHandle
+    let window_handle = window.window_handle()
+        .expect("Failed to get window handle from winit window")
+        .as_raw(); // Get the RawWindowHandle
+
     println!("[setup_vulkan] Loading Vulkan entry...");
     let entry = unsafe { Entry::load() }.expect("Failed to load Vulkan entry");
     app.entry = Some(entry.clone());
     println!("[setup_vulkan] Vulkan entry loaded.");
 
     println!("[setup_vulkan] Enumerating required surface extensions...");
-    let surface_extensions = ash_window::enumerate_required_extensions(
-        window.display_handle().expect("Failed to get display handle").as_raw(),
-    )
+    let surface_extensions = ash_window::enumerate_required_extensions(display_handle)
     .expect("Failed to enumerate required surface extensions");
     println!("[setup_vulkan] Required surface extensions enumerated.");
 
@@ -50,8 +55,8 @@ pub fn setup_vulkan(app: &mut VulkanContext, window: Arc<Window>) {
         ash_window::create_surface(
             &entry,
             &instance,
-            window.display_handle().expect("Failed to get display handle").as_raw(),
-            window.window_handle().expect("Failed to get window handle").as_raw(),
+            display_handle,
+            window_handle,
             None,
         )
     }

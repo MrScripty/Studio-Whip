@@ -3,10 +3,9 @@ use ash::{Entry, Instance};
 use ash::khr::{surface, swapchain};
 use std::sync::Arc;
 use vk_mem::Allocator;
-use winit::window::Window;
+
 
 pub struct VulkanContext {
-    pub window: Option<Arc<Window>>,
     pub entry: Option<Entry>,
     pub instance: Option<Instance>,
     pub surface_loader: Option<surface::Instance>,
@@ -38,7 +37,6 @@ pub struct VulkanContext {
 impl VulkanContext {
     pub fn new() -> Self {
         Self {
-            window: None,
             entry: None,
             instance: None,
             surface_loader: None,

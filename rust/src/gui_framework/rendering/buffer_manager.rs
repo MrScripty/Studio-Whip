@@ -5,7 +5,7 @@ use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::gui_framework::scene::scene::Scene;
 use crate::gui_framework::rendering::renderable::Renderable;
 use crate::gui_framework::rendering::shader_utils::load_shader;
-use glam::Mat4;
+use bevy_math::Mat4;
 
 pub struct BufferManager {
     pub uniform_buffer: vk::Buffer,
@@ -27,11 +27,11 @@ impl BufferManager {
         let allocator = platform.allocator.as_ref().unwrap();
 
         // --- Uniform Buffer Setup ---
-        let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -1.0, 1.0).to_cols_array();
+        let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -1.0, 1.0);
         let (uniform_buffer, uniform_allocation) = {
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                size: std::mem::size_of_val(&ortho) as u64,
+                size: std::mem::size_of::<Mat4>() as u64,
                 usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
@@ -45,7 +45,7 @@ impl BufferManager {
                 match allocator.create_buffer(&buffer_info, &allocation_info) {
                     Ok((buffer, mut allocation)) => {
                         let data_ptr = allocator.map_memory(&mut allocation).unwrap().cast::<f32>();
-                        data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len());
+                        data_ptr.copy_from_nonoverlapping(ortho.to_cols_array().as_ptr(), 16);
                         allocator.unmap_memory(&mut allocation);
                         (buffer, allocation)
                     }
@@ -170,7 +170,7 @@ impl BufferManager {
                  let proj_buffer_info = vk::DescriptorBufferInfo {
                     buffer: uniform_buffer, // Use the shared projection buffer
                     offset: 0,
-                    range: std::mem::size_of_val(&ortho) as u64,
+                    range: std::mem::size_of::<Mat4>() as u64,
                 };
                 let offset_buffer_info = vk::DescriptorBufferInfo {
                     buffer: offset_uniform, // Use this object's offset buffer

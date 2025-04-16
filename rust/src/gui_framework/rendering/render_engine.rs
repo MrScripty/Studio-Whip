@@ -9,7 +9,7 @@ use crate::gui_framework::rendering::resize_handler::ResizeHandler;
 use crate::gui_framework::event_bus::{EventHandler, BusEvent};
 use std::sync::{Arc, Mutex};
 use std::any::Any;
-use glam::Mat4;
+use bevy_math::Mat4;
 
 pub struct Renderer {
     pipeline_manager: PipelineManager,
@@ -51,19 +51,19 @@ impl Renderer {
         println!("[Renderer::new] BufferManager created");
         // Update the *global* projection descriptor set (binding 0) held by PipelineManager
         unsafe {
-            let proj_matrix = Mat4::orthographic_rh(0.0, extent.width as f32, extent.height as f32, 0.0, -1.0, 1.0).to_cols_array();
+            let proj_matrix = Mat4::orthographic_rh(0.0, extent.width as f32, extent.height as f32, 0.0, -1.0, 1.0);
              let allocator = platform.allocator.as_ref().unwrap();
              // Map the uniform buffer allocation held by BufferManager
              let data_ptr = allocator.map_memory(&mut buffer_mgr.uniform_allocation)
                  .expect("Failed to map uniform buffer for projection update")
                  .cast::<f32>();
-             data_ptr.copy_from_nonoverlapping(proj_matrix.as_ptr(), proj_matrix.len());
+                data_ptr.copy_from_nonoverlapping(proj_matrix.to_cols_array().as_ptr(), 16);
              allocator.unmap_memory(&mut buffer_mgr.uniform_allocation); // Unmap original mut ref
 
             let buffer_info = vk::DescriptorBufferInfo {
                 buffer: buffer_mgr.uniform_buffer,
                 offset: 0,
-                range: std::mem::size_of_val(&proj_matrix) as u64,
+                range: std::mem::size_of::<Mat4>() as u64,
             };
             platform.device.as_ref().unwrap().update_descriptor_sets(&[vk::WriteDescriptorSet {
                 s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,

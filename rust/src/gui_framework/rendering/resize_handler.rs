@@ -5,7 +5,7 @@ use crate::gui_framework::scene::scene::Scene;
 use crate::gui_framework::rendering::renderable::Renderable;
 use crate::gui_framework::rendering::swapchain::{create_swapchain, create_framebuffers};
 use crate::gui_framework::rendering::command_buffers::record_command_buffers;
-use glam::Mat4;
+use bevy_math::Mat4;
 
 pub struct ResizeHandler;
 
@@ -39,11 +39,11 @@ impl ResizeHandler {
         create_framebuffers(vulkan_context, extent, surface_format);
         println!("New extent: {:?}", extent);
 
-        let ortho = Mat4::orthographic_rh(0.0, width as f32, height as f32, 0.0, -1.0, 1.0).to_cols_array();
+        let ortho = Mat4::orthographic_rh(0.0, width as f32, height as f32, 0.0, -1.0, 1.0);
         let data_ptr = unsafe { vulkan_context.allocator.as_ref().unwrap().map_memory(uniform_allocation) }
             .unwrap()
             .cast::<f32>();
-        unsafe { data_ptr.copy_from_nonoverlapping(ortho.as_ptr(), ortho.len()) };
+        unsafe { data_ptr.copy_from_nonoverlapping(ortho.to_cols_array().as_ptr(), 16) }
         unsafe { vulkan_context.allocator.as_ref().unwrap().unmap_memory(uniform_allocation) };
 
         for (renderable, obj) in renderables.iter_mut().zip(scene.pool.iter_mut()) {

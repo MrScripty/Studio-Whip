@@ -3,16 +3,17 @@
 ## Project Overview: `rusty_whip`
 ### Purpose
 `rusty_whip` is an advanced 2D & 3D content generation application with GPU-accelerated AI diffusion/inference, multimedia creation, and story-driven workflows, targeting P2P networking. **It is currently migrating to the Bevy engine.**
-### Current State (Post Task 6.1)
-- **Bevy Integration**: Application runs using `bevy_app::App` and `bevy_winit`. Windowing is handled by Bevy. Core Bevy plugins (`Input`, `Log`, etc.) are active.
+### Current State (Post Task 6.2)
+- **Bevy Integration**: Application runs using `bevy_app::App` and `bevy_winit`. Windowing is handled by Bevy. Core Bevy plugins (`Input`, `Log`, `Math`, etc.) are active.
+- **Math Migration**: Uses `bevy_math` types (`Mat4`) for rendering calculations; `glam` dependency removed.
 - **Bridging**: Legacy framework components (`VulkanContext`, `Scene`, `Renderer`, `EventBus`, `InteractionController`, `ClickRouter`) are wrapped in `Arc<Mutex<>>` and managed as Bevy `Resources`.
 - **Lifecycle**: Bevy systems in `main.rs` orchestrate setup, updates, and cleanup, calling legacy functions where appropriate.
 - **Rendering/Input**: Uses *placeholder* logic. `Renderer::new`/`render`/`resize` calls are stubbed due to `&mut VulkanContext` access issues with the resource bridge. Legacy `InteractionController` is inactive as input is not yet bridged from Bevy Input resources.
 - **Features Implemented (Legacy)**: Event bus, logical grouping, visibility flag, configurable hotkey loading, generic click routing (via legacy bus), object pooling.
-- **Features Active**: Bevy app structure, windowing, logging, core Vulkan setup via system, exit handling.
+- **Features Active**: Bevy app structure, windowing, logging, core Vulkan setup via system, exit handling, `bevy_math` usage.
 - **Features Inactive/Placeholder**: Rendering, resizing logic, input handling (click/drag/hotkey actions), event bus publishing from input.
 - **Modules Removed**: `gui_framework/window/`.
-- Task 1-5 **Complete** (Legacy). Task 6.1 **Complete**.
+- Task 1-5 **Complete** (Legacy). Task 6.1 **Complete**. Task 6.2 **Complete**.
 
 ## Module Structure
 Studio_Whip/
@@ -70,7 +71,7 @@ Studio_Whip/
 - **Notes**: Public exports include legacy framework types.
 
 ### `src/main.rs`
-- **Purpose**: Entry point; sets up `bevy_app::App`, Bevy plugins (`WinitPlugin`, `InputPlugin`, `LogPlugin`, etc.), Bevy resources (`Arc<Mutex<>>` wrappers for legacy framework components), and Bevy systems (`Startup`, `Update`, `Last`) for lifecycle management. Systems handle Vulkan setup, placeholder renderer creation/calls, placeholder resize handling, exit requests, and cleanup triggers.
+- **Purpose**: Entry point; sets up `bevy_app::App`, Bevy plugins (`WinitPlugin`, `InputPlugin`, `LogPlugin`, `MathPlugin`, etc.), Bevy resources (`Arc<Mutex<>>` wrappers for legacy framework components), and Bevy systems (`Startup`, `Update`, `Last`) for lifecycle management. Systems handle Vulkan setup, placeholder renderer creation/calls, placeholder resize handling, exit requests, and cleanup triggers.
 - **Key Structs**:
     - `VulkanContextResource(Arc<Mutex<VulkanContext>>)`
     - `SceneResource(Arc<Mutex<Scene>>)`
@@ -111,7 +112,7 @@ Studio_Whip/
 - **Key Methods**:
   - `setup_vulkan(vk_ctx: &mut VulkanContext, window: &winit::window::Window) -> ()` **(Signature updated)**
   - `cleanup_vulkan(vk_ctx: &mut VulkanContext) -> ()`
-- **Notes**: Called by `setup_vulkan_system` and `cleanup_system` in `main.rs`.
+- **Notes**: Called by `setup_vulkan_system` and `cleanup_system` in `main.rs`. Still uses `winit::window::Window`.
 
 ### `src/gui_framework/event_bus.rs`
 - **Purpose**: **Legacy component.** Decouples components via a publish-subscribe event system.
@@ -125,20 +126,20 @@ Studio_Whip/
 - **Purpose**: Re-exports interaction controller and hotkey components.
 
 ### `src/gui_framework/interaction/controller.rs`
-- **Purpose**: **Legacy component.** Handles mouse and keyboard input, loads hotkey configuration, tracks modifier state, performs hit-testing via `Scene`, and publishes interaction events (`ObjectMoved`, `ObjectClicked`, `HotkeyPressed`) via the legacy `EventBus`.
+- **Purpose**: **Legacy component.** Handles mouse and keyboard input, loads hotkey configuration, tracks modifier state, performs hit-testing via `Scene`, and publishes interaction events (`ObjectMoved`, `ObjectClicked`, `HotkeyPressed`) via the legacy `EventBus`. Uses `winit` event types.
 - **Key Structs**: `MouseState { is_dragging, last_position, dragged_object }`, `CursorContext { Canvas, Other }`, `InteractionController { mouse_state, context, hotkey_config, current_modifiers }`.
 - **Key Methods**:
   - `new() -> Self` - Loads hotkey config from file relative to executable.
-  - `handle_event(&mut self, event: &Event<()>, scene: Option<&Scene>, _renderer: Option<&mut Renderer>, window: &Window, event_bus: &Arc<EventBus>) -> ()` - Processes `winit` events.
+  - `handle_event(&mut self, event: &winit::event::Event<()>, scene: Option<&Scene>, _renderer: Option<&mut Renderer>, window: &winit::window::Window, event_bus: &Arc<EventBus>) -> ()` - Processes `winit` events.
 - **Notes**: Managed via `InteractionControllerResource`. `handle_event` is currently **not called** by any active Bevy system. Input handling needs migration to Bevy Input. Depends on `hotkeys.rs` and `scene.rs`.
 
 ### `src/gui_framework/interaction/hotkeys.rs`
-- **Purpose**: Defines hotkey configuration loading from TOML, error handling, and key event formatting logic.
+- **Purpose**: Defines hotkey configuration loading from TOML, error handling, and key event formatting logic using `winit` types.
 - **Key Structs**: `HotkeyConfig { mappings: HashMap<String, String> }`, `HotkeyError { FileNotFound(String), ReadError(std::io::Error), ParseError(toml::de::Error) }`.
 - **Key Methods**:
   - `HotkeyConfig::load_config(path: &Path) -> Result<Self, HotkeyError>` - Loads config from specified path.
   - `HotkeyConfig::get_action(&self, key_combo: &str) -> Option<&String>` - Looks up action for a formatted key string.
-  - `format_key_event(modifiers: ModifiersState, key: PhysicalKey) -> Option<String>` - Converts winit key/modifier state to string (e.g., "Ctrl+S").
+  - `format_key_event(modifiers: winit::keyboard::ModifiersState, key: winit::keyboard::PhysicalKey) -> Option<String>` - Converts winit key/modifier state to string (e.g., "Ctrl+S").
 - **Notes**: Used by legacy `InteractionController`. Reads `hotkeys.toml` (expected to be copied to target dir by `build.rs`).
 
 ### `src/gui_framework/rendering/mod.rs`
@@ -154,7 +155,7 @@ Studio_Whip/
 - **Key Structs**: `Renderable { ..., depth: f32, ..., instance_count: u32, instance_buffer_capacity: u32, visible: bool }`.
 
 ### `src/gui_framework/rendering/render_engine.rs`
-- **Purpose**: Orchestrates Vulkan rendering, manages sub-component lifecycles (`PipelineManager`, `BufferManager`), handles legacy `InstanceAdded` events, and manages swapchain presentation.
+- **Purpose**: Orchestrates Vulkan rendering, manages sub-component lifecycles (`PipelineManager`, `BufferManager`), handles legacy `InstanceAdded` events, and manages swapchain presentation. Uses `bevy_math::Mat4`.
 - **Key Structs**: `Renderer { pipeline_manager: PipelineManager, buffer_manager: BufferManager, pending_instance_updates: Arc<Mutex<Vec<(usize, usize, [f32; 2])>>> }`.
 - **Key Methods**:
   - `new(platform: &mut VulkanContext, extent: vk::Extent2D, scene: &Scene) -> Self`
@@ -171,7 +172,7 @@ Studio_Whip/
 - **Notes**: Provides resources to `BufferManager`.
 
 ### `src/gui_framework/rendering/buffer_manager.rs`
-- **Purpose**: Manages Vulkan buffers, allocations, pipelines, shaders, descriptor sets, and populates `Renderable` state including visibility. Handles instance buffer creation/updates.
+- **Purpose**: Manages Vulkan buffers, allocations, pipelines, shaders, descriptor sets, and populates `Renderable` state including visibility. Handles instance buffer creation/updates. Uses `bevy_math::Mat4`.
 - **Key Structs**: `BufferManager { uniform_buffer, uniform_allocation, renderables: Vec<Renderable> }`.
 - **Key Methods**:
   - `new(&mut VulkanContext, &Scene, vk::PipelineLayout, vk::DescriptorSetLayout, vk::DescriptorPool) -> Self` - Creates resources, copies `visible` flag from `RenderObject`.
@@ -180,7 +181,7 @@ Studio_Whip/
 - **Notes**: Takes layout/pool from `PipelineManager`.
 
 ### `src/gui_framework/rendering/resize_handler.rs`
-- **Purpose**: Handles window resizing logic, updating swapchain, framebuffers, projection matrix, and renderable vertices.
+- **Purpose**: Handles window resizing logic, updating swapchain, framebuffers, projection matrix, and renderable vertices. Uses `bevy_math::Mat4`.
 - **Key Structs**: `ResizeHandler` (stateless).
 - **Key Methods**: `resize(&mut VulkanContext, &mut Scene, &mut Vec<Renderable>, vk::PipelineLayout, vk::DescriptorSet, u32, u32, &mut vk_mem::Allocation) -> ()`.
 - **Notes**: Called by `Renderer::resize_renderer` (part of placeholder logic).
@@ -198,7 +199,7 @@ Studio_Whip/
 - **Purpose**: Re-exports scene management modules.
 
 ### `src/gui_framework/scene/scene.rs`
-- **Purpose**: Manages application state: renderable objects (`ElementPool` containing `RenderObject` with `visible` flag), logical groups (`GroupManager`), window dimensions. Publishes `InstanceAdded` events to legacy `EventBus`. Object state updated via legacy `SceneEventHandler`. Provides hit-testing capability.
+- **Purpose**: Manages application state: renderable objects (`ElementPool` containing `RenderObject` with `visible` flag), logical groups (`GroupManager`), window dimensions. Publishes `InstanceAdded` events to legacy `EventBus`. Object state updated via legacy `SceneEventHandler`. Provides hit-testing capability. Uses `[f32; 2]` for positions/offsets.
 - **Key Structs**: `RenderObject { vertices, vertex_shader_filename, fragment_shader_filename, depth, on_window_resize_scale, on_window_resize_move, offset, is_draggable, instances, visible }`, `InstanceData { offset: [f32; 2] }`, `ElementPool { elements, free_indices }`, `Scene { pool, groups, width, height, event_bus: Arc<EventBus> }`.
 - **Key Traits**: `HitTestable { contains(...) -> bool }`.
 - **Key Methods**: `new(...) -> Self`, `groups(...) -> &mut GroupManager`, `add_object(...) -> usize`, `add_instance(...) -> usize`, `pick_object_at(...) -> Option<(usize, Option<usize>)>`, `translate_object(...) -> ()`, `update_dimensions(...) -> ()`.
@@ -224,4 +225,4 @@ Studio_Whip/
 - **Roles**: Support orthographic projection (UBO binding 0), object offset (UBO binding 1), and instance offset (vertex attribute binding 1).
 
 ## Dependencies
-- `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `glam = "0.30"` (pending removal), `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, **`bevy_app = "0.15"`**, **`bevy_core = "0.15"`**, **`bevy_ecs = "0.15"`**, **`bevy_log = "0.15"`**, **`bevy_utils = "0.15"`**, **`bevy_window = "0.15"`**, **`bevy_winit = "0.15"`**, **`bevy_reflect = "0.15"`**, **`bevy_input = "0.15"`**, **`bevy_time = "0.15"`**, **`bevy_diagnostic = "0.15"`**, **`bevy_a11y = "0.15"`**. (Removed `winit`).
+- `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, **`bevy_app = "0.15"`**, **`bevy_core = "0.15"`**, **`bevy_ecs = "0.15"`**, **`bevy_log = "0.15"`**, **`bevy_utils = "0.15"`**, **`bevy_window = "0.15"`**, **`bevy_winit = "0.15"`**, **`bevy_reflect = "0.15"`**, **`bevy_input = "0.15"`**, **`bevy_time = "0.15"`**, **`bevy_diagnostic = "0.15"`**, **`bevy_a11y = "0.15"`**, **`bevy_math = "0.15"`**. (Removed `glam`). `winit = "0.30.9"` (Still needed for legacy components).

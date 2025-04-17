@@ -1,115 +1,105 @@
-# Architecture Overview for `rusty_whip` (March 19, 2025)
+# Architecture Overview for `rusty_whip`
 
 ## Purpose
-`rusty_whip` is an advanced 2D and 3D content generation application for digital entertainment production, leveraging GPU-accelerated AI diffusion/inference, multimedia creation (2D video, stills, animation, audio), and story-driven workflows, with plans for quantum-resistant P2P networking. **It is currently undergoing a migration to the Bevy game engine ecosystem.** Current focus (pre-migration): 2D GUI with Vulkan-based rendering, click-and-drag functionality, instancing, logical grouping, visibility toggling, a configurable hotkey system, generic click handling, and an event bus for decoupled communication. **Post-migration (Task 6.2): Application runs under Bevy, windowing handled by Bevy, legacy components bridged via Resources, math types migrated to `bevy_math`.**
+`rusty_whip` is an advanced 2D and 3D content generation application for digital entertainment production, leveraging GPU-accelerated AI diffusion/inference, multimedia creation (2D video, stills, animation, audio), and story-driven workflows, with plans for quantum-resistant P2P networking. **It is currently migrating its core logic (excluding rendering) to the Bevy game engine ecosystem, strictly avoiding Bevy's rendering stack (`bevy_render`, `wgpu`, etc.) in favor of its custom Vulkan backend.**
 
 ## Core Components
 1.  **Vulkan Context Management (`context/`)**
-    *   Role: Initializes and manages core Vulkan resources (instance, device, queue, allocator). **Does not manage swapchain/framebuffers directly (handled by Renderer).**
+    *   Role: Initializes and manages core Vulkan resources (instance, device, queue, allocator). Accessed via `VulkanContextResource`.
     *   Key Modules: `vulkan_context.rs`, `vulkan_setup.rs`.
 2.  **Rendering Engine (`rendering/`)**
-    *   Role: Orchestrates the Vulkan rendering pipeline, managing resources via sub-modules (swapchain, framebuffers, pipelines, buffers), handling event-driven updates (e.g., instance additions via legacy `EventBus`), and respecting object visibility flags. Implements `EventHandler`. Uses `bevy_math` for matrix operations. **Currently invoked via placeholder logic in Bevy systems (`main.rs`) due to integration challenges.**
+    *   Role: Orchestrates the custom Vulkan rendering pipeline. Manages Vulkan resources via sub-modules. **Currently invoked via placeholder logic in Bevy systems (`main.rs`) and is *not yet* consuming ECS data. Its internal logic (e.g., `BufferManager`) requires significant refactoring for ECS integration.** Uses `bevy_math` for matrix operations. Accessed via `RendererResource` (holding a placeholder).
     *   Key Modules: `render_engine.rs`, `pipeline_manager.rs`, `buffer_manager.rs`, `resize_handler.rs`, `command_buffers.rs`, `renderable.rs`, `swapchain.rs`, `shader_utils.rs`.
 3.  **Pipeline Manager (`rendering/pipeline_manager.rs`)**
-    *   Role: Manages Vulkan `PipelineLayout`, `DescriptorSetLayout`, `DescriptorPool`, and the global projection `DescriptorSet`.
+    *   Role: Manages Vulkan `PipelineLayout`, `DescriptorSetLayout`, `DescriptorPool`, and the global projection `DescriptorSet`. **Adapted to remove `Scene` dependency.**
 4.  **Buffer Manager (`rendering/buffer_manager.rs`)**
-    *   Role: Manages Vulkan buffers (uniform, vertex, instance, offset), allocations, per-object `Pipelines`, `ShaderModules`, and allocates/updates/frees per-object `DescriptorSets`. Handles instance buffer creation/updates and populates `Renderable` visibility state. Uses `bevy_math` for matrix operations.
-5.  **Scene Management (`scene/`)**
-    *   Role: Manages application state including renderable objects (`RenderObject` with visibility flag) via pooling (`ElementPool`), handles object/instance state updates based on events (via legacy `SceneEventHandler`), publishes instance creation events to legacy `EventBus`, and manages logical grouping (`GroupManager`). Performs hit-testing. Uses `[f32; 2]` for positions/offsets. **State is accessed via `SceneResource` in `main.rs`.**
-    *   Key Modules: `scene.rs`, `group.rs`.
-6.  **Interaction Handling (`interaction/`)**
-    *   Role: **Legacy component.** Processes user input (mouse events, keyboard events, modifier changes), loads hotkey configurations, tracks modifier state, performs hit-testing via `Scene`, and publishes corresponding events (`ObjectMoved`, `ObjectClicked`, `HotkeyPressed`) via the legacy `EventBus`. **Currently inactive; input handling will be migrated to Bevy Input systems.**
-    *   Key Modules: `controller.rs`, `hotkeys.rs`.
-7.  **Event Bus (`event_bus/`)**
-    *   Role: **Legacy component.** Decouples components using a publish-subscribe pattern for events like `ObjectMoved`, `InstanceAdded`, `ObjectClicked`, `HotkeyPressed`, etc. Manages `EventHandler` subscriptions. **Still exists as a Resource but is not actively driven by input events in the current state.**
-    *   Key Module: `event_bus.rs`.
+    *   Role: **Legacy component requiring major rework.** Previously managed Vulkan buffers, allocations, pipelines, shaders, and descriptor sets per `RenderObject`. **Currently only creates the global uniform buffer; per-entity resource management needs reimplementation based on ECS data.**
+5.  **Bevy ECS Components (`components/`)**
+    *   Role: Defines the data associated with entities (e.g., shape, visibility, interaction properties). Replaces the old `RenderObject`/`ElementPool`.
+    *   Key Modules: `shape_data.rs`, `visibility.rs` (custom), `interaction.rs`. Uses `bevy_transform::components::Transform`.
+6.  **Bevy Events (`events/`)**
+    *   Role: Defines event types for communication between systems (e.g., user interactions, hotkey triggers). Replaces the old `EventBus`.
+    *   Key Modules: `interaction_events.rs`.
+7.  **Hotkey Loading (`interaction/hotkeys.rs`)**
+    *   Role: Loads hotkey configurations from a TOML file. The configuration is stored in the `HotkeyResource`.
+    *   Key Modules: `hotkeys.rs`.
 8.  **Bevy App Core (`main.rs`)**
-    *   Role: **Replaces winit `EventLoop`.** Bootstraps the application using `bevy_app::App`. Initializes Bevy plugins (`bevy_winit`, `bevy_input`, `bevy_log`, `bevy_math`, etc.). Defines Bevy systems (`Startup`, `Update`, `Last`) to manage the application lifecycle. Holds legacy framework components (`VulkanContext`, `Scene`, `Renderer`, `EventBus`, `InteractionController`, `ClickRouter`) as Bevy `Resource`s using a temporary `Arc<Mutex<>>` bridge pattern. Orchestrates setup, updates, rendering triggers, and cleanup via systems. Defines placeholder logic where integration issues exist (e.g., Renderer creation/calls). Handles Bevy events (`WindowResized`, `WindowCloseRequested`, `AppExit`).
+    *   Role: Bootstraps the application using `bevy_app::App`. Initializes Bevy plugins (`bevy_winit`, `bevy_input`, `bevy_log`, `bevy_transform`, etc., *excluding rendering plugins*). Defines Bevy systems (`Startup`, `Update`, `Last`) for lifecycle management, input handling (`interaction_system`, `hotkey_system`), state updates (`movement_system`), and application control (`app_control_system`). Spawns initial entities with components. Manages the Vulkan context (`VulkanContextResource`) and the placeholder renderer (`RendererResource`). Orchestrates setup, updates, rendering triggers (calling placeholder `Renderer::render`), and cleanup via systems. Handles Bevy events (`WindowResized`, `WindowCloseRequested`, `AppExit`, custom events).
 9.  **Build Script (`build.rs`)**
-    *   Role: Compiles shaders using `glslc` and copies runtime assets (e.g., `user/hotkeys.toml`) from the source tree to the target build directory.
+    *   Role: Compiles shaders using `glslc` and copies runtime assets (e.g., `user/hotkeys.toml`) to the target build directory.
 
-## Data Flow (Post Task 6.2)
-1.  `main.rs` initializes `bevy_app::App`, adds plugins, and inserts legacy framework components wrapped in `Arc<Mutex<>>` as Bevy `Resources`. Subscribes legacy handlers (`SceneEventHandler`, `ClickRouter`, `HotkeyActionHandler`) to the legacy `EventBusResource`.
+## Data Flow (Post Task 6.3 Partial Completion)
+1.  `main.rs` initializes `bevy_app::App`, adds core non-rendering plugins, registers custom components/events, and inserts initial resources (`VulkanContextResource`).
 2.  Bevy `Startup` schedule runs:
-    *   `setup_vulkan_system` gets the `winit::Window` handle via `WinitWindows`, locks `VulkanContextResource`, calls `setup_vulkan`.
-    *   `create_renderer_system` (piped from previous) locks resources, creates a *placeholder* `Renderer`, wraps it in `RendererResource`, and subscribes it to the legacy `EventBusResource`.
+    *   `setup_vulkan_system` initializes core Vulkan via `VulkanContextResource`.
+    *   `create_renderer_system` creates the *placeholder* `Renderer`, wraps it in `RendererResource`.
+    *   `setup_scene_ecs` loads hotkeys into `HotkeyResource` and spawns initial entities with `Transform`, `ShapeData`, `Visibility`, `Interaction` components.
 3.  Bevy `Update` schedule runs:
-    *   `InputPlugin` populates Bevy input resources (e.g., `Res<Input<KeyCode>>`).
-    *   `winit_event_bridge_system` (currently inactive) was intended to bridge input to the legacy `InteractionController`.
-    *   `handle_resize_system` reads `WindowResized` events, locks resources, calls *placeholder* resize logic (updates `Scene` dimensions).
+    *   `InputPlugin` populates `ButtonInput<T>` resources.
+    *   `interaction_system` reads input resources, queries interactive entities, performs hit-testing, and writes `EntityClicked` / `EntityDragged` events.
+    *   `hotkey_system` reads input resources and `HotkeyResource`, writes `HotkeyActionTriggered` events.
+    *   `movement_system` reads `EntityDragged` events and updates `Transform` components.
+    *   `handle_resize_system` reads `WindowResized` events, calls placeholder `Renderer::resize_renderer`.
     *   `handle_close_request` reads `WindowCloseRequested` events, sends `AppExit` event.
+    *   `app_control_system` reads `HotkeyActionTriggered` events (e.g., "CloseRequested"), sends `AppExit` event.
 4.  Bevy `Last` schedule runs:
-    *   `render_trigger_system` locks resources, calls *placeholder* rendering logic.
-    *   `cleanup_system` (runs if `AppExit` event occurred) locks resources, calls `Renderer::cleanup` (placeholder) and `cleanup_vulkan`.
+    *   `rendering_system` queries ECS for renderable entities (`Transform`, `ShapeData`, `Visibility`), collects data (placeholder `RenderCommandData`), and calls the *placeholder* `Renderer::render` method via `RendererResource`. **Does not yet pass ECS data to the renderer.**
+    *   `cleanup_system` (runs if `AppExit` event occurred) removes `RendererResource`, calls `Renderer::cleanup` (placeholder via `MutexGuard`), and `cleanup_vulkan`.
 
-## Key Interactions (Post Task 6.2)
-- **Bevy Systems (`main.rs`) <-> Framework Resources (`Arc<Mutex<T>>`)**: Systems access and modify the state of legacy components via Bevy's resource mechanism.
+## Key Interactions (Post Task 6.3 Partial Completion)
+- **Bevy Systems (`main.rs`) <-> ECS (Components, Events, Resources)**: Systems query/modify components, read/write events, and access resources (`VulkanContextResource`, `RendererResource`, `HotkeyResource`, `ButtonInput`).
 - **`setup_vulkan_system` -> `vulkan_setup::setup_vulkan`**: Initializes core Vulkan.
-- **`create_renderer_system` -> `Renderer::new` (Placeholder)**: Initializes renderer state.
-- **`render_trigger_system` -> `Renderer::render` (Placeholder)**: Triggers frame rendering.
-- **`cleanup_system` -> `Renderer::cleanup` (Placeholder) / `vulkan_setup::cleanup_vulkan`**: Triggers cleanup on exit.
-- **Legacy `EventBus` Interactions**: Still technically exist but are largely dormant as the `InteractionController` isn't publishing events. `InstanceAdded` events from `Scene` might still trigger `Renderer` updates if instances are added programmatically.
-- **`Renderer` -> `BufferManager`**: Delegates buffer creation/updates, provides renderables (incl. visibility).
-- **`Renderer` -> `PipelineManager`**: Uses pipeline layout/descriptor set.
-- **`Renderer` -> `command_buffers.rs`**: Provides data for draw commands.
-- **`PipelineManager` -> `BufferManager`**: Provides layout/pool.
-- **`VulkanContext` <-> Vulkan Components**: Provides core Vulkan resources (device, allocator, etc.).
+- **`create_renderer_system` -> `PlaceholderRenderer::new`**: Initializes placeholder renderer state.
+- **`rendering_system` -> `PlaceholderRenderer::render`**: Triggers placeholder frame rendering.
+- **`cleanup_system` -> `PlaceholderRenderer::cleanup` / `vulkan_setup::cleanup_vulkan`**: Triggers cleanup on exit.
+- **`interaction_system` -> `EntityClicked`, `EntityDragged` Events**: Publishes interaction events.
+- **`hotkey_system` -> `HotkeyActionTriggered` Events**: Publishes hotkey events.
+- **`movement_system` <- `EntityDragged` Events**: Updates `Transform` based on drag events.
+- **`app_control_system` <- `HotkeyActionTriggered` Events**: Sends `AppExit`.
+- **Rendering Backend (`Renderer`, `BufferManager`, etc.)**: Currently isolated, receives placeholder calls from Bevy systems. **Requires refactoring to accept ECS data.**
+- **`VulkanContext` <-> Vulkan Components**: Provides core Vulkan resources.
 - **`build.rs` -> Target Directory**: Copies configuration files.
 
-## Current Capabilities (Post Task 6.2)
-- **Bevy Integration**: Application runs within `bevy_app`, windowing by `bevy_winit`, exit via `AppExit`.
-- **Bevy Math**: Uses `bevy_math` types (`Mat4`) for rendering calculations.
-- **Input Processing**: `bevy_input` active internally (but not connected to custom logic).
+## Current Capabilities (Post Task 6.3 Partial Completion)
+- **Bevy Integration**: Application runs within `bevy_app`, using core non-rendering plugins (`bevy_log`, `bevy_input`, `bevy_transform`, `bevy_window`, `bevy_winit`, etc.).
+- **Bevy Math**: Uses `bevy_math` types (`Vec2`, `Mat4`).
+- **Bevy ECS**: Defines and uses custom components (`ShapeData`, `Visibility`, `Interaction`) and `bevy_transform::components::Transform`. Entities spawned at startup.
+- **Bevy Events**: Defines and uses custom events (`EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`) for system communication.
+- **Input Processing**: Uses `bevy_input` (`ButtonInput<T>`, `CursorMoved`) via Bevy systems (`interaction_system`, `hotkey_system`). Basic click detection, dragging, and hotkey dispatching implemented.
 - **Vulkan Setup**: Core context initialized via Bevy system.
-- **Legacy Bridge**: Framework components (`Scene`, `EventBus`, etc.) exist as Bevy `Resources` (`Arc<Mutex<>>`).
-- **Placeholders**: Rendering and resize logic triggered by systems but use placeholder implementations.
-- **Legacy Features (State)**:
-    - 2D GUI state (depth-sorted objects via `Scene`).
-    - Legacy Event bus (`EventBus`) for decoupled communication (mostly inactive).
-    - Click-and-drag state management in `Scene` (triggered by inactive `InteractionController`).
-    - Generic object click detection state/routing via legacy `ClickRouter` (triggered by inactive `InteractionController`).
-    - Window resizing state updates in `Scene` (triggered by placeholder `handle_resize_system`).
-    - Object pooling (`ElementPool`).
-    - Instancing state management in `Scene` (updates published to legacy `EventBus`).
-    - Logical grouping (`GroupManager`).
-    - Object visibility toggle support (state stored in `RenderObject`).
-    - Configurable hotkey system via TOML file (loading works, triggering inactive).
-    - Refactored Vulkan resource management (`PipelineManager`, `BufferManager`).
+- **Rendering Bridge**: Custom Vulkan context (`VulkanContextResource`) and placeholder renderer (`RendererResource`) managed as Bevy resources.
+- **Placeholders**: Rendering logic is triggered but uses placeholder implementations that **do not yet consume ECS data or draw the scene correctly.** Resizing logic uses placeholders.
+- **Configurable Hotkeys**: Loads from TOML file into `HotkeyResource`, processed by `hotkey_system`.
 - Build script for shader compilation and asset copying.
 
 ## Future Extensions
-- **Complete Bevy Migration**: ECS components/systems for Scene/Interaction, Bevy Input integration, Bevy State.
-- **Refactor Rendering Bridge**: Resolve `&mut VulkanContext` issues, remove placeholder logic.
-- Implement actual rendering and resize logic within Bevy systems.
-- Batch operations for groups.
+- **Complete Rendering Integration (Task 6.3 Step 7)**: Refactor custom Vulkan `Renderer` and `BufferManager` to accept and process ECS data (`RenderCommandData`) passed from `rendering_system`. Implement actual drawing based on ECS state.
+- **Complete Bevy Migration**: Consider Bevy State for managing application modes.
+- Instancing via ECS.
+- Batch operations for groups (using ECS queries/components).
 - P2P networking.
 - 3D rendering and AI-driven content generation.
-- Performance optimization (e.g., instance buffer resizing, ECS parallelism).
-- Text rendering and editing.
-- Context menus.
-- Divider system.
+- Performance optimization (ECS parallelism, Vulkan optimizations).
+- Text rendering and editing (Task 7+).
+- Context menus (Task 9).
+- Divider system (Task 10).
 
 ## Error Handling
 - Vulkan errors checked via `ash` results. `vk-mem` assertions check memory leaks.
-- Logical errors (`GroupError`, `HotkeyError`) use `Result` or `thiserror`.
-- Event bus mutex poisoning handled with logs. `Arc::try_unwrap` used for safe cleanup. Callback mutex poisoning handled with logs.
-- Hotkey file loading/parsing errors handled gracefully with defaults.
-- **Bevy logging integrated via `LogPlugin`.**
+- Logical errors (`HotkeyError`) use `Result` or `thiserror`.
+- Hotkey file loading/parsing errors handled gracefully with defaults and logs.
+- Bevy logging integrated via `LogPlugin`. Mutex poisoning handled with logs.
 
 ## Shader Integration
-- Per-object shaders (`triangle.vert.spv`, etc.) managed by `BufferManager`. Compiled by `build.rs`.
+- Shaders (`triangle.vert.spv`, etc.) compiled by `build.rs`. **Currently loaded/used by placeholder `BufferManager` logic; needs integration with `ShapeData` component.**
 - Shaders support orthographic projection (binding 0), object offset (binding 1), and instance offset (vertex attribute 1, binding 1).
 
 ## Dependencies
-- External crates: `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, **`bevy_app = "0.15"`**, **`bevy_core = "0.15"`**, **`bevy_ecs = "0.15"`**, **`bevy_log = "0.15"`**, **`bevy_utils = "0.15"`**, **`bevy_window = "0.15"`**, **`bevy_winit = "0.15"`**, **`bevy_reflect = "0.15"`**, **`bevy_input = "0.15"`**, **`bevy_time = "0.15"`**, **`bevy_diagnostic = "0.15"`**, **`bevy_a11y = "0.15"`**, **`bevy_math = "0.15"`**. (Removed `glam`). `winit = "0.30.9"` (Still needed for legacy components).
+- External crates: `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, **`bevy_app = "0.15"`**, **`bevy_core = "0.15"`**, **`bevy_ecs = "0.15"`**, **`bevy_log = "0.15"`**, **`bevy_utils = "0.15"`**, **`bevy_window = "0.15"`**, **`bevy_winit = "0.15"`**, **`bevy_reflect = "0.15"`**, **`bevy_input = "0.15"`**, **`bevy_time = "0.15"`**, **`bevy_diagnostic = "0.15"`**, **`bevy_a11y = "0.15"`**, **`bevy_math = "0.15"`**, **`bevy_transform = "0.15"`**. (Removed `glam`). `winit = "0.30.9"` (Used internally by `bevy_winit` and `vulkan_setup`).
 - Shaders: Precompiled `.spv` files in `shaders/`.
 
 ## Notes
-- **Migration State**: The application is in a transitional state, running under Bevy but using legacy components via a temporary `Arc<Mutex<>>` resource bridge. Math types migrated to `bevy_math`.
-- **Known Issues**: Accessing `&mut VulkanContext` required by `Renderer` methods from Bevy systems is problematic due to the bridge, leading to placeholder logic for rendering/resizing. Input handling uses Bevy internally but doesn't drive the legacy `InteractionController`.
-- Vulkan’s inverted Y-axis potentially needs adjustment in interaction/scene logic (once active).
-- `Renderer` delegates heavily to `PipelineManager` and `BufferManager`.
-- **`main.rs` uses Bevy App/Systems/Resources for event handling and state management.**
-- State (`Scene`, `Renderer`, `ClickRouter` etc.) managed via `Arc<Mutex<>>` **Bevy Resources**.
-- Cleanup order in `cleanup_system` is critical.
-- `build.rs` copies `user/hotkeys.toml` to target directory; runtime loads from there.
+- **Migration State**: Application core logic migrated to Bevy ECS/Input/Events. Custom Vulkan rendering backend remains but is **not yet integrated with ECS data** (placeholder rendering). Strict avoidance of `bevy_render`.
+- **Known Issues**: Rendering does not reflect ECS state. `Renderer`/`BufferManager` require significant rework. `vulkan_setup` still uses `winit::window::Window`.
+- Vulkan’s inverted Y-axis handled in `movement_system`.
+- Cleanup logic uses `MutexGuard` due to `Arc` reference counting complexities during `AppExit`.

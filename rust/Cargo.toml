@@ -15,6 +15,7 @@ winit = "0.30.9" #Being replaced by bevy_winit
 ash-window = "0.13"
 toml = "0.8"
 thiserror = "2.0"
+bevy_transform = "0.15"
 bevy_app = "0.15"
 bevy_core = "0.15"
 bevy_math = "0.15"

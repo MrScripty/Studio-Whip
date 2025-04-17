@@ -103,7 +103,7 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
 ### Task 6.3: Migrate Core Logic to Bevy ECS & Input
 
 *   **Goal:** Remove the custom `Scene`, `ElementPool`, `RenderObject`, `EventBus`, `InteractionController`, `ClickRouter`. Replace them with Bevy ECS Components, Resources, Events, and Systems. Utilize `bevy_input` for cleaner input handling.
-*   **Status:** Not Started
+*   **Status:** Steps 1-6 Completed
 *   **Steps:**
     1.  **Add `bevy_input`:** Add the `InputPlugin::default()` to the `App` in `main.rs`. Remove the temporary `winit_event_bridge_system`.
     2.  **Define Core Components:** Create component structs in `src/gui_framework/components/`:

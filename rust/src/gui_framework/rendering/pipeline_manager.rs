@@ -47,13 +47,14 @@ impl PipelineManager {
         // Descriptor pool (Using estimate)
         let descriptor_pool = unsafe {
             let max_renderables_estimate = 1000u32;
-            let max_total_sets = 1 + max_renderables_estimate;
-            let ubo_descriptors_needed = 1 + (2 * max_renderables_estimate);
+            let max_total_sets = 1 + max_renderables_estimate; // 1 global + estimate per object
+            let ubo_descriptors_needed = 1 + (1 * max_renderables_estimate); // 1 global proj + 1 per-object offset
             let pool_sizes = [
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
                     descriptor_count: ubo_descriptors_needed,
                 },
+                // Add other types here if needed (e.g., combined image sampler)
             ];
             match device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo {
                 s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
@@ -104,13 +105,21 @@ impl PipelineManager {
         }
     }
 
-    pub fn cleanup(self, device: &ash::Device) {
-         info!("[PipelineManager::cleanup] Called"); // Use info!
+    // Modified signature to take &mut self
+    pub fn cleanup(&mut self, device: &ash::Device) { // Changed to &mut self
+         info!("[PipelineManager::cleanup] Called (&mut self)");
          unsafe {
+             // Access fields via self.field_name
              device.destroy_pipeline_layout(self.pipeline_layout, None);
              device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
              device.destroy_descriptor_pool(self.descriptor_pool, None);
+             // Set handles to null after destruction? Optional, but can prevent use-after-free if logic allows.
+             self.pipeline_layout = vk::PipelineLayout::null();
+             self.descriptor_set_layout = vk::DescriptorSetLayout::null();
+             self.descriptor_pool = vk::DescriptorPool::null();
+             // Don't destroy self.descriptor_set here, it was allocated from the pool
+             self.descriptor_set = vk::DescriptorSet::null(); // Set global set handle to null too
          }
-         info!("[PipelineManager::cleanup] Finished"); // Use info!
+         info!("[PipelineManager::cleanup] Finished");
     }
 }

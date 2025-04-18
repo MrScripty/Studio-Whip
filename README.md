@@ -15,68 +15,26 @@ Enjoy complete privacy, customizability, and controlled costs with local model i
 
 
 ## System Requirments
-**System requirements largly depend on what AI models you use**, and there are [MANY](https://huggingface.co/)[MANY](https://civitai.com/) choices. For the best experience, use task-specific model combinations that load simultaneously in Studio Whip. If your hardware doesnt meet your needs, connect to cloud APIs like [OpenRouter](https://openrouter.ai/) and [Together.ai](https://www.together.ai/). Some models may even be availible free with limits. 
-
-These guidelines give an idea of what is practical to use for different hardware specs using only local models. It is possible to run better models, combinations tailored to a specific task, or mix of local and cloud to better meet your needs.
+**System requirements largly depend on what AI models you use**, and there aremany choices that can be found at [HuggingFace](https://huggingface.co/) and [CivitAi](https://civitai.com/). For the best experience, use task-specific model combinations that load simultaneously in Studio Whip. If your hardware doesnt meet your needs, connect to cloud APIs like [OpenRouter](https://openrouter.ai/) and [Together.ai]
 
 - AI TOPS are measured as FP8.
-- [See Passmark Ratings of CPU's](https://www.cpubenchmark.net/high_end_cpus.html)
+- [See Passmark Ratings of CPU's](https://www.cpubenchmark.net/high_end_cpus.html)(https://www.together.ai/). Some models may even be availible free with limits. 
 
-**Entry Level Consumer Hardware**:
-For development and testing. Some features like video generation and specific purpose models are not practical.
+| **Tier** | **Use Case** | **RAM** | **VRAM** | **AI TOPS** | **Storage** | **CPU Performance** | 
+|----------|--------------|---------|----------|-------------|-------------|---------------------|
+**Entry-Level** | Development, Testing | 32GB | 8GB | 250 | 32GB | 20K+ |
+**Mid-Range** | Education, Personal Projects | 32GB | 16GB | 500 | 128GB | 30K+ |
+**High-End** | Advanced Projects, Video | 64GB | 24GB+ | 1000 | 512GB | 50k+ |
+**Enterprise** | Fast Generation | 128GB | 96GB+ | 4000 | 1TB | 80K+ |
 
-| Instruct | Image Generation |
-|----------|------------------|
-|[Gemma 3 Q8 1B](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF)|[Midjourney Mini](openskyml/midjourney-mini)
+These guidelines give an idea of what is practical to use for the different teirs using only local models. It is possible to run better models, combinations tailored to a specific task, or mix of local and cloud to better meet your needs.
 
-- 8GB VRAM
-- 250 AI TOPS
-- 16GB RAM
-- CPU With Passmark Score of 20,000+
-- 14GB Space For Instalation
-
-**Mid Range Consumer Hardware**:
-Sutable for education and small personal projects. Video genneration may be slow.
-
-| Creative Writing | Instruct | Image Generation | Video Generation |
-|------------------|----------|------------------|------------------|
-|[Veiled Calla Q6_K 4B](https://huggingface.co/mradermacher/Veiled-Calla-4B-i1-GGUF)|[Gemma 3 Q6_K 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF)|[FLUX.1-schnell Q6_K](https://huggingface.co/city96/FLUX.1-schnell-gguf)|[ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)
-||||[Wan1.2-12V-14B 480p Q4_K_S](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf)
-
-- 16GB VRAM
-- 500 AI TOPS
-- 32GB RAM
-- CPU Passmark of 30,000+
-- 256GB Instalation Space
-
-**High End Consumer Hardware**:
-Capable of advanced projects and video generation at reasonable speeds.
-
-| Creative Writing | Instruct | Image Generation | Video Generation |
-|------------------|----------|------------------|------------------|
-|[Veiled Calla IQ4_XS 12B](https://huggingface.co/mradermacher/Veiled-Calla-12B-i1-GGUF)|[Gemma 3 IQ4_XS i1 Abliterated 12B](https://huggingface.co/mradermacher/gemma-3-12b-it-abliterated-i1-GGUF)|[FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf)|[ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)
-|[MN GRAND Gutenberg Lyra4 IQ4_XS 12B](https://huggingface.co/mradermacher/MN-GRAND-Gutenberg-Lyra4-Lyra-12B-DARKNESS-i1-GGUF)|||[Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf)
-
-- 24GB+ VRAM
-- 1000 AI TOPS
-- 32GB RAM
-- CPU With Passmark Score of 40,000+
-- 512GB Instalation Space
-
-
-**Single User Enterprise Hardware**:
-Higher quality models, and fast generation times.
-
-| Creative Writing | Instruct | Image Generation | Video Generation |
-|------------------|----------|------------------|------------------|
-|[MN GRAND Gutenberg Lyra4 Q6_K 23.5B](https://huggingface.co/DavidAU/MN-GRAND-Gutenberg-Lyra4-Lyra-23.5B-GGUF?not-for-all-audiences=true)|[Gemma 3 Abliterated Q6_K 27B](https://huggingface.co/mlabonne/gemma-3-27b-it-abliterated-GGUF)|[FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf)|[ltxv-2b-0.9.6-dev-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-dev-04-25.safetensors)
-|[Veiled Calla Q8_K 12B](https://huggingface.co/soob3123/Veiled-Calla-12B-gguf)|[Gemma 3 Q6_K_M 27B](https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/)||[Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf)|
-
-- 128GB+ VRAM
-- 5000+ AI TOPS
-- 64GB+ RAM
-- CPU Passmark Score of 50,000+
-- 2TB Instalation Space
+|**Tier**        |**Creative Writing** |**Instruct** |**Image Generation** |**Video Generation**                                                                                                            |
+|----------------|---------------------|-------------|---------------------|---------------------|
+|**Entry-Level** |Use the Instruct model|[Gemma 3 Q8 1B](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF)|[Midjourney Mini](openskyml/midjourney-mini)| Not Practical
+|**Mid-Range**   |[Veiled Calla Q6_K 4B](https://huggingface.co/mradermacher/Veiled-Calla-4B-i1-GGUF) | [Gemma 3 Q6_K 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF) | [FLUX.1-schnell Q6_K](https://huggingface.co/city96/FLUX.1-schnell-gguf) | [ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)
+|**High-End**    |[Veiled Calla IQ4_XS 12B](https://huggingface.co/mradermacher/Veiled-Calla-12B-i1-GGUF)<br>[MN GRAND Gutenberg Lyra4 IQ4_XS 12B](https://huggingface.co/mradermacher/MN-GRAND-Gutenberg-Lyra4-Lyra-12B-DARKNESS-i1-GGUF) | [Gemma3 Abliterated IQ4_XS 12B](https://huggingface.co/mradermacher/gemma-3-12b-it-abliterated-i1-GGUF)<br>[Gemma3 Amoral Q4_K_S 12B](https://huggingface.co/bartowski/soob3123_amoral-gemma3-12B-GGUF)<br>[Gemma 3 Q8_0 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF)| [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf) | [ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)<br>[ltxv-2b-0.9.6-dev-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-dev-04-25.safetensors)<br>[Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf)
+|**Enterprise**  |[MN GRAND Gutenberg Lyra4 Q6_K 23.5B](https://huggingface.co/DavidAU/MN-GRAND-Gutenberg-Lyra4-Lyra-23.5B-GGUF)<br>[Veiled Calla Q8_K 12B](https://huggingface.co/soob3123/Veiled-Calla-12B-gguf) | [Gemma 3 Abliterated Q6_K 27B](https://huggingface.co/mlabonne/gemma-3-27b-it-abliterated-GGUF)<br>[Gemma 3 Q6_K_M 27B](https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/)<br>[Gemma3 Q8_0 12B](https://huggingface.co/unsloth/gemma-3-12b-it-GGUF) | [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf) | [Wan1.2-12V-14B 720p Q8_0](https://huggingface.co/city96/Wan2.1-I2V-14B-720P-gguf)
 
 ## How To Build From Source
 

@@ -15,7 +15,7 @@ Enjoy complete privacy, customizability, and controlled costs with local model i
 
 
 ## System Requirments
-**System requirements largly depend on what AI models you use**, and there are many choices that can be found at [HuggingFace](https://huggingface.co/) and [CivitAi](https://civitai.com/). For the best experience, use task-specific model combinations that load simultaneously in Studio Whip. If your hardware doesnt meet your needs, connect to cloud APIs like [OpenRouter](https://openrouter.ai/) and [Together.ai]
+**System requirements largly depend on what AI models you use**, and there are many choices that can be found at [HuggingFace](https://huggingface.co/) and [CivitAi](https://civitai.com/). For the best experience, use task-specific model combinations that load simultaneously in Studio Whip. If your hardware doesnt meet your needs, connect to cloud APIs like [OpenRouter](https://openrouter.ai/) and [Together.ai](https://www.together.ai/).
 
 - AI TOPS are measured as FP8.
 - [See Passmark Ratings of CPU's](https://www.cpubenchmark.net/high_end_cpus.html). Some models may even be availible free with limits. 

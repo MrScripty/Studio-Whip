@@ -15,15 +15,19 @@ Enjoy complete privacy, customizability, and controlled costs with local model i
 
 
 ## System Requirments
-**System requirements largly depend on what AI models you use**, and there are [MANY](https://huggingface.co/) choices. For the best experience, use task-specific model combinations that load simultaneously in Studio Whip. If your hardware doesnt meet your needs, connect to cloud APIs like [OpenRouter](https://openrouter.ai/) and [Together.ai](https://www.together.ai/). Some models may even be availible free with limits. 
+**System requirements largly depend on what AI models you use**, and there are [MANY](https://huggingface.co/)[MANY](https://civitai.com/) choices. For the best experience, use task-specific model combinations that load simultaneously in Studio Whip. If your hardware doesnt meet your needs, connect to cloud APIs like [OpenRouter](https://openrouter.ai/) and [Together.ai](https://www.together.ai/). Some models may even be availible free with limits. 
 
 These guidelines give an idea of what is practical to use for different hardware specs using only local models. It is possible to run better models, combinations tailored to a specific task, or mix of local and cloud to better meet your needs.
 
 - AI TOPS are measured as FP8.
 - [See Passmark Ratings of CPU's](https://www.cpubenchmark.net/high_end_cpus.html)
 
-**Minimum**:
-For development and testing [Gemma 3 Q8 1B](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF) LLM and [Midjourney Mini](openskyml/midjourney-mini).
+**Entry Level Consumer Hardware**:
+For development and testing. Some features like video generation and specific purpose models are not practical.
+
+| Instruct | Image Generation |
+|----------|------------------|
+|[Gemma 3 Q8 1B](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF)|[Midjourney Mini](openskyml/midjourney-mini)
 
 - 8GB VRAM
 - 250 AI TOPS
@@ -31,8 +35,13 @@ For development and testing [Gemma 3 Q8 1B](https://huggingface.co/unsloth/gemma
 - CPU With Passmark Score of 20,000+
 - 14GB Space For Instalation
 
-**Low**:
-Sutable for educatuin and small personal projects [Gemma 3 Q6_K 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF) LLM and [FLUX.1-schnell Q6_K](https://huggingface.co/city96/FLUX.1-schnell-gguf) with a LORA. Video not recomeneded but possible using [Wan1.2-12V-14B 480p Q4_K_S](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf).
+**Mid Range Consumer Hardware**:
+Sutable for education and small personal projects. Video genneration may be slow.
+
+| Creative Writing | Instruct | Image Generation | Video Generation |
+|------------------|----------|------------------|------------------|
+|[Veiled Calla Q6_K 4B](https://huggingface.co/mradermacher/Veiled-Calla-4B-i1-GGUF)|[Gemma 3 Q6_K 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF)|[FLUX.1-schnell Q6_K](https://huggingface.co/city96/FLUX.1-schnell-gguf)|[ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)
+||||[Wan1.2-12V-14B 480p Q4_K_S](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf)
 
 - 16GB VRAM
 - 500 AI TOPS
@@ -40,8 +49,13 @@ Sutable for educatuin and small personal projects [Gemma 3 Q6_K 4B](https://hugg
 - CPU Passmark of 30,000+
 - 256GB Instalation Space
 
-**Medium (Recomended)**:
-For advanced projects and small buisness [Gemma 3 IQ4_XS i1 Abliterated 12B](https://huggingface.co/mradermacher/gemma-3-12b-it-abliterated-i1-GGUF) LLM and [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf) with a LORA. Slow but decent video using [Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf).
+**High End Consumer Hardware**:
+Capable of advanced projects and video generation at reasonable speeds.
+
+| Creative Writing | Instruct | Image Generation | Video Generation |
+|------------------|----------|------------------|------------------|
+|[Veiled Calla IQ4_XS 12B](https://huggingface.co/mradermacher/Veiled-Calla-12B-i1-GGUF)|[Gemma 3 IQ4_XS i1 Abliterated 12B](https://huggingface.co/mradermacher/gemma-3-12b-it-abliterated-i1-GGUF)|[FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf)|[ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)
+|[MN GRAND Gutenberg Lyra4 IQ4_XS 12B](https://huggingface.co/mradermacher/MN-GRAND-Gutenberg-Lyra4-Lyra-12B-DARKNESS-i1-GGUF)|||[Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf)
 
 - 24GB+ VRAM
 - 1000 AI TOPS
@@ -50,8 +64,13 @@ For advanced projects and small buisness [Gemma 3 IQ4_XS i1 Abliterated 12B](htt
 - 512GB Instalation Space
 
 
-**Professional Use**:
-A fast Single user workstation sutable for high quality models and video generation [Gemma 3 Q5_K_M 27B](https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/), and [Wan2.1-12V 14B 720p](https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-720P), and [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf)
+**Single User Enterprise Hardware**:
+Higher quality models, and fast generation times.
+
+| Creative Writing | Instruct | Image Generation | Video Generation |
+|------------------|----------|------------------|------------------|
+|[MN GRAND Gutenberg Lyra4 Q6_K 23.5B](https://huggingface.co/DavidAU/MN-GRAND-Gutenberg-Lyra4-Lyra-23.5B-GGUF?not-for-all-audiences=true)|[Gemma 3 Abliterated Q6_K 27B](https://huggingface.co/mlabonne/gemma-3-27b-it-abliterated-GGUF)|[FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf)|[ltxv-2b-0.9.6-dev-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-dev-04-25.safetensors)
+|[Veiled Calla Q8_K 12B](https://huggingface.co/soob3123/Veiled-Calla-12B-gguf)|[Gemma 3 Q6_K_M 27B](https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/)||[Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf)|
 
 - 128GB+ VRAM
 - 5000+ AI TOPS

@@ -5,20 +5,23 @@ Enjoy complete privacy, customizability, and controlled costs with local model i
 
 
 ## Major Planned Features
-- **A Story-Driven Platform**:  Create original screenplays with visual story building tools and advanced LLM integrations.
-- **P2P Real-Time Collaboration**: Create together remotely for free, without any servers or third party service required.
-- **Storyboarding**: Generate, draw, and use 3D assets to create animatic storyboards alongside your script.
-- **Audio Editing**: Sequence generated and recorded, music, SFX, and dialogue to your storyboards and videos.
-- **Video Production**: Develop your storyboards into fully acted films using a suite of image creation tools.
-- **Color Grading**: Make expressive color choices using scopes, primary/secondary color adjustments, and AI in a colour managed space.
-- **Node Based Compositing** Combine many seperate elements into a single image
+*   **Story-Driven Platform**: Create original screenplays with visual story-building tools and advanced LLM integrations.
+*   **P2P Real-Time Collaboration**: Create together remotely for free, without requiring third-party servers.
+*   **Storyboarding**: Generate images, draw sketches, and position 3D assets to create dynamic animatic storyboards linked to your script.
+*   **Audio Editing**: Sequence generated/recorded dialogue, music, and SFX within your timelines.
+*   **Video Production**: Develop storyboards into rendered scenes using integrated image and video generation models.
+*   **Professional Color Grading**: Make expressive color choices in a color-managed environment using scopes, primary/secondary adjustments, and AI-assisted tools.
+*   **Node-Based Compositing**: Combine multiple visual elements (renders, footage, effects) into final shots using a flexible node graph system.
 
 
 ## System Requirments
-**System requirements largly depend on what AI models you use**, and there are many choices that can be found at [HuggingFace](https://huggingface.co/) and [CivitAi](https://civitai.com/). For the best experience, use task-specific model combinations that load simultaneously in Studio Whip. If your hardware doesnt meet your needs, connect to cloud APIs like [OpenRouter](https://openrouter.ai/) and [Together.ai](https://www.together.ai/).
+System requirements heavily depend on the **size and type of AI models** you choose to run locally. Studio-Whip is designed to be flexible. You can find many models on platforms like [Hugging Face](https://huggingface.co/) and [Civitai](https://civitai.com/).
 
-- AI TOPS are measured as FP8.
-- [See Passmark Ratings of CPU's](https://www.cpubenchmark.net/high_end_cpus.html). Some models may even be availible free with limits. 
+The table below summarizes recommended hardware specifications for different tiers of usage, focusing on local inference:
+
+*   AI Performance (AI TOPS) is measured using FP8 precision.
+*   CPU performance estimates use [PassMark CPU Mark scores](https://www.cpubenchmark.net/high_end_cpus.html).
+*   Storage estimates are *minimums* for the Studio-Whip base install, and *some* models. Your actual needs will be higher depending on the number and size of models and project assets. NVMe SSDs are highly recommended.
 
 | **Tier** | **Use Case** | **RAM** | **VRAM** | **AI TOPS** | **Storage** | **CPU Performance** | 
 |----------|--------------|---------|----------|-------------|-------------|---------------------|
@@ -27,14 +30,20 @@ Enjoy complete privacy, customizability, and controlled costs with local model i
 **High-End** | Advanced Projects, Video | 64GB | 24GB+ | 1000 | 512GB | 50k+ |
 **Enterprise** | Fast Generation | 128GB | 96GB+ | 4000 | 1TB | 80K+ |
 
-These guidelines give an idea of what is practical to use for the different teirs using only local models. It is possible to run better models, combinations tailored to a specific task, or mix of local and cloud to better meet your needs.
+### Example Model Configurations per Tier
+
+The following table provides *example* model combinations suitable for each hardware tier when running locally. These are just suggestions; you can:
+*   Mix and match models based on your specific tasks (writing, image gen, video gen).
+*   Use fewer, larger models or more, smaller models depending on VRAM/RAM.
+*   Choose models optimized for specific hardware (e.g., NF4/FP8 quantizations if supported).
+*   Combine local models with cloud APIs.
 
 |**Tier**        |**Creative Writing** |**Instruct** |**Image Generation** |**Video Generation**                                                                                                            |
 |----------------|---------------------|-------------|---------------------|---------------------|
-|**Entry-Level** |Use the Instruct model|[Gemma 3 Q8 1B](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF)|[Midjourney Mini](openskyml/midjourney-mini)| Not Practical
-|**Mid-Range**   |[Veiled Calla Q6_K 4B](https://huggingface.co/mradermacher/Veiled-Calla-4B-i1-GGUF) | [Gemma 3 Q6_K 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF) | [FLUX.1-schnell Q6_K](https://huggingface.co/city96/FLUX.1-schnell-gguf) | [ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)
-|**High-End**    |[Veiled Calla IQ4_XS 12B](https://huggingface.co/mradermacher/Veiled-Calla-12B-i1-GGUF)<br>[MN GRAND Gutenberg Lyra4 IQ4_XS 12B](https://huggingface.co/mradermacher/MN-GRAND-Gutenberg-Lyra4-Lyra-12B-DARKNESS-i1-GGUF) | [Gemma3 Abliterated IQ4_XS 12B](https://huggingface.co/mradermacher/gemma-3-12b-it-abliterated-i1-GGUF)<br>[Gemma3 Amoral Q4_K_S 12B](https://huggingface.co/bartowski/soob3123_amoral-gemma3-12B-GGUF)<br>[Gemma 3 Q8_0 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF)| [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf) | [ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)<br>[ltxv-2b-0.9.6-dev-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-dev-04-25.safetensors)<br>[Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf)
-|**Enterprise**  |[MN GRAND Gutenberg Lyra4 Q6_K 23.5B](https://huggingface.co/DavidAU/MN-GRAND-Gutenberg-Lyra4-Lyra-23.5B-GGUF)<br>[Veiled Calla Q8_K 12B](https://huggingface.co/soob3123/Veiled-Calla-12B-gguf) | [Gemma 3 Abliterated Q6_K 27B](https://huggingface.co/mlabonne/gemma-3-27b-it-abliterated-GGUF)<br>[Gemma 3 Q6_K_M 27B](https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/)<br>[Gemma3 Q8_0 12B](https://huggingface.co/unsloth/gemma-3-12b-it-GGUF) | [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf) | [Wan1.2-12V-14B 720p Q8_0](https://huggingface.co/city96/Wan2.1-I2V-14B-720P-gguf)
+|**Entry-Level** |Use the Instruct model|[Gemma 3 Q8 1B](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF)<br>[BitNet b1.58 2B](https://huggingface.co/microsoft/bitnet-b1.58-2B-4T-gguf)|[Midjourney Mini](https://huggingface.co/openskyml/midjourney-mini)| Not Practical
+|**Mid-Range**   |[Veiled Calla Q6_K 4B](https://huggingface.co/mradermacher/Veiled-Calla-4B-i1-GGUF) | [Gemma 3 Q6_K 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF) | [FLUX.1-schnell Q6_K](https://huggingface.co/city96/FLUX.1-schnell-gguf)<br>[HiDream I1 Fast Q4_K_S](https://huggingface.co/city96/HiDream-I1-Fast-gguf) | [Wan2.1 T2V 1.3B](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B)<br>[ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)
+|**High-End**    |[Veiled Calla IQ4_XS 12B](https://huggingface.co/mradermacher/Veiled-Calla-12B-i1-GGUF)<br>[MN GRAND Gutenberg Lyra4 IQ4_XS 12B](https://huggingface.co/mradermacher/MN-GRAND-Gutenberg-Lyra4-Lyra-12B-DARKNESS-i1-GGUF) | [Gemma3 Abliterated IQ4_XS 12B](https://huggingface.co/mradermacher/gemma-3-12b-it-abliterated-i1-GGUF)<br>[Gemma3 Amoral Q4_K_S 12B](https://huggingface.co/bartowski/soob3123_amoral-gemma3-12B-GGUF)<br>[Gemma 3 Q8_0 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF) | [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf)<br>[HiDream I1 Dev Q5_K_M](https://huggingface.co/city96/HiDream-I1-Dev-gguf) | [ltxv-2b-0.9.6-distilled-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors)<br>[ltxv-2b-0.9.6-dev-04-25](https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-dev-04-25.safetensors)<br>[Wan1.2-12V-14B 480p Q6_K](https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf)
+|**Enterprise**  |[ArliAI QWQ Q5_K_M 32B](https://huggingface.co/bartowski/ArliAI_QwQ-32B-ArliAI-RpR-v1-GGUF)<br>[ArliAI QWQ Reasoning Q5_K_M 32B](https://huggingface.co/mradermacher/QwQ-32B-ArliAI-RPMax-Reasoning-v0-i1-GGUF)<br>[MN GRAND Gutenberg Lyra4 Q6_K 23.5B](https://huggingface.co/DavidAU/MN-GRAND-Gutenberg-Lyra4-Lyra-23.5B-GGUF)<br>[Veiled Calla Q8_K 12B](https://huggingface.co/soob3123/Veiled-Calla-12B-gguf) | [Gemma 3 Abliterated Q6_K 27B](https://huggingface.co/mlabonne/gemma-3-27b-it-abliterated-GGUF)<br>[Gemma 3 Q6_K_M 27B](https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/)<br>[Gemma3 Q8_0 12B](https://huggingface.co/unsloth/gemma-3-12b-it-GGUF) | [FLUX.1-Schnell Q8_0](https://huggingface.co/city96/FLUX.1-schnell-gguf)<br>[HiDream I1 Full Q8_0](https://huggingface.co/city96/HiDream-I1-Full-gguf) | [Wan1.2-12V-14B 720p Q8_0](https://huggingface.co/city96/Wan2.1-I2V-14B-720P-gguf)
 
 ## How To Build From Source
 

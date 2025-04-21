@@ -1,13 +1,12 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use crate::gui_framework::rendering::renderable::Renderable;
-// Removed unused PhantomData import
+use crate::PreparedDrawData;
 
 pub fn record_command_buffers(
     platform: &mut VulkanContext,
-    renderables: &[Renderable],
-    pipeline_layout: vk::PipelineLayout,
-    _projection_descriptor_set: vk::DescriptorSet, // Marked as potentially unused
+    prepared_draws: &[PreparedDrawData], // Use PreparedDrawData
+    pipeline_layout: vk::PipelineLayout, // Still need layout for binding
+    // Removed projection_descriptor_set parameter
     extent: vk::Extent2D,
 ) {
     let device = platform.device.as_ref().expect("Device not available for command buffer recording");
@@ -105,53 +104,35 @@ pub fn record_command_buffers(
             device.cmd_set_viewport(command_buffer, 0, &[viewport]);
             device.cmd_set_scissor(command_buffer, 0, &[scissor]);
 
-            // --- Draw Renderables ---
-            for renderable in renderables {
-                if !renderable.visible {
-                    continue; // Skip drawing this object if it's not visible
-                }
-                // Bind the pipeline for this renderable
-                device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, renderable.pipeline);
+            // --- Draw Prepared Data ---
+            for draw_data in prepared_draws {
+                // Visibility check is now done in rendering_system before creating PreparedDrawData
 
-                // Bind the descriptor set for this renderable (contains projection and offset UBOs)
+                // Bind the pipeline for this draw
+                device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, draw_data.pipeline);
+
+                // Bind the per-entity descriptor set (contains projection and offset UBOs)
                 device.cmd_bind_descriptor_sets(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
                     pipeline_layout, // Use the common pipeline layout
                     0, // firstSet index
-                    &[renderable.descriptor_set], // The specific set for this object
+                    &[draw_data.descriptor_set], // The specific set for this entity
                     &[], // No dynamic offsets
                 );
 
                 // Bind the vertex buffer to binding point 0
-                device.cmd_bind_vertex_buffers(command_buffer, 0, &[renderable.vertex_buffer], &[0]); // offset 0
+                device.cmd_bind_vertex_buffers(command_buffer, 0, &[draw_data.vertex_buffer], &[0]); // offset 0
 
-                // --- Conditional Instancing Draw Call ---
-                if let Some(instance_buffer) = renderable.instance_buffer {
-                    // Instanced: Bind instance buffer to binding 1
-                    device.cmd_bind_vertex_buffers(command_buffer, 1, &[instance_buffer], &[0]); // Binding 1: Instance data
-
-                    // --- Draw instance_count + 1 instances (base object + added instances) ---
-                    let total_instances_to_draw = renderable.instance_count + 1;
-                    device.cmd_draw(
-                        command_buffer,
-                        renderable.vertex_count,    // vertexCount
-                        total_instances_to_draw,    // instanceCount (CORRECTED)
-                        0,                          // firstVertex
-                        0,                          // firstInstance
-                    );
-                    // If instance_count is 0, we draw nothing for this renderable.
-                } else {
-                    // Non-instanced: Draw 1 instance
-                    device.cmd_draw(
-                        command_buffer,
-                        renderable.vertex_count,    // vertexCount
-                        1,                          // instanceCount
-                        0,                          // firstVertex
-                        0,                          // firstInstance
-                    );
-                }
-                // --- End Conditional Instancing ---
+                // --- Draw Call (Non-instanced for now) ---
+                // TODO: Add instancing support later by checking PreparedDrawData
+                device.cmd_draw(
+                    command_buffer,
+                    draw_data.vertex_count,    // vertexCount
+                    1,                         // instanceCount (Hardcoded to 1 for now)
+                    0,                         // firstVertex
+                    0,                         // firstInstance
+                );
             }
 
             // End the render pass

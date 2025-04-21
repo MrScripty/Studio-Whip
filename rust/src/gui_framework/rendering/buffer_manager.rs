@@ -1,6 +1,6 @@
 use bevy_log::{warn, info};
 use ash::vk;
-use vk_mem::{Alloc, Allocation}; // Import Allocation directly
+use vk_mem::Alloc; // Import Allocation directly
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 // Removed Renderable import
 // use crate::gui_framework::rendering::renderable::Renderable;
@@ -92,12 +92,11 @@ impl BufferManager {
         &mut self,
         platform: &mut VulkanContext,
         render_commands: &[crate::RenderCommandData], // Use RenderCommandData from lib.rs
-        global_projection_set: vk::DescriptorSet, // Needed for binding 0
-    ) -> Vec</* Placeholder: Type representing draw data */ i32> { // Return type needs defining
+    ) -> Vec<crate::PreparedDrawData> { // Return Vec of PreparedDrawData
         warn!("[BufferManager::prepare_frame_resources] NOT IMPLEMENTED - Needs major rework!");
         // --- Placeholder Implementation ---
         let device = platform.device.as_ref().unwrap();
-        let allocator = platform.allocator.as_ref().unwrap();
+        let _allocator = platform.allocator.as_ref().unwrap(); // Prefix unused allocator
 
         for command in render_commands {
             if !self.entity_cache.contains_key(&command.entity_id) {
@@ -105,7 +104,7 @@ impl BufferManager {
                 warn!("[BufferManager] Creating placeholder resources for Entity {:?}", command.entity_id);
 
                 // 1. Create Vertex Buffer (using command.vertices)
-                let vertex_buffer_size = (std::mem::size_of::<Vertex>() * command.vertices.len()) as u64;
+                let _vertex_buffer_size = (std::mem::size_of::<Vertex>() * command.vertices.len()) as u64; //Prefix Unused
                 let (vertex_buffer, vertex_allocation) = { /* ... vk_mem create_buffer ... */
                     // Placeholder: Use None for Allocation
                     (vk::Buffer::null(), None)
@@ -180,7 +179,7 @@ impl BufferManager {
             }
 
             // --- Update Offset UBO for Existing/New Entity ---
-            if let Some(resources) = self.entity_cache.get_mut(&command.entity_id) {
+            if let Some(_resources) = self.entity_cache.get_mut(&command.entity_id) { // Prefix unused
                 // Map the offset buffer and copy command.transform_matrix
                 // Check if allocation exists before mapping
                 // if let Some(ref mut alloc) = resources.offset_allocation {

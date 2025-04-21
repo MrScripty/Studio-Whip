@@ -1,5 +1,6 @@
-use bevy_ecs::prelude::Entity; // Add Entity import
-use std::sync::Arc; // Add Arc import
+use bevy_ecs::prelude::Entity;
+use std::sync::Arc;
+use ash::vk;
 
 pub mod gui_framework;
 // Remove the broad re-export:
@@ -10,6 +11,16 @@ pub mod gui_framework;
 #[derive(Debug, Clone, Copy)]
 pub struct Vertex {
     pub position: [f32; 2],
+}
+
+/// Holds the prepared Vulkan handles needed for a single draw call.
+#[derive(Debug, Clone)]
+pub struct PreparedDrawData {
+    pub pipeline: vk::Pipeline,
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_count: u32,
+    pub descriptor_set: vk::DescriptorSet, // Per-entity set (bindings 0=global proj, 1=entity offset)
+    // Add instance buffer/count later if needed
 }
 
 // --- Moved Render Command Data Here ---

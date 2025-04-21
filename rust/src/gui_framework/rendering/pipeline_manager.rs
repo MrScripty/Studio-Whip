@@ -7,7 +7,6 @@ pub struct PipelineManager {
     pub pipeline_layout: vk::PipelineLayout,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_pool: vk::DescriptorPool,
-    pub descriptor_set: vk::DescriptorSet, // Global projection set
 }
 
 impl PipelineManager {
@@ -68,21 +67,7 @@ impl PipelineManager {
                 Err(e) => panic!("Failed to create descriptor pool: {:?}", e),
             }
         };
-        info!("[PipelineManager::new] Descriptor pool created (using estimate)"); // Use info!
-
-        // Allocate the *global* descriptor set
-        let descriptor_set = unsafe {
-             match device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
-                 s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                 descriptor_pool,
-                 descriptor_set_count: 1,
-                 p_set_layouts: &descriptor_set_layout,
-                 ..Default::default()
-             }) {
-                 Ok(sets) => sets[0],
-                 Err(e) => panic!("Failed to allocate global descriptor set: {:?}", e),
-             }
-        };
+        info!("[PipelineManager::new] Descriptor set layout and pool created. Per-entity sets will be allocated by BufferManager.");
 
         // Pipeline layout
         let pipeline_layout = unsafe {
@@ -101,7 +86,6 @@ impl PipelineManager {
             pipeline_layout,
             descriptor_set_layout,
             descriptor_pool,
-            descriptor_set,
         }
     }
 
@@ -117,8 +101,6 @@ impl PipelineManager {
              self.pipeline_layout = vk::PipelineLayout::null();
              self.descriptor_set_layout = vk::DescriptorSetLayout::null();
              self.descriptor_pool = vk::DescriptorPool::null();
-             // Don't destroy self.descriptor_set here, it was allocated from the pool
-             self.descriptor_set = vk::DescriptorSet::null(); // Set global set handle to null too
          }
          info!("[PipelineManager::cleanup] Finished");
     }

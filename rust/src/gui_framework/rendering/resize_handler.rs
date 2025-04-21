@@ -5,7 +5,7 @@ use crate::gui_framework::rendering::swapchain::{create_swapchain, create_frameb
 // Removed command_buffers import (unused)
 // use crate::gui_framework::rendering::command_buffers::record_command_buffers;
 use bevy_math::Mat4;
-use bevy_log::{info, warn}; // Use info and warn
+use bevy_log::{info, warn, error};
 
 pub struct ResizeHandler;
 
@@ -13,8 +13,6 @@ impl ResizeHandler {
     // Modified signature: Removed renderables, changed extent type, added global descriptor set
     pub fn resize(
         vulkan_context: &mut VulkanContext,
-        pipeline_layout: vk::PipelineLayout,
-        global_descriptor_set: vk::DescriptorSet, // Pass the global set
         new_extent: vk::Extent2D, // Pass the new extent directly
         uniform_allocation: &mut vk_mem::Allocation,
     ) {
@@ -42,20 +40,22 @@ impl ResizeHandler {
 
         // Update projection matrix in uniform buffer
         let ortho = Mat4::orthographic_rh(0.0, new_extent.width as f32, new_extent.height as f32, 0.0, -1.0, 1.0);
-        let allocator = vulkan_context.allocator.as_ref().unwrap(); // Get allocator ref
-        let data_ptr = unsafe { allocator.map_memory(uniform_allocation) }
-            .unwrap()
-            .cast::<f32>();
-        unsafe { data_ptr.copy_from_nonoverlapping(ortho.to_cols_array().as_ptr(), 16) }
-        unsafe { allocator.unmap_memory(uniform_allocation) };
-        info!("[ResizeHandler::resize] Projection matrix updated");
-
-        // --- Remove Vertex Resizing Logic ---
-        warn!("[ResizeHandler::resize] Vertex resizing logic removed (Handled by ECS Transform)");
-
-        // --- Remove Command Buffer Re-recording ---
-        // Command buffers are now recorded dynamically in Renderer::render
-        // record_command_buffers(...);
-        warn!("[ResizeHandler::resize] Skipping command buffer re-recording (will happen in render)");
+        if let Some(allocator) = vulkan_context.allocator.as_ref() { // Check if allocator exists
+            match unsafe { allocator.map_memory(uniform_allocation) } {
+                Ok(data_ptr) => {
+                    let mapped_ptr = data_ptr.cast::<f32>();
+                    unsafe { mapped_ptr.copy_from_nonoverlapping(ortho.to_cols_array().as_ptr(), 16) };
+                    unsafe { allocator.unmap_memory(uniform_allocation) };
+                    info!("[ResizeHandler::resize] Projection matrix updated");
+                }
+                Err(e) => {
+                    // Log error instead of panicking
+                    error!("[ResizeHandler::resize] Failed to map uniform buffer memory during resize: {:?}", e);
+                    // Continue without updating the projection if mapping fails
+                }
+            }
+        } else {
+            error!("[ResizeHandler::resize] Allocator not available for updating projection matrix.");
+        }
     }
 }

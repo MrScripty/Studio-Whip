@@ -89,19 +89,4 @@ impl PipelineManager {
         }
     }
 
-    // Modified signature to take &mut self
-    pub fn cleanup(&mut self, device: &ash::Device) { // Changed to &mut self
-         info!("[PipelineManager::cleanup] Called (&mut self)");
-         unsafe {
-             // Access fields via self.field_name
-             device.destroy_pipeline_layout(self.pipeline_layout, None);
-             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-             device.destroy_descriptor_pool(self.descriptor_pool, None);
-             // Set handles to null after destruction? Optional, but can prevent use-after-free if logic allows.
-             self.pipeline_layout = vk::PipelineLayout::null();
-             self.descriptor_set_layout = vk::DescriptorSetLayout::null();
-             self.descriptor_pool = vk::DescriptorPool::null();
-         }
-         info!("[PipelineManager::cleanup] Finished");
-    }
 }

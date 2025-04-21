@@ -5,7 +5,7 @@ use crate::gui_framework::rendering::swapchain::{create_swapchain, create_frameb
 // Removed command_buffers import (unused)
 // use crate::gui_framework::rendering::command_buffers::record_command_buffers;
 use bevy_math::Mat4;
-use bevy_log::{info, warn, error};
+use bevy_log::{info, error};
 
 pub struct ResizeHandler;
 

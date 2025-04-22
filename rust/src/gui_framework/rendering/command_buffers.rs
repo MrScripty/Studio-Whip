@@ -1,61 +1,55 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::PreparedDrawData;
+use bevy_log::info; // Added for logging
 
 pub fn record_command_buffers(
     platform: &mut VulkanContext,
     prepared_draws: &[PreparedDrawData], // Use PreparedDrawData
     pipeline_layout: vk::PipelineLayout, // Still need layout for binding
-    // Removed projection_descriptor_set parameter
     extent: vk::Extent2D,
 ) {
     let device = platform.device.as_ref().expect("Device not available for command buffer recording");
+    let command_pool = platform.command_pool.expect("Command pool missing for recording");
 
-    // --- Recreate Command Pool ---
-    // Destroy existing pool if it exists
-    if let Some(command_pool) = platform.command_pool.take() {
-        unsafe { device.destroy_command_pool(command_pool, None) };
+    // --- Reset Command Pool (Instead of Recreating) ---
+    // This implicitly resets all command buffers allocated from it.
+    // This MUST happen only after the fence associated with the *last* submission
+    // using this pool/buffers has been signaled and waited upon.
+    // The waiting happens in Renderer::render *before* calling this function.
+    unsafe {
+        device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
+            .expect("Failed to reset command pool");
     }
 
-    // Create new command pool
-    let command_pool = unsafe {
-        // TODO: Properly determine the graphics queue family index.
-        // This might involve querying during setup and storing it in VulkanContext,
-        // or re-querying here if necessary. Using 0 as a placeholder.
-        let queue_family_index = platform.queue_family_index
-            .expect("Queue family index not set in VulkanContext");
-        device.create_command_pool(
-            &vk::CommandPoolCreateInfo {
-                s_type: vk::StructureType::COMMAND_POOL_CREATE_INFO,
-                flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
-                queue_family_index, // Use the retrieved index
+    // --- Allocate Command Buffers (If needed, usually only once) ---
+    // If command buffers haven't been allocated yet (e.g., first frame or after resize)
+    if platform.command_buffers.is_empty() || platform.command_buffers.len() != platform.framebuffers.len() {
+        // Free existing buffers if the count is wrong (e.g., after resize changed framebuffer count)
+        if !platform.command_buffers.is_empty() {
+             unsafe { device.free_command_buffers(command_pool, &platform.command_buffers); }
+             platform.command_buffers.clear();
+        }
+
+        platform.command_buffers = {
+            let alloc_info = vk::CommandBufferAllocateInfo {
+                s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+                command_pool,
+                level: vk::CommandBufferLevel::PRIMARY,
+                command_buffer_count: platform.framebuffers.len() as u32, // One per framebuffer
                 ..Default::default()
-            },
-            None,
-        )
-    }.expect("Failed to create command pool");
-    platform.command_pool = Some(command_pool);
-
-    // --- Allocate Command Buffers ---
-    // Free existing buffers if necessary (though destroying the pool should handle this)
-    if !platform.command_buffers.is_empty() {
-        // This might be redundant if pool is always destroyed, but safer if pool isn't always destroyed.
-        // unsafe { device.free_command_buffers(command_pool, &platform.command_buffers); }
-        platform.command_buffers.clear();
+            };
+            unsafe { device.allocate_command_buffers(&alloc_info) }.expect("Failed to allocate command buffers")
+        };
+        info!("[record_command_buffers] Allocated {} command buffers.", platform.command_buffers.len());
     }
 
-    platform.command_buffers = {
-        let alloc_info = vk::CommandBufferAllocateInfo {
-            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-            command_pool,
-            level: vk::CommandBufferLevel::PRIMARY,
-            command_buffer_count: platform.framebuffers.len() as u32, // One per framebuffer
-            ..Default::default()
-        };
-        unsafe { device.allocate_command_buffers(&alloc_info) }.expect("Failed to allocate command buffers")
-    };
 
     // --- Command Buffer Recording Loop ---
+    // Get the command buffer for the *current* frame being rendered
+    // The index is determined by acquire_next_image in Renderer::render
+    let command_buffer = platform.command_buffers[platform.current_image];
+
     let begin_info = vk::CommandBufferBeginInfo {
         s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
         // Consider VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT if command buffers might be resubmitted
@@ -68,79 +62,77 @@ pub fn record_command_buffers(
         color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] },
     }];
 
-    for (i, &command_buffer) in platform.command_buffers.iter().enumerate() {
-        let framebuffer = platform.framebuffers[i]; // Get corresponding framebuffer
+    let framebuffer = platform.framebuffers[platform.current_image]; // Use current image index
 
-        unsafe {
-            // Begin command buffer recording
-            device.begin_command_buffer(command_buffer, &begin_info)
-                .expect("Failed to begin command buffer recording");
+    unsafe {
+        // Begin command buffer recording
+        device.begin_command_buffer(command_buffer, &begin_info)
+            .expect("Failed to begin command buffer recording");
 
-            // Begin render pass
-            let render_pass_begin_info = vk::RenderPassBeginInfo {
-                s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
-                render_pass: platform.render_pass.expect("Render pass not available for command buffer recording"),
-                framebuffer,
-                render_area: vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent },
-                clear_value_count: clear_values.len() as u32,
-                p_clear_values: clear_values.as_ptr(),
-                ..Default::default()
-            };
-            device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
+        // Begin render pass
+        let render_pass_begin_info = vk::RenderPassBeginInfo {
+            s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
+            render_pass: platform.render_pass.expect("Render pass not available for command buffer recording"),
+            framebuffer,
+            render_area: vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent },
+            clear_value_count: clear_values.len() as u32,
+            p_clear_values: clear_values.as_ptr(),
+            ..Default::default()
+        };
+        device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
 
-            // Set dynamic viewport and scissor state
-            let viewport = vk::Viewport {
-                x: 0.0,
-                y: 0.0, // Vulkan's Y is typically down from top-left
-                width: extent.width as f32,
-                height: extent.height as f32,
-                min_depth: 0.0,
-                max_depth: 1.0,
-            };
-            let scissor = vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent,
-            };
-            device.cmd_set_viewport(command_buffer, 0, &[viewport]);
-            device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+        // Set dynamic viewport and scissor state
+        let viewport = vk::Viewport {
+            x: 0.0,
+            y: 0.0, // Vulkan's Y is typically down from top-left
+            width: extent.width as f32,
+            height: extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let scissor = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent,
+        };
+        device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+        device.cmd_set_scissor(command_buffer, 0, &[scissor]);
 
-            // --- Draw Prepared Data ---
-            for draw_data in prepared_draws {
-                // Visibility check is now done in rendering_system before creating PreparedDrawData
+        // --- Draw Prepared Data ---
+        for draw_data in prepared_draws {
+            // Visibility check is now done in rendering_system before creating PreparedDrawData
 
-                // Bind the pipeline for this draw
-                device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, draw_data.pipeline);
+            // Bind the pipeline for this draw
+            device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, draw_data.pipeline);
 
-                // Bind the per-entity descriptor set (contains projection and offset UBOs)
-                device.cmd_bind_descriptor_sets(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipeline_layout, // Use the common pipeline layout
-                    0, // firstSet index
-                    &[draw_data.descriptor_set], // The specific set for this entity
-                    &[], // No dynamic offsets
-                );
+            // Bind the per-entity descriptor set (contains projection and offset UBOs)
+            device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_layout, // Use the common pipeline layout
+                0, // firstSet index
+                &[draw_data.descriptor_set], // The specific set for this entity
+                &[], // No dynamic offsets
+            );
 
-                // Bind the vertex buffer to binding point 0
-                device.cmd_bind_vertex_buffers(command_buffer, 0, &[draw_data.vertex_buffer], &[0]); // offset 0
+            // Bind the vertex buffer to binding point 0
+            device.cmd_bind_vertex_buffers(command_buffer, 0, &[draw_data.vertex_buffer], &[0]); // offset 0
 
-                // --- Draw Call (Non-instanced for now) ---
-                // TODO: Add instancing support later by checking PreparedDrawData
-                device.cmd_draw(
-                    command_buffer,
-                    draw_data.vertex_count,    // vertexCount
-                    1,                         // instanceCount (Hardcoded to 1 for now)
-                    0,                         // firstVertex
-                    0,                         // firstInstance
-                );
-            }
-
-            // End the render pass
-            device.cmd_end_render_pass(command_buffer);
-
-            // End command buffer recording
-            device.end_command_buffer(command_buffer)
-                .expect("Failed to end command buffer recording");
+            // --- Draw Call (Non-instanced for now) ---
+            // TODO: Add instancing support later by checking PreparedDrawData
+            device.cmd_draw(
+                command_buffer,
+                draw_data.vertex_count,    // vertexCount
+                1,                         // instanceCount (Hardcoded to 1 for now)
+                0,                         // firstVertex
+                0,                         // firstInstance
+            );
         }
+
+        // End the render pass
+        device.cmd_end_render_pass(command_buffer);
+
+        // End command buffer recording
+        device.end_command_buffer(command_buffer)
+            .expect("Failed to end command buffer recording");
     }
 }

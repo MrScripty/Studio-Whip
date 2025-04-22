@@ -1,16 +1,14 @@
-use bevy_log::{warn, info, error};
+use bevy_log::{info, error};
 use ash::vk;
 use vk_mem::Alloc; // Import Allocation directly
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-// Removed Renderable import
-// use crate::gui_framework::rendering::renderable::Renderable;
 use bevy_math::Mat4;
 use std::collections::HashMap; // Needed for caching later
 use bevy_ecs::prelude::Entity; // Needed for caching later
 use crate::Vertex; // Needed for vertex buffer size
 
-// Holds the Vulkan resources cached per entity.
-// TODO: Optimize pipeline/shader caching later.
+// Holds the Vulkan resources cached per entity that are *unique* per entity.
+// Pipeline and shaders are now cached separately.
 struct EntityRenderResources {
     vertex_buffer: vk::Buffer,
     vertex_allocation: vk_mem::Allocation, // Store Allocation directly
@@ -18,17 +16,31 @@ struct EntityRenderResources {
     offset_uniform: vk::Buffer,
     offset_allocation: vk_mem::Allocation,
     descriptor_set: vk::DescriptorSet,     // Per-entity descriptor set
-    pipeline: vk::Pipeline,                // Per-entity pipeline (inefficient, cache later)
-    vertex_shader: vk::ShaderModule,
-    fragment_shader: vk::ShaderModule,
+    // Pipeline and shaders removed, will be retrieved from cache
     // Add instancing fields later
 }
+
+// Key for pipeline cache. Includes shader paths and potentially other state later (e.g., render pass).
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+struct PipelineCacheKey {
+    vertex_shader_path: String,
+    fragment_shader_path: String,
+    // Add render_pass handle or other relevant state if pipelines vary based on them
+}
+
+// Key for shader cache. Just the path for now.
+type ShaderCacheKey = String;
+
 
 pub struct BufferManager {
     pub uniform_buffer: vk::Buffer,
     pub uniform_allocation: vk_mem::Allocation, // Global uniform is always valid
     // Replace renderables Vec with a cache
     entity_cache: HashMap<Entity, EntityRenderResources>,
+    // Cache for shared pipelines
+    pipeline_cache: HashMap<PipelineCacheKey, vk::Pipeline>,
+    // Cache for shared shader modules
+    shader_cache: HashMap<ShaderCacheKey, vk::ShaderModule>,
     // Store layout/pool needed for creating new descriptor sets
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
@@ -62,10 +74,17 @@ impl BufferManager {
             };
             unsafe {
                 match allocator.create_buffer(&buffer_info, &allocation_info) {
-                    Ok((buffer, mut allocation)) => {
-                        let data_ptr = allocator.map_memory(&mut allocation).unwrap().cast::<f32>();
-                        data_ptr.copy_from_nonoverlapping(ortho.to_cols_array().as_ptr(), 16);
-                        allocator.unmap_memory(&mut allocation);
+                    Ok((buffer, allocation)) => {
+                        // Initial write using get_allocation_info for mapped pointer
+                        let info = allocator.get_allocation_info(&allocation);
+                        if !info.mapped_data.is_null() {
+                            let data_ptr = info.mapped_data.cast::<f32>();
+                            data_ptr.copy_from_nonoverlapping(ortho.to_cols_array().as_ptr(), 16);
+                        } else {
+                            error!("[BufferManager::new] Failed to get mapped pointer for initial uniform buffer write.");
+                            // Attempt map/unmap as fallback?
+                        }
+                        // No unmap needed for persistently mapped
                         (buffer, allocation)
                     }
                     Err(e) => panic!("Uniform buffer creation failed: {:?}", e),
@@ -74,14 +93,18 @@ impl BufferManager {
         };
         info!("[BufferManager::new] Initial uniform buffer created");
 
-        // --- Initialize Cache ---
+        // --- Initialize Caches ---
         let entity_cache = HashMap::new();
-        warn!("[BufferManager::new] Entity resource cache initialized (empty)");
+        let pipeline_cache = HashMap::new();
+        let shader_cache = HashMap::new();
+        info!("[BufferManager::new] Caches initialized (entity, pipeline, shader)");
 
         Self {
             uniform_buffer,
             uniform_allocation,
             entity_cache,
+            pipeline_cache,
+            shader_cache,
             descriptor_set_layout, // Store for later use
             descriptor_pool,     // Store for later use
         }
@@ -112,7 +135,7 @@ impl BufferManager {
 
                 // 1. Create Vertex Buffer
                 let vertex_buffer_size = (std::mem::size_of::<Vertex>() * command.vertices.len()) as u64;
-                let (vertex_buffer, mut vertex_allocation) = unsafe {
+                let (vertex_buffer, vertex_allocation) = unsafe { // Removed mut
                     let buffer_info = vk::BufferCreateInfo {
                         s_type: vk::StructureType::BUFFER_CREATE_INFO,
                         size: vertex_buffer_size,
@@ -168,131 +191,164 @@ impl BufferManager {
                     }).expect("Failed to allocate descriptor set")[0]
                 };
 
-                // 4. Load Shaders
-                // TODO: Cache shaders based on path
-                let vertex_shader = crate::gui_framework::rendering::shader_utils::load_shader(device, &command.vertex_shader_path);
-                let fragment_shader = crate::gui_framework::rendering::shader_utils::load_shader(device, &command.fragment_shader_path);
+                // 4. Load/Get Shaders from Cache
+                let vertex_shader_path = &command.vertex_shader_path;
+                let vertex_shader = *self.shader_cache.entry(vertex_shader_path.clone()).or_insert_with(|| {
+                    info!("[BufferManager] Loading and caching shader: {}", vertex_shader_path);
+                    crate::gui_framework::rendering::shader_utils::load_shader(device, vertex_shader_path)
+                });
 
-                // 5. Create Pipeline
-                // TODO: Cache pipelines based on shaders/renderpass/etc.
-                warn!("[BufferManager] Creating unique pipeline for Entity {:?}. Consider caching.", entity_id);
-                let pipeline = unsafe {
-                    let shader_stages = [
-                        vk::PipelineShaderStageCreateInfo {
-                            s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                            stage: vk::ShaderStageFlags::VERTEX,
-                            module: vertex_shader,
-                            p_name: b"main\0".as_ptr() as *const std::ffi::c_char,
-                            ..Default::default()
-                        },
-                        vk::PipelineShaderStageCreateInfo {
-                            s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                            stage: vk::ShaderStageFlags::FRAGMENT,
-                            module: fragment_shader,
-                            p_name: b"main\0".as_ptr() as *const std::ffi::c_char,
-                            ..Default::default()
-                        },
-                    ];
-                    let vertex_binding_desc = vk::VertexInputBindingDescription {
-                        binding: 0, // Vertex data
-                        stride: std::mem::size_of::<Vertex>() as u32,
-                        input_rate: vk::VertexInputRate::VERTEX,
-                    };
-                    let vertex_attr_desc = vk::VertexInputAttributeDescription {
-                        location: 0, // layout(location = 0) in vec2 pos;
-                        binding: 0,
-                        format: vk::Format::R32G32_SFLOAT,
-                        offset: 0,
-                    };
-                    // Add instancing binding/attributes later if needed (binding 1)
+                let fragment_shader_path = &command.fragment_shader_path;
+                let fragment_shader = *self.shader_cache.entry(fragment_shader_path.clone()).or_insert_with(|| {
+                    info!("[BufferManager] Loading and caching shader: {}", fragment_shader_path);
+                    crate::gui_framework::rendering::shader_utils::load_shader(device, fragment_shader_path)
+                });
 
-                    let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
-                        s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-                        vertex_binding_description_count: 1,
-                        p_vertex_binding_descriptions: &vertex_binding_desc,
-                        vertex_attribute_description_count: 1,
-                        p_vertex_attribute_descriptions: &vertex_attr_desc,
-                        ..Default::default()
-                    };
-                    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
-                        s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-                        topology: vk::PrimitiveTopology::TRIANGLE_LIST, // Assuming triangles for now
-                        primitive_restart_enable: vk::FALSE,
-                        ..Default::default()
-                    };
-                    let viewport_state = vk::PipelineViewportStateCreateInfo {
-                        s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-                        viewport_count: 1, // Dynamic state
-                        scissor_count: 1,  // Dynamic state
-                        ..Default::default()
-                    };
-                    let rasterizer = vk::PipelineRasterizationStateCreateInfo {
-                        s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-                        depth_clamp_enable: vk::FALSE,
-                        rasterizer_discard_enable: vk::FALSE,
-                        polygon_mode: vk::PolygonMode::FILL,
-                        line_width: 1.0,
-                        cull_mode: vk::CullModeFlags::NONE, // No culling for 2D
-                        front_face: vk::FrontFace::CLOCKWISE,
-                        depth_bias_enable: vk::FALSE,
-                        ..Default::default()
-                    };
-                    let multisampling = vk::PipelineMultisampleStateCreateInfo {
-                        s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-                        sample_shading_enable: vk::FALSE,
-                        rasterization_samples: vk::SampleCountFlags::TYPE_1,
-                        ..Default::default()
-                    };
-                    let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
-                        color_write_mask: vk::ColorComponentFlags::RGBA,
-                        blend_enable: vk::FALSE, // Basic opaque blending for now
-                        // Add alpha blending settings here if needed later
-                        ..Default::default()
-                    };
-                    let color_blending = vk::PipelineColorBlendStateCreateInfo {
-                        s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-                        logic_op_enable: vk::FALSE,
-                        attachment_count: 1,
-                        p_attachments: &color_blend_attachment,
-                        ..Default::default()
-                    };
-                     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-                     let dynamic_state_info = vk::PipelineDynamicStateCreateInfo {
-                         s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-                         dynamic_state_count: dynamic_states.len() as u32,
-                         p_dynamic_states: dynamic_states.as_ptr(),
-                         ..Default::default()
-                     };
-
-                    let pipeline_info = vk::GraphicsPipelineCreateInfo {
-                        s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
-                        stage_count: shader_stages.len() as u32,
-                        p_stages: shader_stages.as_ptr(),
-                        p_vertex_input_state: &vertex_input_info,
-                        p_input_assembly_state: &input_assembly,
-                        p_viewport_state: &viewport_state,
-                        p_rasterization_state: &rasterizer,
-                        p_multisample_state: &multisampling,
-                        p_depth_stencil_state: std::ptr::null(), // No depth/stencil for now
-                        p_color_blend_state: &color_blending,
-                        p_dynamic_state: &dynamic_state_info,
-                        layout: pipeline_layout,
-                        render_pass,
-                        subpass: 0,
-                        ..Default::default()
-                    };
-                    device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-                        .expect("Failed to create graphics pipeline")
-                        .remove(0) // We create only one
+                // 5. Create/Get Pipeline from Cache
+                let pipeline_key = PipelineCacheKey {
+                    vertex_shader_path: command.vertex_shader_path.clone(),
+                    fragment_shader_path: command.fragment_shader_path.clone(),
+                    // Add render_pass handle here if needed
                 };
 
-                // 6. Store in cache
+                let _pipeline = *self.pipeline_cache.entry(pipeline_key.clone()).or_insert_with(|| { 
+                    info!("[BufferManager] Creating and caching pipeline for key: {:?}", pipeline_key);
+                    // Pipeline creation logic moved inside closure
+                    unsafe {
+                        let shader_stages = [ // Use cached shader modules
+                            vk::PipelineShaderStageCreateInfo {
+                                s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                stage: vk::ShaderStageFlags::VERTEX,
+                                module: vertex_shader, // Use cached module
+                                p_name: b"main\0".as_ptr() as *const std::ffi::c_char,
+                                ..Default::default()
+                            },
+                            vk::PipelineShaderStageCreateInfo {
+                                s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                stage: vk::ShaderStageFlags::FRAGMENT,
+                                module: fragment_shader, // Use cached module
+                                p_name: b"main\0".as_ptr() as *const std::ffi::c_char,
+                                ..Default::default()
+                            },
+                        ];
+                        // Define only the vertex attributes we are currently using (Location 0).
+                        let vertex_attr_descs = [
+                            // Location 0: Vertex Position
+                            vk::VertexInputAttributeDescription {
+                                location: 0,
+                                binding: 0, // Matches the binding description below
+                                format: vk::Format::R32G32_SFLOAT, // vec2
+                                offset: 0, // Position is first in Vertex struct
+                            },
+                            // Removed placeholder for Location 1
+                        ];
+
+                        // Define only the vertex input binding we are currently using (Binding 0).
+                        let vertex_binding_descs = [
+                            // Binding 0: Per-vertex data
+                            vk::VertexInputBindingDescription {
+                                binding: 0,
+                                stride: std::mem::size_of::<Vertex>() as u32,
+                                input_rate: vk::VertexInputRate::VERTEX,
+                            },
+                             // Binding 1: Per-instance data (stride depends on actual instance data struct)
+                             vk::VertexInputBindingDescription {
+                                binding: 1,
+                                stride: (std::mem::size_of::<f32>() * 4) as u32, // Placeholder stride (vec4)
+                                input_rate: vk::VertexInputRate::INSTANCE, // Mark as per-instance
+                            },
+                        ];
+
+
+                        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
+                            s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+                            // Use the arrays defined above (now only containing binding/location 0)
+                            vertex_binding_description_count: 1, // Only binding 0
+                            p_vertex_binding_descriptions: vertex_binding_descs.as_ptr(),
+                            vertex_attribute_description_count: 1, // Only location 0
+                            p_vertex_attribute_descriptions: vertex_attr_descs.as_ptr(),
+                            ..Default::default()
+                        };
+                        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
+                            s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+                            topology: vk::PrimitiveTopology::TRIANGLE_LIST, // Assuming triangles for now
+                            primitive_restart_enable: vk::FALSE,
+                            ..Default::default()
+                        };
+                        let viewport_state = vk::PipelineViewportStateCreateInfo {
+                            s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+                            viewport_count: 1, // Dynamic state
+                            scissor_count: 1,  // Dynamic state
+                            ..Default::default()
+                        };
+                        let rasterizer = vk::PipelineRasterizationStateCreateInfo {
+                            s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                            depth_clamp_enable: vk::FALSE,
+                            rasterizer_discard_enable: vk::FALSE,
+                            polygon_mode: vk::PolygonMode::FILL,
+                            line_width: 1.0,
+                            cull_mode: vk::CullModeFlags::NONE, // No culling for 2D
+                            front_face: vk::FrontFace::CLOCKWISE,
+                            depth_bias_enable: vk::FALSE,
+                            ..Default::default()
+                        };
+                        let multisampling = vk::PipelineMultisampleStateCreateInfo {
+                            s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                            sample_shading_enable: vk::FALSE,
+                            rasterization_samples: vk::SampleCountFlags::TYPE_1,
+                            ..Default::default()
+                        };
+                        let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
+                            color_write_mask: vk::ColorComponentFlags::RGBA,
+                            blend_enable: vk::FALSE, // Basic opaque blending for now
+                            // Add alpha blending settings here if needed later
+                            ..Default::default()
+                        };
+                        let color_blending = vk::PipelineColorBlendStateCreateInfo {
+                            s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+                            logic_op_enable: vk::FALSE,
+                            attachment_count: 1,
+                            p_attachments: &color_blend_attachment,
+                            ..Default::default()
+                        };
+                         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+                         let dynamic_state_info = vk::PipelineDynamicStateCreateInfo {
+                             s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+                             dynamic_state_count: dynamic_states.len() as u32,
+                             p_dynamic_states: dynamic_states.as_ptr(),
+                             ..Default::default()
+                         };
+
+                        let pipeline_info = vk::GraphicsPipelineCreateInfo {
+                            s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
+                            stage_count: shader_stages.len() as u32,
+                            p_stages: shader_stages.as_ptr(),
+                            p_vertex_input_state: &vertex_input_info,
+                            p_input_assembly_state: &input_assembly,
+                            p_viewport_state: &viewport_state,
+                            p_rasterization_state: &rasterizer,
+                            p_multisample_state: &multisampling,
+                            p_depth_stencil_state: std::ptr::null(), // No depth/stencil for now
+                            p_color_blend_state: &color_blending,
+                            p_dynamic_state: &dynamic_state_info,
+                            layout: pipeline_layout,
+                            render_pass,
+                            subpass: 0,
+                            ..Default::default()
+                        };
+                        device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+                            .expect("Failed to create graphics pipeline")
+                            .remove(0) // We create only one
+                    } // End unsafe block
+                }); // End or_insert_with closure
+
+                // 6. Store *entity-specific* resources in cache
                 let resources = EntityRenderResources {
                     vertex_buffer, vertex_allocation,
                     vertex_count: command.vertices.len() as u32,
                     offset_uniform, offset_allocation,
-                    descriptor_set, pipeline,
-                    vertex_shader, fragment_shader,
+                    descriptor_set,
+                    // Pipeline and shaders are now stored in their respective caches
                 };
                 self.entity_cache.insert(entity_id, resources);
                 created_entities.push(entity_id); // Mark for descriptor update
@@ -313,6 +369,7 @@ impl BufferManager {
         } // End of render_commands loop
 
         // --- Update Descriptor Sets for New/Existing Entities ---
+        // This is safe now because Renderer::render waits for the fence before calling this.
         let mut writes = Vec::with_capacity(render_commands.len() * 2); // Max 2 writes per entity
         let mut proj_buffer_info: Option<vk::DescriptorBufferInfo> = None; // Cache global info
 
@@ -362,11 +419,21 @@ impl BufferManager {
         }
 
 
-        // --- Collect Prepared Draw Data ---
+        // --- Collect Prepared Draw Data (Retrieve pipeline from cache) ---
         for command in render_commands {
+            // Construct pipeline key again to retrieve from cache
+            let pipeline_key = PipelineCacheKey {
+                vertex_shader_path: command.vertex_shader_path.clone(),
+                fragment_shader_path: command.fragment_shader_path.clone(),
+                // Add render_pass handle here if needed
+            };
+            // Retrieve the pipeline from the cache. It *must* exist at this point.
+            let pipeline = self.pipeline_cache.get(&pipeline_key)
+                .expect("Pipeline should be in cache but wasn't found!");
+
             if let Some(resources) = self.entity_cache.get(&command.entity_id) {
                 prepared_draws.push(crate::PreparedDrawData {
-                    pipeline: resources.pipeline,
+                    pipeline: *pipeline, // Use the cached pipeline
                     vertex_buffer: resources.vertex_buffer,
                     vertex_count: resources.vertex_count,
                     descriptor_set: resources.descriptor_set,
@@ -413,18 +480,32 @@ impl BufferManager {
                  info!("[BufferManager::cleanup] No cached descriptor sets to free.");
             }
 
+            // Cleanup entity-specific resources
             for (_entity_id, mut resources) in self.entity_cache.drain() {
-                device.destroy_pipeline(resources.pipeline, None);
-                device.destroy_shader_module(resources.vertex_shader, None);
-                device.destroy_shader_module(resources.fragment_shader, None);
+                // Pipeline and shaders are no longer stored per-entity
                 // Allocations are now stored directly, not Option
                 allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
                 allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
                 // Cleanup instancing buffers later if added
             }
-            // self.entity_cache is now empty after drain
+            info!("[BufferManager::cleanup] Cleaned up {} entity-specific resources.", sets_to_free.len()); // Log count based on freed sets
+
+            // Cleanup cached pipelines
+            info!("[BufferManager::cleanup] Cleaning up {} cached pipelines...", self.pipeline_cache.len());
+            for (_key, pipeline) in self.pipeline_cache.drain() {
+                device.destroy_pipeline(pipeline, None);
+            }
+
+            // Cleanup cached shaders
+            info!("[BufferManager::cleanup] Cleaning up {} cached shaders...", self.shader_cache.len());
+            for (_key, shader_module) in self.shader_cache.drain() {
+                device.destroy_shader_module(shader_module, None);
+            }
+
+            // self.entity_cache, pipeline_cache, shader_cache are now empty after drain
 
             // Cleanup uniform buffer (Still owned by BufferManager)
+            // Need mutable access to the allocation field itself for destroy_buffer
             allocator.destroy_buffer(self.uniform_buffer, &mut self.uniform_allocation);
             info!("[BufferManager::cleanup] Uniform buffer destroyed");
             self.uniform_buffer = vk::Buffer::null(); // Mark as destroyed

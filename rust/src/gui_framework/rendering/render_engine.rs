@@ -1,6 +1,7 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::gui_framework::rendering::swapchain::{create_swapchain, create_framebuffers};
+// Removed direct import of cleanup_swapchain_resources, it's called by ResizeHandler
 use crate::gui_framework::rendering::command_buffers::record_command_buffers;
 use crate::gui_framework::rendering::pipeline_manager::PipelineManager;
 use crate::gui_framework::rendering::buffer_manager::BufferManager;
@@ -11,7 +12,6 @@ use crate::RenderCommandData; // from lib.rs
 
 pub struct Renderer {
     buffer_manager: BufferManager,
-    current_extent: vk::Extent2D,
     // Store pool and layout needed for cleanup/buffer manager
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -21,7 +21,7 @@ impl Renderer {
     pub fn new(platform: &mut VulkanContext, extent: vk::Extent2D) -> Self {
         info!("[Renderer::new] Start (ECS Migration)");
         let surface_format = create_swapchain(platform, extent);
-        create_framebuffers(platform, extent, surface_format);
+        create_framebuffers(platform, surface_format);
         info!("[Renderer::new] Framebuffers created");
 
         // Create PipelineManager temporarily to get layout/pool
@@ -32,7 +32,7 @@ impl Renderer {
         platform.pipeline_layout = Some(pipeline_mgr.pipeline_layout);
         info!("[Renderer::new] PipelineLayout stored in VulkanContext");
 
-        let mut buffer_mgr = BufferManager::new(
+        let buffer_mgr = BufferManager::new(
             platform, // Pass &mut VulkanContext
             pipeline_mgr.pipeline_layout,
             pipeline_mgr.descriptor_set_layout,
@@ -47,18 +47,40 @@ impl Renderer {
 
         // Update global projection UBO (BufferManager owns the buffer/allocation)
         unsafe {
-            let proj_matrix = Mat4::orthographic_rh(0.0, extent.width as f32, extent.height as f32, 0.0, -1.0, 1.0);
-            let allocator = platform.allocator.as_ref().unwrap();
-            let data_ptr = allocator.map_memory(&mut buffer_mgr.uniform_allocation) // Use buffer_mgr's allocation
-                .expect("Failed to map uniform buffer for projection update")
-                .cast::<f32>();
-            data_ptr.copy_from_nonoverlapping(proj_matrix.to_cols_array().as_ptr(), 16);
-            allocator.unmap_memory(&mut buffer_mgr.uniform_allocation); // Use buffer_mgr's allocation
+        let proj_matrix = Mat4::orthographic_rh(0.0, platform.current_swap_extent.width as f32, platform.current_swap_extent.height as f32, 0.0, -1.0, 1.0);
+        let allocator = platform.allocator.as_ref().unwrap();
+        // Use get_allocation_info for persistently mapped buffer
+        let info = allocator.get_allocation_info(&buffer_mgr.uniform_allocation);
+            if !info.mapped_data.is_null() {
+                let data_ptr = info.mapped_data.cast::<f32>();
+                data_ptr.copy_from_nonoverlapping(proj_matrix.to_cols_array().as_ptr(), 16);
+                // No need to unmap
+            } else {
+                error!("[Renderer::new] Failed to get mapped pointer for initial uniform buffer update.");
+                // Attempt map/unmap as fallback? Or panic?
+                // For now, log error.
+            }
         }
         info!("[Renderer::new] Global projection UBO buffer updated (Descriptor set update deferred to BufferManager)");
 
-        // --- Remove initial command buffer recording ---
-        warn!("[Renderer::new] Skipping initial command buffer recording (will happen in render)");
+        // --- Create Command Pool (Once) ---
+        // Command buffers will be allocated later in record_command_buffers if needed
+        platform.command_pool = Some(unsafe {
+            let queue_family_index = platform.queue_family_index
+                .expect("Queue family index not set in VulkanContext");
+            platform.device.as_ref().unwrap().create_command_pool(
+                &vk::CommandPoolCreateInfo {
+                    s_type: vk::StructureType::COMMAND_POOL_CREATE_INFO,
+                    // Allow resetting individual command buffers or the whole pool
+                    flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+                    queue_family_index,
+                    ..Default::default()
+                },
+                None,
+            )
+        }.expect("Failed to create command pool"));
+        info!("[Renderer::new] Command pool created");
+
 
         // Create sync objects
         platform.image_available_semaphore = Some(unsafe {
@@ -80,7 +102,6 @@ impl Renderer {
 
         Self {
             buffer_manager: buffer_mgr,
-            current_extent: extent, // Store initial extent
             descriptor_pool, // Store for cleanup
             descriptor_set_layout, // Store for cleanup
         }
@@ -88,72 +109,118 @@ impl Renderer {
 
     // Accept &mut VulkanContext
     pub fn resize_renderer(&mut self, vulkan_context: &mut VulkanContext, width: u32, height: u32) {
-        info!("[Renderer::resize_renderer] Called (ECS Migration)");
+        info!("[Renderer::resize_renderer] Called with width: {}, height: {}", width, height);
+        // Prevent resizing to 0x0 which causes Vulkan errors
+        if width == 0 || height == 0 {
+            warn!("[Renderer::resize_renderer] Ignoring resize to zero dimensions.");
+            return;
+        }
         let new_extent = vk::Extent2D { width, height };
         ResizeHandler::resize(
             vulkan_context,
             new_extent,
-            &mut self.buffer_manager.uniform_allocation,
+            &mut self.buffer_manager.uniform_allocation, // Pass the allocation for the UBO update
         );
-        // Update stored extent
-        self.current_extent = new_extent;
-        info!("[Renderer::resize_renderer] Stored extent updated to {:?}", self.current_extent);
+        // Note: Command buffers will be re-allocated inside record_command_buffers
+        // if the framebuffer count changed, which it shouldn't during typical resize.
+        // If swapchain image count changes, this needs more handling.
     }
 
     // --- Modified render signature ---
     // Accept &mut VulkanContext and render commands
-    pub fn render(&mut self, platform: &mut VulkanContext, _render_commands: &[RenderCommandData]) { // Prefix unused render_commands
+    pub fn render(&mut self, platform: &mut VulkanContext, render_commands: &[RenderCommandData]) {
         // --- Clone handles needed *after* the mutable borrow ---
         // Clone the ash::Device handle (cheap)
         let device = platform.device.as_ref().unwrap().clone();
+        // Clone other handles (cheap) - Add check for queue
+        let Some(queue) = platform.queue else {
+            warn!("[Renderer::render] Queue is None, likely during cleanup. Skipping frame.");
+            return;
+        };
         // Clone other handles (cheap)
-        let queue = platform.queue.unwrap(); // vk::Queue is Copy
-        let swapchain_loader = platform.swapchain_loader.as_ref().unwrap().clone(); // swapchain::Device is Clone
-        let swapchain = platform.swapchain.unwrap(); // vk::SwapchainKHR is Copy
-        let image_available_semaphore = platform.image_available_semaphore.unwrap(); // vk::Semaphore is Copy
-        let render_finished_semaphore = platform.render_finished_semaphore.unwrap(); // vk::Semaphore is Copy
-        let fence = platform.fence.unwrap(); // vk::Fence is Copy
+        let Some(queue) = platform.queue else {
+            warn!("[Renderer::render] Queue is None, likely during cleanup. Skipping frame.");
+            return;
+        };
+        // Check if swapchain resources are still valid, might be None during cleanup
+        let Some(swapchain_loader) = platform.swapchain_loader.as_ref().cloned() else {
+            warn!("[Renderer::render] Swapchain loader is None, likely during cleanup. Skipping frame.");
+            return;
+        };
+        let Some(swapchain) = platform.swapchain else {
+            warn!("[Renderer::render] Swapchain is None, likely during cleanup. Skipping frame.");
+            return;
+        };
+        let Some(image_available_semaphore) = platform.image_available_semaphore else {
+            warn!("[Renderer::render] Image available semaphore is None, likely during cleanup. Skipping frame.");
+            return;
+        };
+        let Some(render_finished_semaphore) = platform.render_finished_semaphore else {
+            warn!("[Renderer::render] Render finished semaphore is None, likely during cleanup. Skipping frame.");
+            return;
+        };
+        let Some(fence) = platform.fence else {
+            warn!("[Renderer::render] Fence is None, likely during cleanup. Skipping frame.");
+            return;
+        };
         // Prefix unused allocator
         let _allocator = platform.allocator.as_ref().unwrap(); // Needed for buffer updates
 
+        // --- Wait for previous frame's fence ---
+        // This ensures the GPU is finished with the command buffer and resources
+        // from the *last* time this image index was used before we reset/reuse them.
+        unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }.unwrap();
+        // Reset the fence *before* submitting new work that will signal it
+        unsafe { device.reset_fences(&[fence]) }.unwrap();
+
+
         // --- Prepare Buffers/Descriptors (Call BufferManager) ---
+        // Now it's safe to update descriptor sets as the GPU is done with the previous frame
         // This call takes the mutable borrow of platform
         let prepared_draw_data = self.buffer_manager.prepare_frame_resources(
             platform, // Pass mutable platform here
-            _render_commands, // Pass the commands from rendering_system
+            render_commands, // Pass the commands from rendering_system
         );
         // Mutable borrow of platform for buffer manager ends here
 
-        // --- Record Command Buffers Dynamically ---
-        // This call takes the mutable borrow of platform again
-        record_command_buffers(
-            platform, // Pass mutable platform here
-            &prepared_draw_data, // Pass the prepared data from buffer manager
-            platform.pipeline_layout.expect("Pipeline layout missing for command recording"), // Get layout from platform
-            // Removed global descriptor set parameter
-            self.current_extent, // Use stored extent
-        );
-        // Mutable borrow of platform for command buffers ends here
 
-        // --- Render sequence (Uses cloned handles now) ---
-        unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }.unwrap();
-        unsafe { device.reset_fences(&[fence]) }.unwrap();
-
+        // --- Acquire Swapchain Image ---
         let acquire_result = unsafe {
             swapchain_loader.acquire_next_image(swapchain, u64::MAX, image_available_semaphore, vk::Fence::null())
         };
 
         let image_index = match acquire_result {
-            Ok((index, _suboptimal)) => index,
+            Ok((index, suboptimal)) => {
+                if suboptimal {
+                    warn!("[Renderer::render] Swapchain suboptimal during acquire.");
+                    // TODO: Trigger resize handling here? Or just continue?
+                }
+                index
+            },
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                warn!("[Renderer::render] Swapchain out of date during acquire. Skipping frame.");
-                return;
+                warn!("[Renderer::render] Swapchain out of date during acquire. Triggering resize.");
+                // Trigger resize explicitly
+                self.resize_renderer(platform, platform.current_swap_extent.width, platform.current_swap_extent.height);
+                return; // Skip rest of the frame, resize will handle recreation
             }
             Err(e) => panic!("Failed to acquire swapchain image: {:?}", e),
         };
         // We still need mutable access to platform to update current_image
-        // This is okay because the mutable borrow for record_command_buffers ended.
+        // This is okay because the mutable borrow for buffer manager ended.
         platform.current_image = image_index as usize;
+
+
+        // --- Re-Record Command Buffer for the acquired image index ---
+        // This now happens *after* acquiring the image index and *after* waiting on the fence.
+        // It also resets the command pool/buffer internally.
+        record_command_buffers(
+            platform, // Pass mutable platform here again
+            &prepared_draw_data, // Pass the prepared data from buffer manager
+            platform.pipeline_layout.expect("Pipeline layout missing for command recording"), // Get layout from platform
+            platform.current_swap_extent,
+        );
+        // Mutable borrow for command buffer recording ends here.
+
 
         // Ensure command buffer exists for the acquired image index
         if platform.current_image >= platform.command_buffers.len() {
@@ -162,16 +229,19 @@ impl Renderer {
                  platform.current_image,
                  platform.command_buffers.len()
              );
+             // This might happen if resize occurred but command buffers weren't recreated yet.
+             // The allocation logic in record_command_buffers should handle this now.
              return; // Avoid panic
         }
 
+        // --- Submit Queue ---
         let submit_info = vk::SubmitInfo {
             s_type: vk::StructureType::SUBMIT_INFO,
             wait_semaphore_count: 1,
             p_wait_semaphores: &image_available_semaphore,
             p_wait_dst_stage_mask: &vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
             command_buffer_count: 1,
-            // Still need immutable access to platform.command_buffers here
+            // Use the command buffer for the current image index, which was just recorded
             p_command_buffers: &platform.command_buffers[platform.current_image],
             signal_semaphore_count: 1,
             p_signal_semaphores: &render_finished_semaphore,
@@ -180,10 +250,12 @@ impl Renderer {
         // Use cloned device handle
         if let Err(e) = unsafe { device.queue_submit(queue, &[submit_info], fence) } {
              error!("[Renderer::render] Failed to submit queue: {:?}", e);
-             return;
+             // Don't panic here, let present handle potential OOD
+             // return; // Optionally return early
         }
 
 
+        // --- Present Queue ---
         let present_info = vk::PresentInfoKHR {
             s_type: vk::StructureType::PRESENT_INFO_KHR,
             wait_semaphore_count: 1,
@@ -197,9 +269,17 @@ impl Renderer {
         let present_result = unsafe { swapchain_loader.queue_present(queue, &present_info) };
 
         match present_result {
-            Ok(_suboptimal) => { /* Success or suboptimal */ }
+            Ok(suboptimal) => {
+                if suboptimal {
+                    warn!("[Renderer::render] Swapchain suboptimal during present.");
+                    // Trigger resize explicitly
+                    self.resize_renderer(platform, platform.current_swap_extent.width, platform.current_swap_extent.height);
+                }
+            }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                warn!("[Renderer::render] Swapchain out of date during present.");
+                warn!("[Renderer::render] Swapchain out of date during present. Triggering resize.");
+                // Trigger resize explicitly
+                self.resize_renderer(platform, platform.current_swap_extent.width, platform.current_swap_extent.height);
             }
             Err(e) => panic!("Failed to present swapchain image: {:?}", e),
         }
@@ -211,13 +291,15 @@ impl Renderer {
         // Clone device handle early if needed, but cleanup methods might take platform directly
         let device = platform.device.as_ref().expect("Device not available for cleanup").clone();
 
+        // Ensure GPU is idle before destroying anything
         unsafe { device.device_wait_idle().unwrap(); }
+        info!("[Renderer::cleanup] Device idle.");
 
-        // Call cleanup on BufferManager
+        // Call cleanup on BufferManager first (destroys buffers, pipelines, shaders)
         self.buffer_manager.cleanup(
             platform, // Pass &mut VulkanContext
-            // Pool is now owned by BufferManager, no need to pass
         );
+        info!("[Renderer::cleanup] BufferManager cleanup finished.");
 
         // Cleanup layout and pool stored in Renderer/Platform
         unsafe {
@@ -231,25 +313,35 @@ impl Renderer {
             info!("[Renderer::cleanup] Descriptor pool and set layout destroyed");
         }
 
-        // Cleanup swapchain resources (Remains the same, uses platform)
-        if let Some(swapchain_loader) = platform.swapchain_loader.take() {
-            unsafe {
-                if let Some(sema) = platform.image_available_semaphore.take() { device.destroy_semaphore(sema, None); }
-                if let Some(sema) = platform.render_finished_semaphore.take() { device.destroy_semaphore(sema, None); }
-                if let Some(fen) = platform.fence.take() { device.destroy_fence(fen, None); }
-                if let Some(pool) = platform.command_pool.take() {
-                    if !platform.command_buffers.is_empty() {
-                        device.free_command_buffers(pool, &platform.command_buffers);
-                        platform.command_buffers.clear();
-                    }
-                    device.destroy_command_pool(pool, None);
+        // Cleanup swapchain resources (Framebuffers, Views, Swapchain, RenderPass)
+        // Use the dedicated cleanup function
+        crate::gui_framework::rendering::swapchain::cleanup_swapchain_resources(platform);
+        info!("[Renderer::cleanup] Swapchain resources cleanup finished.");
+
+
+        // Cleanup remaining resources (Sync objects, Command Pool)
+        unsafe {
+            if let Some(sema) = platform.image_available_semaphore.take() { device.destroy_semaphore(sema, None); }
+            if let Some(sema) = platform.render_finished_semaphore.take() { device.destroy_semaphore(sema, None); }
+            if let Some(fen) = platform.fence.take() { device.destroy_fence(fen, None); }
+            info!("[Renderer::cleanup] Sync objects destroyed.");
+
+            // Cleanup command pool *after* waiting for idle and *before* device destroy
+            if let Some(pool) = platform.command_pool.take() {
+                // Command buffers should be implicitly freed by pool destruction,
+                // but explicit free doesn't hurt if needed. They are empty now anyway.
+                if !platform.command_buffers.is_empty() {
+                    // device.free_command_buffers(pool, &platform.command_buffers); // Optional explicit free
+                    platform.command_buffers.clear(); // Clear the vec
                 }
-                for fb in platform.framebuffers.drain(..) { device.destroy_framebuffer(fb, None); }
-                if let Some(rp) = platform.render_pass.take() { device.destroy_render_pass(rp, None); }
-                if let Some(sc) = platform.swapchain.take() { swapchain_loader.destroy_swapchain(sc, None); }
-                for view in platform.image_views.drain(..) { device.destroy_image_view(view, None); }
+                device.destroy_command_pool(pool, None); // Now destroy the pool
+                info!("[Renderer::cleanup] Command pool destroyed.");
             }
         }
+
+        // Note: VulkanContext itself (device, instance, allocator) is cleaned up
+        // by the main cleanup_system calling vulkan_setup::cleanup_vulkan
+
         info!("[Renderer::cleanup] Finished");
     }
 }

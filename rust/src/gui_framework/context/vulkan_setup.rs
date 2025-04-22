@@ -27,8 +27,16 @@ pub fn setup_vulkan(app: &mut VulkanContext, window: &winit::window::Window) {
     println!("[setup_vulkan] Required surface extensions enumerated.");
 
     // TODO: Add validation layer setup here if desired
-    let layers = []; // No layers for now
-    // let layers = [c"VK_LAYER_KHRONOS_validation".as_ptr()]; // Example for validation
+    //let layers = []; // Use this if no validation required
+    // Enable validation layers in debug builds
+    #[cfg(debug_assertions)]
+    let layers = unsafe {
+        [std::ffi::CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr()]
+    };
+    #[cfg(not(debug_assertions))]
+    let layers = [];
+    #[cfg(debug_assertions)]
+    println!("[setup_vulkan] Enabling Validation Layers.");
 
     let instance_desc = vk::InstanceCreateInfo {
         s_type: vk::StructureType::INSTANCE_CREATE_INFO,
@@ -87,9 +95,10 @@ pub fn setup_vulkan(app: &mut VulkanContext, window: &winit::window::Window) {
             }
         })
     })
-    .expect("Failed to find suitable GPU and queue family"); // Add expect
+    .expect("Failed to find suitable GPU and queue family");
 
-    // Store the found queue family index
+    // Store the found queue family index and physical device
+    app.physical_device = Some(physical_device); // Store the physical device
     app.queue_family_index = Some(queue_family_index);
     println!("[setup_vulkan] Selected queue family index: {}", queue_family_index);
 

@@ -1,4 +1,4 @@
-use bevy_app::{App, AppExit, Startup, Update, Last, PluginGroup}; // Added PluginGroup
+use bevy_app::{App, AppExit, Startup, Update, Last};
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::common_conditions::on_event;
 use bevy_log::{info, error, warn, LogPlugin, Level};
@@ -556,7 +556,7 @@ fn cleanup_system(
     };
 
     // 1. Attempt to cleanup Renderer via Mutex lock
-    if let Some(mut renderer_res_mut) = renderer_res_opt { // Get ResMut
+    if let Some(renderer_res_mut) = renderer_res_opt { // Get ResMut
         info!("RendererResource found.");
         match renderer_res_mut.0.lock() {
             Ok(mut renderer_guard) => { // Get MutexGuard<Renderer>

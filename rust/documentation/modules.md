@@ -3,15 +3,14 @@
 ## Project Overview: `rusty_whip`
 ### Purpose
 `rusty_whip` is an advanced 2D & 3D content generation application with GPU-accelerated AI diffusion/inference, multimedia creation, and story-driven workflows, targeting P2P networking. **It has migrated its core logic to the Bevy engine (v0.15), strictly avoiding Bevy's rendering stack.**
-### Current State (Post Task 6.3 Follow-up)
+### Current State (Post Task 6.3 Follow-up & Cleanup)
 - **Bevy Integration**: Application runs using `bevy_app::App`, `bevy_winit`, `bevy_input`, `bevy_transform`, and other core non-rendering Bevy plugins.
-- **ECS Migration**: Core application state managed via Bevy ECS components. User input processed by Bevy systems, triggering Bevy events.
+- **ECS Core**: Application state and logic managed via Bevy ECS components (`ShapeData`, `Visibility`, `Interaction`, `Transform`). User input processed by Bevy systems, triggering Bevy events (`EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`).
 - **Math Migration**: Uses `bevy_math` types (`Vec2`, `Mat4`).
 - **Rendering Bridge**: Custom Vulkan context (`VulkanContext`) managed via `VulkanContextResource`. Custom Vulkan renderer (`Renderer`) accessed via `RendererResource`.
-- **Rendering Status**: Rendering is triggered by `rendering_system` which collects `RenderCommandData`. `BufferManager` creates/updates Vulkan resources (buffers, descriptor sets) based on this data, utilizing **pipeline and shader caching**. `command_buffers` uses the prepared data to record draw calls. Synchronization and resize handling are corrected. **Visual output is functional.** `Renderable` struct removed. **Optimizations needed: resource removal for despawned entities, vertex buffer updates.**
+- **Rendering Status**: Rendering is triggered by `rendering_system` which collects `RenderCommandData` from ECS entities. `BufferManager` creates/updates Vulkan resources (buffers, descriptor sets) based on this data, utilizing **pipeline and shader caching**. `command_buffers` uses the prepared data to record draw calls. Synchronization and resize handling are corrected. **Visual output is functional.** **Optimizations needed: resource removal for despawned entities, vertex buffer updates.**
 - **Features Active**: Bevy app structure, windowing, logging, input handling (click, drag, hotkeys), ECS component/event usage, `bevy_transform`, core Vulkan setup, hotkey loading, ECS-driven Vulkan resource management with caching, corrected synchronization and resize handling.
-- **Modules Removed**: `gui_framework/scene/`, `gui_framework/event_bus.rs`, `gui_framework/interaction/controller.rs`, `gui_framework/rendering/renderable.rs`.
-- Task 1-5 **Complete** (Legacy). Task 6.1, 6.2 **Complete**. Task 6.3 **Complete**. Task 6.3 Follow-up (Caching, Debugging, Synchronization, Resize) **Complete**.
+- Task 1-5 **Complete** (Legacy). Task 6.1, 6.2 **Complete**. Task 6.3 **Complete**. Task 6.3 Follow-up (Caching, Debugging, Synchronization, Resize) **Complete**. Legacy `event_bus` and `scene` modules **removed**.
 
 ## Module Structure
 Studio_Whip/
@@ -37,7 +36,7 @@ Studio_Whip/
                     hotkeys.rs
                     mod.rs
                 rendering/
-                    buffer_manager.rs  
+                    buffer_manager.rs
                     command_buffers.rs
                     mod.rs
                     pipeline_manager.rs
@@ -53,7 +52,9 @@ Studio_Whip/
         user/
             hotkeys.toml
         Documentation/
-            # ... docs ...
+            modules.md # This file
+            architecture.md
+            # ... other docs ...
         utilities/
             # ... utils ...
         Cargo.toml
@@ -69,7 +70,7 @@ Studio_Whip/
     - `Vertex { position: [f32; 2] }`
     - `RenderCommandData { entity_id: Entity, transform_matrix: Mat4, vertices: Arc<Vec<Vertex>>, vertex_shader_path: String, fragment_shader_path: String, depth: f32 }`
     - `PreparedDrawData { pipeline: vk::Pipeline, vertex_buffer: vk::Buffer, vertex_count: u32, descriptor_set: vk::DescriptorSet }`
-- **Notes**: Uses `ash::vk`. `Arc` used in `RenderCommandData`.
+- **Notes**: Uses `ash::vk`, `bevy_ecs::Entity`, `bevy_math::Mat4`, `std::sync::Arc`.
 
 ### `src/main.rs`
 - **Purpose**: Entry point; sets up `bevy_app::App`, core Bevy plugins, resources (`VulkanContextResource`, `RendererResource`, `HotkeyResource`), events, and systems for lifecycle, ECS setup, input, state updates, and triggering the custom Vulkan rendering backend.
@@ -94,7 +95,7 @@ Studio_Whip/
 
 ### `src/gui_framework/mod.rs`
 - **Purpose**: Declares and re-exports framework modules. Exports types needed for Vulkan backend and hotkey config.
-- **Notes**: No longer declares/exports `scene`, `event_bus`, or `renderable`. `interaction` module only contains `hotkeys`.
+- **Notes**: `interaction` module only contains `hotkeys`.
 
 ### `src/gui_framework/components/mod.rs`
 - **Purpose**: Declares and re-exports Bevy ECS component modules.
@@ -121,7 +122,7 @@ Studio_Whip/
 
 ### `src/gui_framework/context/vulkan_context.rs`
 - **Purpose**: Holds core Vulkan resources (instance, physical device, logical device, allocator, pipeline layout, swapchain info, etc.) and related state.
-- **Key Structs**: `VulkanContext { entry, instance, surface_loader, surface, physical_device: Option<vk::PhysicalDevice>, device, queue, queue_family_index, allocator, swapchain_loader, swapchain, current_swap_extent: vk::Extent2D, images, image_views, render_pass, framebuffers, pipeline_layout: Option<vk::PipelineLayout>, command_pool, command_buffers, image_available_semaphore, render_finished_semaphore, fence, current_image }`. (Removed obsolete shader/buffer fields).
+- **Key Structs**: `VulkanContext { entry, instance, surface_loader, surface, physical_device: Option<vk::PhysicalDevice>, device, queue, queue_family_index, allocator, swapchain_loader, swapchain, current_swap_extent: vk::Extent2D, images, image_views, render_pass, framebuffers, pipeline_layout: Option<vk::PipelineLayout>, command_pool, command_buffers, image_available_semaphore, render_finished_semaphore, fence, current_image }`.
 - **Key Methods**: `new() -> Self`.
 - **Notes**: Managed via `VulkanContextResource`. Holds actual swap extent.
 
@@ -160,7 +161,7 @@ Studio_Whip/
 
 ### `src/gui_framework/rendering/render_engine.rs`
 - **Purpose**: Orchestrates custom Vulkan rendering per frame. Manages `BufferManager`, descriptor pool/layout handles, command pool, and sync objects. Handles frame synchronization using fences. Calls `BufferManager` to prepare resources and `command_buffers` to record draws. Triggers swapchain recreation on resize. Uses `bevy_math::Mat4`.
-- **Key Structs**: `Renderer { buffer_manager: BufferManager, descriptor_pool: vk::DescriptorPool, descriptor_set_layout: vk::DescriptorSetLayout }`. (Removed `current_extent`).
+- **Key Structs**: `Renderer { buffer_manager: BufferManager, descriptor_pool: vk::DescriptorPool, descriptor_set_layout: vk::DescriptorSetLayout }`.
 - **Key Methods**:
   - `new(platform: &mut VulkanContext, extent: vk::Extent2D) -> Self`
   - `resize_renderer(&mut self, vulkan_context: &mut VulkanContext, width: u32, height: u32) -> ()`
@@ -217,5 +218,5 @@ Studio_Whip/
 - **Roles**: Support orthographic projection (UBO binding 0), object transform matrix (UBO binding 1). Use vertex position (location 0) as input. Loaded by `BufferManager`.
 
 ## Dependencies
-- `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, **`bevy_app = "0.15"`**, **`bevy_core = "0.15"`**, **`bevy_ecs = "0.15"`**, **`bevy_log = "0.15"`**, **`bevy_utils = "0.15"`**, **`bevy_window = "0.15"`**, **`bevy_winit = "0.15"`**, **`bevy_reflect = "0.15"`**, **`bevy_input = "0.15"`**, **`bevy_time = "0.15"`**, **`bevy_diagnostic = "0.15"`**, **`bevy_a11y = "0.15"`**, **`bevy_math = "0.15"`**, **`bevy_transform = "0.15"`**. (Removed `glam`). `winit = "0.30.9"` (Used internally by `bevy_winit` and `vulkan_setup`).
+- `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, **`bevy_app = "0.15"`**, **`bevy_core = "0.15"`**, **`bevy_ecs = "0.15"`**, **`bevy_log = "0.15"`**, **`bevy_utils = "0.15"`**, **`bevy_window = "0.15"`**, **`bevy_winit = "0.15"`**, **`bevy_reflect = "0.15"`**, **`bevy_input = "0.15"`**, **`bevy_time = "0.15"`**, **`bevy_diagnostic = "0.15"`**, **`bevy_a11y = "0.15"`**, **`bevy_math = "0.15"`**, **`bevy_transform = "0.15"`**. `winit = "0.30.9"` (Used internally by `bevy_winit` and `vulkan_setup`).
 - **Build Dependencies**: `walkdir = "2"`.

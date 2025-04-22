@@ -1,7 +1,7 @@
-# Architecture Overview for `rusty_whip` (Updated: 2025-04-22)
+# Architecture Overview for `rusty_whip`
 
 ## Purpose
-`rusty_whip` is an advanced 2D and 3D content generation application for digital entertainment production, leveraging GPU-accelerated AI diffusion/inference, multimedia creation (2D video, stills, animation, audio), and story-driven workflows, with plans for quantum-resistant P2P networking. **It has migrated its core logic (excluding rendering) to the Bevy game engine ecosystem (v0.15), strictly avoiding Bevy's rendering stack (`bevy_render`, `wgpu`, etc.) in favor of its custom Vulkan backend.**
+`rusty_whip` is an advanced 2D and 3D content generation application for digital entertainment production, leveraging GPU-accelerated AI diffusion/inference, multimedia creation (2D video, stills, animation, audio), and story-driven workflows, with plans for quantum-resistant P2P networking. **It uses the Bevy game engine (v0.15) for its core application structure, input handling, and ECS (Entity Component System), while strictly avoiding Bevy's rendering stack (`bevy_render`, `wgpu`, etc.) in favor of its custom Vulkan backend.**
 
 ## Core Components
 1.  **Vulkan Context Management (`context/`)**
@@ -17,10 +17,10 @@
     *   Role: **Core resource manager.** Manages the global projection uniform buffer and per-entity Vulkan resources (vertex buffers, transform UBOs, descriptor sets) based on ECS `RenderCommandData`. Uses layout/pool provided during initialization to allocate per-entity descriptor sets. **Caches pipelines and shader modules** based on shader paths. **Lacks optimization for resource removal (despawned entities) and vertex buffer updates.**
     *   Key Modules: `buffer_manager.rs`.
 5.  **Bevy ECS Components (`components/`)**
-    *   Role: Defines the data associated with entities (e.g., shape, visibility, interaction properties). Replaces the old `RenderObject`/`ElementPool`.
-    *   Key Modules: `shape_data.rs` (uses `Arc<Vec<Vertex>>`), `visibility.rs` (custom), `interaction.rs`. Uses `bevy_transform::components::Transform`.
+    *   Role: Defines the data associated with entities (e.g., shape, visibility, interaction properties). Used alongside `bevy_transform::components::Transform`.
+    *   Key Modules: `shape_data.rs` (uses `Arc<Vec<Vertex>>`), `visibility.rs` (custom), `interaction.rs`.
 6.  **Bevy Events (`events/`)**
-    *   Role: Defines event types for communication between systems (e.g., user interactions, hotkey triggers). Replaces the old `EventBus`.
+    *   Role: Defines event types for communication between systems (e.g., user interactions, hotkey triggers).
     *   Key Modules: `interaction_events.rs`.
 7.  **Hotkey Loading (`interaction/hotkeys.rs`)**
     *   Role: Loads hotkey configurations from a TOML file. The configuration is stored in the `HotkeyResource`.
@@ -31,7 +31,7 @@
     *   Role: Compiles GLSL shaders (`.vert`, `.frag`) to SPIR-V (`.spv`) using `glslc`, copies compiled shaders and runtime assets (e.g., `user/hotkeys.toml`) to the target build directory. Tracks shader source files for recompilation.
     *   Key Modules: `build.rs`.
 
-## Data Flow (Post Task 6.3 Follow-up)
+## Data Flow (Post Task 6.3 Follow-up & Cleanup)
 1.  `main.rs` initializes `bevy_app::App`, adds core non-rendering plugins, registers custom components/events, and inserts initial resources (`VulkanContextResource`).
 2.  Bevy `Startup` schedule runs:
     *   `setup_vulkan_system` initializes core Vulkan via `VulkanContextResource`.
@@ -58,7 +58,7 @@
         *   Presents the swapchain image. Handles `OUT_OF_DATE` by triggering resize.
     *   `cleanup_system` (runs if `AppExit` event occurred) removes `RendererResource`, calls `Renderer::cleanup` (which calls cleanup on `BufferManager` and destroys renderer-owned resources), and `cleanup_vulkan`.
 
-## Key Interactions (Post Task 6.3 Follow-up)
+## Key Interactions (Post Task 6.3 Follow-up & Cleanup)
 - **Bevy Systems (`main.rs`) <-> ECS (Components, Events, Resources)**: Systems query/modify components, read/write events, and access resources (`VulkanContextResource`, `RendererResource`, `HotkeyResource`, `ButtonInput`).
 - **`setup_vulkan_system` -> `vulkan_setup::setup_vulkan`**: Initializes core Vulkan.
 - **`create_renderer_system` -> `Renderer::new`**: Initializes custom renderer state, swapchain, framebuffers, sync objects, command pool, and `BufferManager`. Stores `pipeline_layout` in `VulkanContext`.
@@ -77,7 +77,7 @@
 - **`VulkanContext` <-> Vulkan Components**: Provides core Vulkan resources (instance, device, allocator, pipeline layout, swap extent, etc.).
 - **`build.rs` -> Target Directory**: Compiles shaders, copies `.spv` files and configuration files.
 
-## Current Capabilities (Post Task 6.3 Follow-up)
+## Current Capabilities (Post Task 6.3 Follow-up & Cleanup)
 - **Bevy Integration**: Application runs within `bevy_app`, using core non-rendering plugins (`bevy_log`, `bevy_input`, `bevy_transform`, `bevy_window`, `bevy_winit`, etc.).
 - **Bevy Math**: Uses `bevy_math` types (`Vec2`, `Mat4`).
 - **Bevy ECS**: Defines and uses custom components (`ShapeData` [using `Arc<Vec<Vertex>>`], `Visibility`, `Interaction`) and `bevy_transform::components::Transform`. Entities spawned at startup.
@@ -117,12 +117,12 @@
 - Shaders support orthographic projection (binding 0) and object transformation matrix (binding 1). Only vertex position (location 0) is currently used as input.
 
 ## Dependencies
-- External crates: `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, **`bevy_app = "0.15"`**, **`bevy_core = "0.15"`**, **`bevy_ecs = "0.15"`**, **`bevy_log = "0.15"`**, **`bevy_utils = "0.15"`**, **`bevy_window = "0.15"`**, **`bevy_winit = "0.15"`**, **`bevy_reflect = "0.15"`**, **`bevy_input = "0.15"`**, **`bevy_time = "0.15"`**, **`bevy_diagnostic = "0.15"`**, **`bevy_a11y = "0.15"`**, **`bevy_math = "0.15"`**, **`bevy_transform = "0.15"`**. (Removed `glam`). `winit = "0.30.9"` (Used internally by `bevy_winit` and `vulkan_setup`).
+- External crates: `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, **`bevy_app = "0.15"`**, **`bevy_core = "0.15"`**, **`bevy_ecs = "0.15"`**, **`bevy_log = "0.15"`**, **`bevy_utils = "0.15"`**, **`bevy_window = "0.15"`**, **`bevy_winit = "0.15"`**, **`bevy_reflect = "0.15"`**, **`bevy_input = "0.15"`**, **`bevy_time = "0.15"`**, **`bevy_diagnostic = "0.15"`**, **`bevy_a11y = "0.15"`**, **`bevy_math = "0.15"`**, **`bevy_transform = "0.15"`**. `winit = "0.30.9"` (Used internally by `bevy_winit` and `vulkan_setup`).
 - Build dependencies: `walkdir = "2"`.
 - Shaders: Precompiled `.spv` files in target directory.
 
 ## Notes
-- **Migration State**: Application core logic migrated to Bevy ECS/Input/Events. Custom Vulkan rendering backend implements ECS-driven resource management with pipeline/shader caching and corrected synchronization. Strict avoidance of `bevy_render`.
+- **Migration State**: Application core logic uses Bevy ECS/Input/Events. Custom Vulkan rendering backend implements ECS-driven resource management with pipeline/shader caching and corrected synchronization. Strict avoidance of `bevy_render`.
 - **Known Issues**: `BufferManager` lacks resource removal for despawned entities and vertex buffer updates on `Changed<ShapeData>`. `vulkan_setup` still uses `winit::window::Window` directly (though Bevy manages the window).
 - Vulkan’s inverted Y-axis handled in `movement_system`.
 - Cleanup logic uses `MutexGuard` and `device_wait_idle`.

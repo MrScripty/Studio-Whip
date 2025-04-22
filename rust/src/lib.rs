@@ -1,14 +1,13 @@
 use bevy_ecs::prelude::Entity;
 use std::sync::Arc;
 use ash::vk;
+use bevy_reflect::{Reflect, TypePath};
 
 pub mod gui_framework;
-// Remove the broad re-export:
-// pub use gui_framework::*;
 
 // Keep Vertex definition accessible
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Reflect)]
 pub struct Vertex {
     pub position: [f32; 2],
 }
@@ -23,12 +22,11 @@ pub struct PreparedDrawData {
     // Add instance buffer/count later if needed
 }
 
-// --- Moved Render Command Data Here ---
 #[derive(Debug, Clone)]
 pub struct RenderCommandData {
     pub entity_id: Entity,
     pub transform_matrix: bevy_math::Mat4, // Pre-calculated world matrix
-    pub vertices: Arc<Vec<Vertex>>, // Use Arc for potential sharing
+    pub vertices: Arc<Vec<Vertex>>,
     pub vertex_shader_path: String,
     pub fragment_shader_path: String,
     pub depth: f32, // For sorting

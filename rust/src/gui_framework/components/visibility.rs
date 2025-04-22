@@ -1,11 +1,9 @@
 use bevy_ecs::prelude::Component;
-// If reflection is needed later (Task 6.4), add:
-// use bevy_reflect::Reflect;
+use bevy_reflect::Reflect;
 
 /// Custom visibility component to avoid Bevy's rendering stack.
 /// Controls whether the entity is processed by the custom Vulkan renderer.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-// #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Reflect)] // With reflection
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Reflect)]
 pub struct Visibility(pub bool);
 
 impl Default for Visibility {

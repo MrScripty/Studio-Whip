@@ -480,35 +480,53 @@ impl BufferManager {
                  info!("[BufferManager::cleanup] No cached descriptor sets to free.");
             }
 
-            // Cleanup entity-specific resources
-            for (_entity_id, mut resources) in self.entity_cache.drain() {
-                // Pipeline and shaders are no longer stored per-entity
-                // Allocations are now stored directly, not Option
-                allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
-                allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
-                // Cleanup instancing buffers later if added
-            }
-            info!("[BufferManager::cleanup] Cleaned up {} entity-specific resources.", sets_to_free.len()); // Log count based on freed sets
+           // Cleanup entity-specific resources
+           let entity_count = self.entity_cache.len(); // Get count before draining
+           for (entity_id, mut resources) in self.entity_cache.drain() {
+               // Log before destroying vertex buffer/allocation
+               info!(
+                   "[BufferManager::cleanup] Destroying Entity {:?} Vertex Buffer: {:?}, Allocation: {:?}",
+                   entity_id, resources.vertex_buffer, resources.vertex_allocation // Allocation debug might be limited
+               );
+               allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
 
-            // Cleanup cached pipelines
-            info!("[BufferManager::cleanup] Cleaning up {} cached pipelines...", self.pipeline_cache.len());
-            for (_key, pipeline) in self.pipeline_cache.drain() {
+               // Log before destroying offset uniform buffer/allocation
+               info!(
+                   "[BufferManager::cleanup] Destroying Entity {:?} Offset Uniform: {:?}, Allocation: {:?}",
+                   entity_id, resources.offset_uniform, resources.offset_allocation
+               );
+               allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
+               // Cleanup instancing buffers later if added
+           }
+           info!("[BufferManager::cleanup] Cleaned up {} entity-specific resources.", entity_count); // Log count based on initial size
+
+           // Cleanup cached pipelines
+           let pipeline_count = self.pipeline_cache.len();
+           info!("[BufferManager::cleanup] Cleaning up {} cached pipelines...", pipeline_count);
+           for (key, pipeline) in self.pipeline_cache.drain() {
+                info!("[BufferManager::cleanup] Destroying Pipeline: {:?} ({:?})", key, pipeline);
                 device.destroy_pipeline(pipeline, None);
-            }
+           }
 
-            // Cleanup cached shaders
-            info!("[BufferManager::cleanup] Cleaning up {} cached shaders...", self.shader_cache.len());
-            for (_key, shader_module) in self.shader_cache.drain() {
+           // Cleanup cached shaders
+           let shader_count = self.shader_cache.len();
+           info!("[BufferManager::cleanup] Cleaning up {} cached shaders...", shader_count);
+           for (key, shader_module) in self.shader_cache.drain() {
+                info!("[BufferManager::cleanup] Destroying Shader: {} ({:?})", key, shader_module);
                 device.destroy_shader_module(shader_module, None);
-            }
+           }
 
-            // self.entity_cache, pipeline_cache, shader_cache are now empty after drain
+           // self.entity_cache, pipeline_cache, shader_cache are now empty after drain
 
             // Cleanup uniform buffer (Still owned by BufferManager)
             // Need mutable access to the allocation field itself for destroy_buffer
+            info!(
+                "[BufferManager::cleanup] Destroying Global Uniform Buffer: {:?}, Allocation: {:?}",
+                self.uniform_buffer, self.uniform_allocation
+            );
             allocator.destroy_buffer(self.uniform_buffer, &mut self.uniform_allocation);
-            info!("[BufferManager::cleanup] Uniform buffer destroyed");
-            self.uniform_buffer = vk::Buffer::null(); // Mark as destroyed
+            info!("[BufferManager::cleanup] Uniform buffer destroyed"); // Keep this confirmation
+
         }
         info!("[BufferManager::cleanup] Finished");
     }

@@ -3,14 +3,16 @@
 ## Project Overview: `rusty_whip`
 ### Purpose
 `rusty_whip` is an advanced 2D & 3D content generation application with GPU-accelerated AI diffusion/inference, multimedia creation, and story-driven workflows, targeting P2P networking. **It has migrated its core logic to the Bevy engine (v0.15), strictly avoiding Bevy's rendering stack.**
-### Current State (Post Task 6.3 Follow-up & Cleanup)
-- **Bevy Integration**: Application runs using `bevy_app::App`, `bevy_winit`, `bevy_input`, `bevy_transform`, and other core non-rendering Bevy plugins.
+### Current State (Post Task 6.4 & Cleanup Fix)
+- **Bevy Integration**: Application runs using `bevy_app::App`, `bevy_winit`, `bevy_input`, `bevy_transform`, `bevy_log`, `bevy_reflect` and other core non-rendering Bevy plugins.
 - **ECS Core**: Application state and logic managed via Bevy ECS components (`ShapeData`, `Visibility`, `Interaction`, `Transform`). User input processed by Bevy systems, triggering Bevy events (`EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`).
+- **Reflection**: Core components, events, and hotkey resources implement `Reflect` and are registered with the `AppTypeRegistry`.
 - **Math Migration**: Uses `bevy_math` types (`Vec2`, `Mat4`).
 - **Rendering Bridge**: Custom Vulkan context (`VulkanContext`) managed via `VulkanContextResource`. Custom Vulkan renderer (`Renderer`) accessed via `RendererResource`.
-- **Rendering Status**: Rendering is triggered by `rendering_system` which collects `RenderCommandData` from ECS entities. `BufferManager` creates/updates Vulkan resources (buffers, descriptor sets) based on this data, utilizing **pipeline and shader caching**. `command_buffers` uses the prepared data to record draw calls. Synchronization and resize handling are corrected. **Visual output is functional.** **Optimizations needed: resource removal for despawned entities, vertex buffer updates.**
-- **Features Active**: Bevy app structure, windowing, logging, input handling (click, drag, hotkeys), ECS component/event usage, `bevy_transform`, core Vulkan setup, hotkey loading, ECS-driven Vulkan resource management with caching, corrected synchronization and resize handling.
-- Task 1-5 **Complete** (Legacy). Task 6.1, 6.2 **Complete**. Task 6.3 **Complete**. Task 6.3 Follow-up (Caching, Debugging, Synchronization, Resize) **Complete**. Legacy `event_bus` and `scene` modules **removed**.
+- **Rendering Status**: Rendering is triggered by `rendering_system` (conditional on not exiting) which collects `RenderCommandData` from ECS entities. `BufferManager` creates/updates Vulkan resources (buffers, descriptor sets) based on this data, utilizing **pipeline and shader caching**. `command_buffers` uses the prepared data to record draw calls. Synchronization and resize handling are corrected. **Visual output is functional.** **Optimizations needed: resource removal for despawned entities, vertex buffer updates.**
+- **Shutdown**: Robust shutdown sequence implemented via `cleanup_trigger_system` running on `AppExit` ensures correct Vulkan resource cleanup order.
+- **Features Active**: Bevy app structure, windowing, logging, reflection, input handling (click, drag, hotkeys), ECS component/event usage, `bevy_transform`, core Vulkan setup, hotkey loading, ECS-driven Vulkan resource management with caching, corrected synchronization and resize handling, robust shutdown.
+- Task 1-5 **Complete** (Legacy). Task 6.1, 6.2, 6.3 **Complete**. Task 6.3 Follow-up **Complete**. Task 6.4 **Complete**. Legacy `event_bus` and `scene` modules **removed**.
 
 ## Module Structure
 Studio_Whip/
@@ -67,17 +69,17 @@ Studio_Whip/
 ### `src/lib.rs`
 - **Purpose**: Defines shared types (`Vertex`, `RenderCommandData`, `PreparedDrawData`).
 - **Key Structs**:
-    - `Vertex { position: [f32; 2] }`
+    - `Vertex { position: [f32; 2] }` (Derives `Reflect`)
     - `RenderCommandData { entity_id: Entity, transform_matrix: Mat4, vertices: Arc<Vec<Vertex>>, vertex_shader_path: String, fragment_shader_path: String, depth: f32 }`
     - `PreparedDrawData { pipeline: vk::Pipeline, vertex_buffer: vk::Buffer, vertex_count: u32, descriptor_set: vk::DescriptorSet }`
-- **Notes**: Uses `ash::vk`, `bevy_ecs::Entity`, `bevy_math::Mat4`, `std::sync::Arc`.
+- **Notes**: Uses `ash::vk`, `bevy_ecs::Entity`, `bevy_math::Mat4`, `std::sync::Arc`, `bevy_reflect::Reflect`.
 
 ### `src/main.rs`
-- **Purpose**: Entry point; sets up `bevy_app::App`, core Bevy plugins, resources (`VulkanContextResource`, `RendererResource`, `HotkeyResource`), events, and systems for lifecycle, ECS setup, input, state updates, and triggering the custom Vulkan rendering backend.
+- **Purpose**: Entry point; sets up `bevy_app::App`, core Bevy plugins, resources (`VulkanContextResource`, `RendererResource`, `HotkeyResource`), events, reflection registration, and systems for lifecycle, ECS setup, input, state updates, rendering, and shutdown cleanup.
 - **Key Structs (Defined In `main.rs`)**:
-    - `VulkanContextResource(Arc<Mutex<VulkanContext>>)`
-    - `RendererResource(Arc<Mutex<Renderer>>)`
-    - `HotkeyResource(HotkeyConfig)`
+    - `VulkanContextResource(Arc<Mutex<VulkanContext>>)` (Derives `Resource`, `Clone`)
+    - `RendererResource(Arc<Mutex<Renderer>>)` (Derives `Resource`, `Clone`)
+    - `HotkeyResource(HotkeyConfig)` (Derives `Resource`, `Debug`, `Clone`, `Default`, `Reflect`)
 - **Key Methods (Bevy Systems)**:
     - `main() -> ()`
     - `setup_vulkan_system(...) -> Result<(), String>`: Initializes Vulkan context.
@@ -88,10 +90,10 @@ Studio_Whip/
     - `movement_system(...) -> ()`: Updates `Transform` components based on drag events.
     - `app_control_system(...) -> ()`: Handles application exit via hotkey events.
     - `handle_resize_system(...) -> ()`: Calls `Renderer::resize_renderer`.
-    - `rendering_system(...) -> ()`: Queries ECS (`GlobalTransform`, `ShapeData`, `Visibility`), collects `RenderCommandData`, calls `Renderer::render`.
+    - `rendering_system(...) -> ()`: Queries ECS (`GlobalTransform`, `ShapeData`, `Visibility`), collects `RenderCommandData`, calls `Renderer::render`. Runs conditionally (`not(on_event::<AppExit>)`).
     - `handle_close_request(...) -> ()`: Sends `AppExit` on window close request.
-    - `cleanup_system(...) -> ()`: Cleans up `RendererResource` and `VulkanContextResource` on `AppExit`.
-- **Notes**: Uses Bevy App structure. Manages Vulkan state via `Resource` bridge pattern. Rendering uses actual `Renderer` whose `BufferManager` now implements caching.
+    - `cleanup_trigger_system(world: &mut World) -> ()`: Runs on `AppExit` in `Update` schedule. Takes ownership of Vulkan/Renderer resources via `world.remove_resource()` and performs synchronous cleanup.
+- **Notes**: Uses Bevy App structure. Manages Vulkan state via `Resource` bridge pattern. Rendering uses actual `Renderer` whose `BufferManager` implements caching. Registers reflectable types. Implements robust shutdown via `cleanup_trigger_system`.
 
 ### `src/gui_framework/mod.rs`
 - **Purpose**: Declares and re-exports framework modules. Exports types needed for Vulkan backend and hotkey config.
@@ -103,17 +105,17 @@ Studio_Whip/
 
 ### `src/gui_framework/components/shape_data.rs`
 - **Purpose**: Defines the visual shape data for an entity.
-- **Key Structs**: `ShapeData { vertices: Arc<Vec<Vertex>>, vertex_shader_path: String, fragment_shader_path: String }`.
-- **Notes**: Uses `Arc` for vertices. Used by `rendering_system` to create `RenderCommandData`. Shader paths are relative to `shaders/` dir and expect `.spv` extension (compilation handled by `build.rs`).
+- **Key Structs**: `ShapeData { vertices: Arc<Vec<Vertex>>, vertex_shader_path: String, fragment_shader_path: String }` (Derives `Component`, `Debug`, `Clone`, `Reflect`).
+- **Notes**: Uses `Arc` for vertices. Used by `rendering_system` to create `RenderCommandData`. Shader paths are relative to `shaders/` dir and expect `.spv` extension (compilation handled by `build.rs`). Requires `Vertex` to implement `Reflect`.
 
 ### `src/gui_framework/components/visibility.rs`
 - **Purpose**: Defines a custom visibility component to avoid `bevy_render`.
-- **Key Structs**: `Visibility(pub bool)`.
+- **Key Structs**: `Visibility(pub bool)` (Derives `Component`, `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Reflect`).
 - **Notes**: Used by `rendering_system` to filter visible entities.
 
 ### `src/gui_framework/components/interaction.rs`
 - **Purpose**: Defines interaction properties for an entity.
-- **Key Structs**: `Interaction { clickable: bool, draggable: bool }`.
+- **Key Structs**: `Interaction { clickable: bool, draggable: bool }` (Derives `Component`, `Debug`, `Clone`, `Copy`, `Reflect`).
 - **Notes**: Used by `interaction_system` to determine how entities react to input.
 
 ### `src/gui_framework/context/mod.rs`
@@ -122,14 +124,14 @@ Studio_Whip/
 
 ### `src/gui_framework/context/vulkan_context.rs`
 - **Purpose**: Holds core Vulkan resources (instance, physical device, logical device, allocator, pipeline layout, swapchain info, etc.) and related state.
-- **Key Structs**: `VulkanContext { entry, instance, surface_loader, surface, physical_device: Option<vk::PhysicalDevice>, device, queue, queue_family_index, allocator, swapchain_loader, swapchain, current_swap_extent: vk::Extent2D, images, image_views, render_pass, framebuffers, pipeline_layout: Option<vk::PipelineLayout>, command_pool, command_buffers, image_available_semaphore, render_finished_semaphore, fence, current_image }`.
+- **Key Structs**: `VulkanContext { entry, instance, debug_utils_loader, debug_messenger, surface_loader, surface, physical_device: Option<vk::PhysicalDevice>, device, queue, queue_family_index, allocator: Option<Arc<Allocator>>, swapchain_loader, swapchain, current_swap_extent: vk::Extent2D, images, image_views, render_pass, framebuffers, pipeline_layout: Option<vk::PipelineLayout>, command_pool, command_buffers, image_available_semaphore, render_finished_semaphore, fence, current_image }`.
 - **Key Methods**: `new() -> Self`.
-- **Notes**: Managed via `VulkanContextResource`. Holds actual swap extent.
+- **Notes**: Managed via `VulkanContextResource`. Holds actual swap extent. `allocator` field holds `Arc<vk_mem::Allocator>`.
 
 ### `src/gui_framework/context/vulkan_setup.rs`
 - **Purpose**: Sets up and tears down core Vulkan resources managed by `VulkanContext`.
 - **Key Methods**: `setup_vulkan(vk_context: &mut VulkanContext, window: &winit::window::Window) -> ()`, `cleanup_vulkan(vk_context: &mut VulkanContext) -> ()`.
-- **Notes**: Called by Bevy systems in `main.rs`. Stores chosen `physical_device` in `VulkanContext`. Still uses `winit::window::Window`. Enables validation layers in debug builds.
+- **Notes**: Called by Bevy systems in `main.rs`. Stores chosen `physical_device` in `VulkanContext`. Still uses `winit::window::Window`. Enables validation layers in debug builds. `cleanup_vulkan` ensures `Allocator` Arc is dropped before device destruction. Uses `bevy_log` for logging.
 
 ### `src/gui_framework/events/mod.rs`
 - **Purpose**: Declares and re-exports Bevy Event modules.
@@ -137,7 +139,10 @@ Studio_Whip/
 
 ### `src/gui_framework/events/interaction_events.rs`
 - **Purpose**: Defines Bevy events related to user interaction.
-- **Key Structs**: `EntityClicked { entity: Entity }`, `EntityDragged { entity: Entity, delta: Vec2 }`, `HotkeyActionTriggered { action: String }`.
+- **Key Structs**:
+    - `EntityClicked { entity: Entity }` (Derives `Event`, `Debug`, `Clone`, `Copy`, `Reflect`)
+    - `EntityDragged { entity: Entity, delta: Vec2 }` (Derives `Event`, `Debug`, `Clone`, `Copy`, `Reflect`)
+    - `HotkeyActionTriggered { action: String }` (Derives `Event`, `Debug`, `Clone`, `Reflect`)
 - **Notes**: Written by input systems (`interaction_system`, `hotkey_system`), read by logic systems (`movement_system`, `app_control_system`).
 
 ### `src/gui_framework/interaction/mod.rs`
@@ -146,8 +151,10 @@ Studio_Whip/
 
 ### `src/gui_framework/interaction/hotkeys.rs`
 - **Purpose**: Defines hotkey configuration loading from TOML and error handling.
-- **Key Structs**: `HotkeyConfig { mappings: HashMap<String, String> }`, `HotkeyError { ... }`.
-- **Key Methods**: `HotkeyConfig::load_config(...) -> Result<Self, HotkeyError>`, `HotkeyConfig::get_action(...) -> Option<&String>`.
+- **Key Structs**:
+    - `HotkeyConfig { mappings: HashMap<String, String> }` (Derives `Debug`, `Clone`, `Default`, `Reflect`)
+    - `HotkeyError { ... }` (Derives `Error`, `Debug`)
+- **Key Methods**: `HotkeyConfig::load_config(...) -> Result<Self, HotkeyError>`, `HotkeyConfig::get_action(...) -> Option<&String>`, `format_key_event(...) -> Option<String>`.
 - **Notes**: Loaded into `HotkeyResource` by `setup_scene_ecs` in `main.rs`. Used by `hotkey_system`.
 
 ### `src/gui_framework/rendering/mod.rs`
@@ -167,7 +174,7 @@ Studio_Whip/
   - `resize_renderer(&mut self, vulkan_context: &mut VulkanContext, width: u32, height: u32) -> ()`
   - `render(&mut self, platform: &mut VulkanContext, render_commands: &[RenderCommandData]) -> ()` (Waits for fence, prepares resources, acquires image, records commands, submits, presents).
   - `cleanup(&mut self, platform: &mut VulkanContext) -> ()`
-- **Notes**: Managed via `RendererResource`. Called by `rendering_system`. Uses `platform.current_swap_extent` for rendering dimensions. Includes checks for `None` resources during shutdown.
+- **Notes**: Managed via `RendererResource`. Called by `rendering_system`. Uses `platform.current_swap_extent` for rendering dimensions. Includes checks for `None` resources during shutdown. Fixed unused variable warning.
 
 ### `src/gui_framework/rendering/pipeline_manager.rs`
 - **Purpose**: **Initialization helper.** Creates Vulkan `PipelineLayout`, `DescriptorSetLayout`, and `DescriptorPool` during application setup.
@@ -185,8 +192,8 @@ Studio_Whip/
 - **Key Methods**:
   - `new(platform: &mut VulkanContext, _pipeline_layout: vk::PipelineLayout, descriptor_set_layout: vk::DescriptorSetLayout, descriptor_pool: vk::DescriptorPool) -> Self`
   - `prepare_frame_resources(&mut self, platform: &mut VulkanContext, render_commands: &[RenderCommandData]) -> Vec<PreparedDrawData>` (Uses caches, updates UBOs/descriptor sets).
-  - `cleanup(&mut self, platform: &mut VulkanContext) -> ()` (Cleans caches and entity resources).
-- **Notes**: Creates/updates resources based on `RenderCommandData`. Uses persistently mapped pointers correctly. **Lacks resource removal for despawned entities and vertex buffer updates.** Pipeline state defines only vertex input binding/location 0.
+  - `cleanup(&mut self, platform: &mut VulkanContext) -> ()` (Cleans caches and entity resources, frees allocations).
+- **Notes**: Creates/updates resources based on `RenderCommandData`. Uses persistently mapped pointers correctly. **Lacks resource removal for despawned entities and vertex buffer updates.** Pipeline state defines only vertex input binding/location 0. `cleanup` frees `vk_mem::Allocation`s.
 
 ### `src/gui_framework/rendering/resize_handler.rs`
 - **Purpose**: Handles window resizing logic: cleans up old swapchain resources, creates new swapchain/framebuffers, updates projection uniform buffer using the actual swap extent.

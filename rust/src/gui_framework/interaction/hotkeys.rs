@@ -1,13 +1,13 @@
-// /mnt/c/Users/jerem/Desktop/Studio-Whip/rust/src/gui_framework/interaction/hotkeys.rs
 use std::{collections::HashMap, fs, path::Path};
-use thiserror::Error; // Using version 2.0
+use thiserror::Error;
 use winit::keyboard::{ModifiersState, PhysicalKey, KeyCode};
+use bevy_reflect::Reflect;
 
 // Error types for hotkey loading and parsing
 #[derive(Error, Debug)]
 pub enum HotkeyError {
     #[error("Hotkey configuration file not found at path: {0}")]
-    FileNotFound(String), // Keep path as String for display compatibility
+    FileNotFound(String),
     #[error("Failed to read hotkey configuration file: {0}")]
     ReadError(#[from] std::io::Error),
     #[error("Failed to parse hotkey configuration file (TOML): {0}")]
@@ -15,7 +15,7 @@ pub enum HotkeyError {
 }
 
 // Holds the loaded hotkey mappings (Key Combo String -> Action String)
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Reflect)]
 pub struct HotkeyConfig {
     pub mappings: HashMap<String, String>,
 }
@@ -24,7 +24,6 @@ impl HotkeyConfig {
     // Loads configuration from a TOML file at the given path
     pub fn load_config(path: &Path) -> Result<Self, HotkeyError> {
         if !path.exists() {
-            // Return default empty config if file not found, log handled by caller
             return Ok(HotkeyConfig::default());
         }
 
@@ -43,6 +42,7 @@ impl HotkeyConfig {
 // Formats a winit key event into a string like "Ctrl+Shift+A"
 // Returns None for unhandled keys or modifier-only presses.
 // NOTE: Requires accurate ModifiersState passed in.
+// This function itself does not need reflection.
 pub fn format_key_event(modifiers: ModifiersState, key: PhysicalKey) -> Option<String> {
     let mut parts = Vec::new();
 

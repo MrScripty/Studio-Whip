@@ -173,9 +173,10 @@ pub fn cleanup_vulkan(app: &mut VulkanContext) {
 
     // Drop the allocator Arc. The allocator itself will be destroyed when the last Arc is dropped.
     // This MUST happen before destroying the device.
+    println!("[cleanup_vulkan] Preparing to drop Allocator Arc...");
     if let Some(allocator_arc) = app.allocator.take() {
         drop(allocator_arc); // Explicitly drop the Arc held by VulkanContext
-        println!("[cleanup_vulkan] Allocator Arc dropped.");
+        println!("[cleanup_vulkan] Allocator Arc dropped (vmaDestroyAllocator called by Drop impl).");
     } else {
          println!("[cleanup_vulkan] Allocator already taken or never initialized.");
     }

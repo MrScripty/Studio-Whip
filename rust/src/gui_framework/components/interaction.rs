@@ -1,11 +1,10 @@
 use bevy_ecs::prelude::Component;
+use bevy_reflect::Reflect;
 
 /// Component defining how an entity can be interacted with via mouse/input.
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(Component, Debug, Clone, Copy, Reflect)]
 pub struct Interaction {
-    /// Can this entity be clicked?
     pub clickable: bool,
-    /// Can this entity be dragged?
     pub draggable: bool,
     // Add other interaction flags as needed (e.g., hoverable)
 }

@@ -1,18 +1,20 @@
 use bevy_app::{App, AppExit, Startup, Update, Last};
 use bevy_ecs::prelude::*;
-use bevy_ecs::schedule::common_conditions::on_event;
+use bevy_ecs::schedule::common_conditions::not; // Import 'not' condition
+use bevy_ecs::schedule::common_conditions::on_event; // Import 'on_event' condition
 use bevy_log::{info, error, warn, LogPlugin, Level};
 use bevy_utils::default;
-use bevy_math::Vec2; // Use Vec2 from bevy_math
+use bevy_math::Vec2;
 use bevy_input::{InputPlugin, keyboard::KeyCode, mouse::MouseButton, ButtonInput};
 use bevy_window::{
     PrimaryWindow, Window, WindowPlugin, WindowCloseRequested, PresentMode,
-    WindowResolution, CursorMoved, // Added CursorMoved
+    WindowResolution, CursorMoved,
 };
 use bevy_winit::{WinitPlugin, WinitWindows, WakeUp};
 use bevy_a11y::AccessibilityPlugin;
-use bevy_transform::prelude::{Transform, GlobalTransform}; // Use Bevy's Transform
-use bevy_transform::TransformPlugin; // Add TransformPlugin
+use bevy_transform::prelude::{Transform, GlobalTransform};
+use bevy_transform::TransformPlugin;
+use bevy_reflect::Reflect;
 use bevy_core::Name; // Add Name for debugging
 
 // Import framework components (Vulkan backend + New ECS parts)
@@ -39,20 +41,12 @@ use ash::vk;
 #[derive(Resource, Clone)]
 struct VulkanContextResource(Arc<Mutex<VulkanContext>>);
 
-// --- REMOVE Render Command Data Definition (Moved to lib.rs) ---
-// #[derive(Debug, Clone)] pub struct RenderCommandData { ... }
-
-// --- Use Actual Renderer Resource ---
 #[derive(Resource, Clone)]
-struct RendererResource(Arc<Mutex<Renderer>>); // <-- Use actual Renderer
+struct RendererResource(Arc<Mutex<Renderer>>);
 
 // --- Hotkey Configuration Resource ---
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default, Reflect)]
 struct HotkeyResource(HotkeyConfig);
-
-
-// --- Removed Old Resources/Handlers ---
-// ...
 
 fn main() {
     info!("Starting Rusty Whip with Bevy ECS integration (Bevy 0.15)...");
@@ -90,6 +84,18 @@ fn main() {
         .add_event::<EntityClicked>()
         .add_event::<EntityDragged>()
         .add_event::<HotkeyActionTriggered>()
+        // == Reflection Registration ==
+        // Register components
+        .register_type::<Interaction>()
+        .register_type::<ShapeData>() // Requires Vertex: Reflect + TypePath in lib.rs
+        .register_type::<Visibility>()
+        // Register events
+        .register_type::<EntityClicked>()
+        .register_type::<EntityDragged>()
+        .register_type::<HotkeyActionTriggered>()
+        // Register resources
+        .register_type::<HotkeyResource>()
+        .register_type::<HotkeyConfig>() // Also register the inner config struct
 
         // == Startup Systems ==
         .add_systems(Startup,
@@ -111,13 +117,16 @@ fn main() {
                 handle_close_request, // Keep this
                 handle_resize_system, // Keep this (but simplified)
                 app_control_system, // New system for app exit via hotkey
-            )
+                // Add the cleanup trigger system here, running if AppExit occurs
+                cleanup_trigger_system.run_if(on_event::<AppExit>),
+            ).chain() // Ensure cleanup runs after other Update systems if AppExit happens
         )
         // == Rendering System (runs late) ==
-        .add_systems(Last, rendering_system) // Renamed from render_trigger_system
+        // Run rendering system only if AppExit hasn't been sent this frame
+        .add_systems(Last, rendering_system.run_if(not(on_event::<AppExit>)))
 
         // == Shutdown System ==
-        .add_systems(Last, cleanup_system.run_if(on_event::<AppExit>))
+        // Removed cleanup_system registration from Last schedule
 
         // == Run the App ==
         .run();
@@ -531,7 +540,7 @@ fn rendering_system(
     }
 }
 
-/// Update system: Handles WindowCloseRequested events -> AppExit. (No changes needed)
+// Update system: Handles WindowCloseRequested events -> AppExit.
 fn handle_close_request(
     mut ev_close: EventReader<WindowCloseRequested>,
     mut ev_app_exit: EventWriter<AppExit>,
@@ -542,51 +551,55 @@ fn handle_close_request(
     }
 }
 
-/// System running on AppExit: Cleans up resources. (Modified for actual Renderer)
-fn cleanup_system(
-    mut commands: Commands,
-    renderer_res_opt: Option<ResMut<RendererResource>>, // Request mutable access
-    vk_context_res_opt: Option<Res<VulkanContextResource>>,
-) {
-    info!("Running cleanup_system...");
+/// System running on AppExit in Update schedule: Takes ownership of Vulkan/Renderer resources via World access and cleans them up immediately.
+fn cleanup_trigger_system(world: &mut World) {
+    info!("ENTERED cleanup_trigger_system (on AppExit)");
 
-    let Some(vk_context_res) = vk_context_res_opt else {
-        warn!("VulkanContext resource not found for cleanup.");
-        return;
-    };
+    // --- Take Ownership of Resources ---
+    // Remove the resources from the World immediately using direct World access.
+    // This returns Option<T>, giving us ownership.
+    let renderer_res_opt: Option<RendererResource> = world.remove_resource::<RendererResource>();
+    let vk_context_res_opt: Option<VulkanContextResource> = world.remove_resource::<VulkanContextResource>();
 
-    // 1. Attempt to cleanup Renderer via Mutex lock
-    if let Some(renderer_res_mut) = renderer_res_opt { // Get ResMut
-        info!("RendererResource found.");
-        match renderer_res_mut.0.lock() {
-            Ok(mut renderer_guard) => { // Get MutexGuard<Renderer>
-                info!("Successfully locked Renderer Mutex.");
-                if let Ok(mut vk_ctx_guard) = vk_context_res.0.lock() { // vk_ctx needs mut lock
-                    info!("Calling actual Renderer cleanup via MutexGuard.");
-                    // Call cleanup on the mutable reference from the guard
-                    renderer_guard.cleanup(&mut vk_ctx_guard); // Pass &mut guard
+    // --- Perform Cleanup ---
+    if let Some(vk_context_res) = vk_context_res_opt {
+        info!("VulkanContextResource taken.");
+        match vk_context_res.0.lock() {
+            Ok(mut vk_ctx_guard) => {
+                info!("Successfully locked VulkanContext Mutex.");
+
+                // 1. Cleanup Renderer (if it existed)
+                if let Some(renderer_res) = renderer_res_opt {
+                    info!("RendererResource taken.");
+                    match renderer_res.0.lock() {
+                        Ok(mut renderer_guard) => {
+                            info!("Successfully locked Renderer Mutex.");
+                            info!("Calling actual Renderer cleanup via MutexGuard.");
+                            renderer_guard.cleanup(&mut vk_ctx_guard); // Pass vk_ctx guard
+                        }
+                        Err(poisoned) => {
+                            error!("Renderer Mutex was poisoned before cleanup: {:?}", poisoned);
+                        }
+                    }
                 } else {
-                    error!("Could not lock VulkanContext for Renderer cleanup step.");
+                    info!("Renderer resource not found or already removed.");
                 }
-            }
+
+                // 2. Cleanup Vulkan Context
+                info!("Calling cleanup_vulkan...");
+                cleanup_vulkan(&mut vk_ctx_guard); // Pass vk_ctx guard
+                info!("cleanup_vulkan finished.");
+
+            } // vk_ctx_guard dropped here
             Err(poisoned) => {
-                error!("Renderer Mutex was poisoned before cleanup: {:?}", poisoned);
+                error!("VulkanContext Mutex was poisoned before cleanup: {:?}", poisoned);
             }
         }
-        commands.remove_resource::<RendererResource>();
-        info!("Signaled removal of RendererResource.");
     } else {
-        info!("Renderer resource not found for cleanup (already removed or never inserted?).");
+        warn!("VulkanContext resource not found or already removed during cleanup trigger.");
     }
 
-    // 2. Cleanup Vulkan Context
-    if let Ok(mut vk_ctx_guard) = vk_context_res.0.lock() {
-        info!("Calling cleanup_vulkan...");
-        cleanup_vulkan(&mut vk_ctx_guard); // Pass &mut guard
-        info!("cleanup_vulkan finished.");
-    } else {
-        error!("Could not lock VulkanContext for final cleanup.");
-    }
-
-    info!("Cleanup complete.");
+    // --- Resources go out of scope ---
+    info!("Cleanup trigger system finished, taken resources going out of scope.");
+    // Drop implementations (including Allocator) run here *after* cleanup_vulkan.
 }

@@ -29,3 +29,6 @@ bevy_input = "0.15"
 bevy_a11y = "0.15"
 bevy_diagnostic = "0.15"
 bevy_time = "0.15"
+
+[build-dependencies]
+walkdir = "2"

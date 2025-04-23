@@ -429,18 +429,21 @@ fn interaction_system(
 }
 
 
-/// Update system: Applies movement deltas from drag events to Transforms. (No changes needed)
+/// Update system: Applies movement deltas from drag events to Transforms.
 fn movement_system(
     mut drag_evr: EventReader<EntityDragged>,
-    mut query: Query<&mut Transform>, // Query for transforms to update
+    mut query: Query<&mut Transform>,
 ) {
     for ev in drag_evr.read() {
         if let Ok(mut transform) = query.get_mut(ev.entity) {
             transform.translation.x += ev.delta.x;
-            transform.translation.y -= ev.delta.y; // Invert Y delta
+            // OLD: transform.translation.y -= ev.delta.y; // Invert Y delta
+            // NEW: Apply Y delta directly
+            transform.translation.y += ev.delta.y;
         }
     }
 }
+
 
 /// Update system: Detects keyboard input and sends HotkeyActionTriggered events. (No changes needed)
 fn hotkey_system(

@@ -43,7 +43,7 @@ impl ResizeHandler {
         let allocator = vulkan_context.allocator.as_ref().expect("Allocator not available for resize");
 
         // 4. Update projection matrix using the *actual* swap extent stored in the context
-        let proj_matrix = Mat4::orthographic_rh(0.0, vulkan_context.current_swap_extent.width as f32, vulkan_context.current_swap_extent.height as f32, 0.0, -1.0, 1.0);
+        let proj_matrix = Mat4::orthographic_rh(0.0, vulkan_context.current_swap_extent.width as f32, vulkan_context.current_swap_extent.height as f32, 0.0, -100.0, 100.0);
         unsafe {
             // Use get_allocation_info for persistently mapped buffer
             let info = allocator.get_allocation_info(uniform_allocation);

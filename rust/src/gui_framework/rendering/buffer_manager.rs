@@ -58,7 +58,7 @@ impl BufferManager {
         let allocator = platform.allocator.as_ref().unwrap();
 
         // --- Uniform Buffer Setup (Keep this part) ---
-        let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -1.0, 1.0); // Use default size initially
+        let ortho = Mat4::orthographic_rh(0.0, 600.0, 300.0, 0.0, -100.0, 100.0); // Use default size initially
         let (uniform_buffer, uniform_allocation) = {
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,

@@ -251,10 +251,14 @@ fn setup_scene_ecs(
     commands.spawn((
         ShapeData {
             vertices: Arc::new(vec![ // Use Arc for vertices
-                Vertex { position: [0.0, 0.0] },
-                Vertex { position: [0.0, height] },
-                Vertex { position: [width, height] },
-                Vertex { position: [width, 0.0] },
+                // Triangle 1
+                Vertex { position: [0.0, 0.0] },   // Top-left
+                Vertex { position: [0.0, height] }, // Bottom-left
+                Vertex { position: [width, 0.0] },  // Top-right
+                // Triangle 2
+                Vertex { position: [width, 0.0] },  // Top-right
+                Vertex { position: [0.0, height] }, // Bottom-left
+                Vertex { position: [width, height] },// Bottom-right
             ]),
             vertex_shader_path: "background.vert.spv".to_string(),
             fragment_shader_path: "background.frag.spv".to_string(),
@@ -269,9 +273,9 @@ fn setup_scene_ecs(
     commands.spawn((
         ShapeData {
             vertices: Arc::new(vec![ // Use Arc
-                Vertex { position: [-25.0, -25.0] }, // Centered around (0,0)
-                Vertex { position: [0.0, 25.0] },
-                Vertex { position: [25.0, -25.0] },
+                Vertex { position: [-25.0, -25.0] }, // Bottom-left local
+                Vertex { position: [0.0, 25.0] },    // Top-center local
+                Vertex { position: [25.0, -25.0] }, // Bottom-right local
             ]),
             vertex_shader_path: "triangle.vert.spv".to_string(),
             fragment_shader_path: "triangle.frag.spv".to_string(),
@@ -286,10 +290,13 @@ fn setup_scene_ecs(
     commands.spawn((
         ShapeData {
             vertices: Arc::new(vec![ // Use Arc
-                Vertex { position: [-25.0, -25.0] }, // Centered around (0,0)
-                Vertex { position: [-25.0, 25.0] },
-                Vertex { position: [25.0, 25.0] },
-                Vertex { position: [25.0, -25.0] },
+                Vertex { position: [-25.0, -25.0] }, // Bottom-left local
+                Vertex { position: [-25.0, 25.0] },  // Top-left local
+                Vertex { position: [25.0, -25.0] },  // Bottom-right local
+                // Triangle 2
+                Vertex { position: [25.0, -25.0] },  // Bottom-right local
+                Vertex { position: [-25.0, 25.0] },  // Top-left local
+                Vertex { position: [25.0, 25.0] },   // Top-right local
             ]),
             vertex_shader_path: "square.vert.spv".to_string(),
             fragment_shader_path: "square.frag.spv".to_string(),

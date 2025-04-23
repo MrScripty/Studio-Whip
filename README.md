@@ -12,7 +12,7 @@ AI-enhanced collaborative content production suite for movies, comics, and inter
 
 
 ## System Requirments
-System requirements heavily depend on the **size and type of AI models** you choose to run locally. Studio-Whip is designed to be flexible. You can find many models on platforms like [Hugging Face](https://huggingface.co/) and [Civitai](https://civitai.com/).
+System requirements heavily depend on the size and type of AI models you choose to run locally. You can find many models on platforms like [Hugging Face](https://huggingface.co/) and [Civitai](https://civitai.com/).
 
 The table below summarizes recommended hardware specifications for different tiers of usage, focusing on local inference:
 
@@ -48,7 +48,7 @@ The following table provides *example* model combinations suitable for each hard
 ### Requirements (All Platforms)
 - [**Vulkan SDK**](https://vulkan.lunarg.com/sdk/home): 1.3 or later
 - [**Rust**](https://www.rust-lang.org/tools/install): Latest stable version (via Rustup)
-- **Nvidia GPU**
+- **A GPU** Nvidia is sugested due to compatibility and inferance performance, but not strictly required
 
 ### After installing requirments
 1. Clone the repository: `git clone https://github.com/<your-repo>/studio-whip.git`
@@ -56,14 +56,16 @@ The following table provides *example* model combinations suitable for each hard
 3. Build: `cargo run --release`
 
 ### For Windows Users
-Install [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/), this allows you to run the linux shell script utlities located in [/rust/utilities](https://github.com/MrScripty/Studio-Whip/tree/main/rust/utilities)
+Install [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/), this allows you to run the linux shell script utlities located into use the provided Linux shell script utilities located in [/rust/utilities](https://github.com/MrScripty/Studio-Whip/tree/main/rust/utilities)
 
 1. Open Powershell as admin and install wsl ```wsl --install```
 2. Find availible linux distros ```wsl --list --online```
 3. Install the latest Ubuntu LTS ```wsl --install --<distro>```
-4. Win+R ```Ubuntu```
-5. Windows paths in Ubutu are located in ```/mnt/<lowercase-windows-drive-letter/<path-to-StudioWhip>/rust/utilities```
-6. You may need to install ```dos2unix``` in Ubuntu to convert windows line endings. example usage : ```dos2unix llm_prompt_tool.sh```
+4. Launch the Linux distribution: Win+R ```Ubuntu```
+5. Windows paths in Ubutu are located in ```/mnt/<lowercase-drive-letter>/*```
+6. You may need to install ```dos2unix``` within your Linux environment to convert windows line endings.
+    *   Install it: `sudo apt update && sudo apt install dos2unix`
+    *   example usage : ```dos2unix llm_prompt_tool.sh```
 
  After installing the Linux Subsystem, add the Vulkan SDK's `glslc` compiler to your ```system variables```:
 
@@ -71,11 +73,11 @@ Install [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/
 2. Under "System Variables" or "User Variables," select `Path` and click `Edit`.
 3. Click `New` and add: `C:\VulkanSDK\<version>\Bin` (replace `<version>` with your installed version).
 4. Click `OK` to save.
-5. Verify with `glslc --version` in PowerShell.
+5. Verify with `glslc --version` in PowerShell. It should output the compiler version.
 
 ## Contributing
 Check out the [architecture overview](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/architecture.md), [modules documentation](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/modules.md), [Roadmap](https://github.com/MrScripty/Studio-Whip/blob/main/rust/documentation/roadmap.md), and [prompt_tool.sh](https://github.com/MrScripty/Studio-Whip/tree/main/rust/utilities) to get started.
 
 ## Is This Production Ready?
 
-No. This is a complex early development software with many incomplete or missing features. It will take at least a year to enter plausable production readiyness.
+No. This is a complex early development software with partial and unimplemented features. It will take at least a year to enter plausable production use.

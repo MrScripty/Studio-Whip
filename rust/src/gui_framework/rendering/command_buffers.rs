@@ -59,7 +59,7 @@ pub fn record_command_buffers(
     };
     let clear_values = [vk::ClearValue {
         // Use opaque black background
-        color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] },
+        color: vk::ClearColorValue { float32: [1.0, 0.0, 1.0, 1.0] },
     }];
 
     let framebuffer = platform.framebuffers[platform.current_image]; // Use current image index

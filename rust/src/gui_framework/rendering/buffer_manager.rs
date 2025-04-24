@@ -58,7 +58,10 @@ impl BufferManager {
         let allocator = platform.allocator.as_ref().unwrap();
 
         // --- Uniform Buffer Setup (Keep this part) ---
-        let ortho = Mat4::orthographic_rh(0.0, 600.0, 0.0, 300.0, -100.0, 100.0); // Use default size initially
+        // GET the extent that was just set by create_swapchain in Renderer::new
+        let initial_width = platform.current_swap_extent.width as f32;
+        let initial_height = platform.current_swap_extent.height as f32;
+        let ortho = Mat4::orthographic_rh(0.0, initial_width, 0.0, initial_height, -100.0, 100.0);
         let (uniform_buffer, uniform_allocation) = {
             let buffer_info = vk::BufferCreateInfo {
                 s_type: vk::StructureType::BUFFER_CREATE_INFO,
@@ -72,6 +75,7 @@ impl BufferManager {
                 flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ..Default::default()
             };
+            info!("[BufferManager::new] Writing initial projection matrix:\n{:?}", ortho);
             unsafe {
                 match allocator.create_buffer(&buffer_info, &allocation_info) {
                     Ok((buffer, allocation)) => {
@@ -356,6 +360,7 @@ impl BufferManager {
 
              // --- Update Offset UBO (Always) ---
             if let Some(resources) = self.entity_cache.get_mut(&entity_id) {
+                //bevy_log::info!("Updating UBO for Entity {:?}, Matrix:\n{:?}", entity_id, command.transform_matrix); 
                 // Use the persistently mapped pointer via AllocationInfo
                 unsafe {
                     // Get AllocationInfo from the allocator to access the mapped pointer

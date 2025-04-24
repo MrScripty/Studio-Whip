@@ -19,7 +19,6 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(platform: &mut VulkanContext, extent: vk::Extent2D) -> Self {
-        info!("[Renderer::new] Start (ECS Migration)");
         let surface_format = create_swapchain(platform, extent);
         create_framebuffers(platform, surface_format);
         info!("[Renderer::new] Framebuffers created");
@@ -46,11 +45,14 @@ impl Renderer {
         // pipeline_mgr goes out of scope here, its layout is moved to platform
 
         // Update global projection UBO (BufferManager owns the buffer/allocation)
+        let initial_logical_width = extent.width as f32; // Use the extent passed to Renderer::new
+        let initial_logical_height = extent.height as f32;
         unsafe {
-        let proj_matrix = Mat4::orthographic_rh(0.0, platform.current_swap_extent.width as f32, platform.current_swap_extent.height as f32, 0.0, -1.0, 1.0);
-        let allocator = platform.allocator.as_ref().unwrap();
-        // Use get_allocation_info for persistently mapped buffer
-        let info = allocator.get_allocation_info(&buffer_mgr.uniform_allocation);
+            let proj_matrix = Mat4::orthographic_rh(0.0, initial_logical_width, 0.0, initial_logical_height, -1.0, 1.0);
+            let allocator = platform.allocator.as_ref().unwrap();
+            let info = allocator.get_allocation_info(&buffer_mgr.uniform_allocation);
+            bevy_log::info!("Renderer::new: Writing initial projection for logical extent {}x{}, Matrix:\n{:?}", initial_logical_width, initial_logical_height, proj_matrix);
+            // Use get_allocation_info for persistently mapped buffer
             if !info.mapped_data.is_null() {
                 let data_ptr = info.mapped_data.cast::<f32>();
                 data_ptr.copy_from_nonoverlapping(proj_matrix.to_cols_array().as_ptr(), 16);
@@ -115,10 +117,10 @@ impl Renderer {
             warn!("[Renderer::resize_renderer] Ignoring resize to zero dimensions.");
             return;
         }
-        let new_extent = vk::Extent2D { width, height };
+        let logical_extent = vk::Extent2D { width, height };
         ResizeHandler::resize(
             vulkan_context,
-            new_extent,
+            logical_extent,
             &mut self.buffer_manager.uniform_allocation, // Pass the allocation for the UBO update
         );
         // Note: Command buffers will be re-allocated inside record_command_buffers

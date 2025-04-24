@@ -9,7 +9,7 @@ pub struct ResizeHandler;
 impl ResizeHandler {
     pub fn resize(
         vulkan_context: &mut VulkanContext,
-        new_extent: vk::Extent2D,
+        logical_extent: vk::Extent2D,
         uniform_allocation: &mut vk_mem::Allocation,
     ) {
         info!("[ResizeHandler::resize] Called (ECS Migration)");
@@ -29,7 +29,7 @@ impl ResizeHandler {
 
         // 2. Recreate swapchain with the new extent, get actual chosen extent back
         // This takes &mut vulkan_context
-        let surface_format = create_swapchain(vulkan_context, new_extent);
+        let surface_format = create_swapchain(vulkan_context, logical_extent);
         info!("[ResizeHandler::resize] Swapchain recreated, actual extent stored: {:?}", vulkan_context.current_swap_extent);
 
         // 3. Recreate framebuffers uses the extent stored in vulkan_context
@@ -43,8 +43,10 @@ impl ResizeHandler {
         let allocator = vulkan_context.allocator.as_ref().expect("Allocator not available for resize");
 
         // 4. Update projection matrix using the *actual* swap extent stored in the context
-        let proj_matrix = Mat4::orthographic_rh(0.0, vulkan_context.current_swap_extent.width as f32, 0.0, vulkan_context.current_swap_extent.height as f32, -100.0, 100.0);
+        let proj_matrix = Mat4::orthographic_rh(0.0, logical_extent.width as f32, 0.0, logical_extent.height as f32, -100.0, 100.0);
         unsafe {
+            bevy_log::info!("ResizeHandler: Updating projection for extent {:?}, Matrix:\n{:?}",
+            logical_extent, proj_matrix);
             // Use get_allocation_info for persistently mapped buffer
             let info = allocator.get_allocation_info(uniform_allocation);
             if !info.mapped_data.is_null() {

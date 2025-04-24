@@ -196,6 +196,8 @@ fn create_renderer_system(
 fn setup_scene_ecs(
     In(renderer_result): In<Result<(), String>>, // Get result from previous system
     mut commands: Commands,
+    vk_context_res: Res<VulkanContextResource>,
+    primary_window_q: Query<&Window, With<PrimaryWindow>>,
     // Add other resources if needed (e.g., AssetServer for shaders later)
 ) {
      if let Err(e) = renderer_result {
@@ -244,21 +246,31 @@ fn setup_scene_ecs(
 
 
     // --- Spawn Initial Entities ---
-    let width = 600.0;
-    let height = 300.0;
+    //let width = 600.0;
+    //let height = 300.0;
+
+    //This makes sure the background matches window size
+    let Ok(primary_window) = primary_window_q.get_single() else {
+        error!("Primary window not found in setup_scene_ecs!");
+        return; // Or handle error appropriately
+   };
+   let logical_width = primary_window.width(); // Use logical width()
+   let logical_height = primary_window.height(); // Use logical height()
+   
+   info!("Using logical dimensions for background: {}x{}", logical_width, logical_height);
 
     // Background (Not interactive, covers full screen)
     commands.spawn((
         ShapeData {
             vertices: Arc::new(vec![ // Use Arc for vertices
                 // Triangle 1
-                Vertex { position: [0.0, 0.0] },   // Top-left
-                Vertex { position: [0.0, height] }, // Bottom-left
-                Vertex { position: [width, 0.0] },  // Top-right
+                Vertex { position: [0.0, 0.0] },   // Bottom-left (0,0)
+                Vertex { position: [0.0, logical_height] }, // Top-left (0, H)
+                Vertex { position: [logical_width, 0.0] },  // Bottom-right (W, 0)
                 // Triangle 2
-                Vertex { position: [width, 0.0] },  // Top-right
-                Vertex { position: [0.0, height] }, // Bottom-left
-                Vertex { position: [width, height] },// Bottom-right
+                Vertex { position: [logical_width, 0.0] },  // Bottom-right (W, 0)
+                Vertex { position: [0.0, logical_height] }, // Top-left (0, H)
+                Vertex { position: [logical_width, logical_height] },// Top-right (W, H)
             ]),
             vertex_shader_path: "background.vert.spv".to_string(),
             fragment_shader_path: "background.frag.spv".to_string(),

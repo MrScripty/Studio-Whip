@@ -578,6 +578,11 @@ fn rendering_system(
         // --- Collect Render Data from ECS ---
         let mut render_commands: Vec<RenderCommandData> = Vec::new();
         for (entity, global_transform, shape, visibility) in query.iter() {
+            /* // Check if an object is in the rendering system loop
+            if shape.vertex_shader_path.contains("triangle") { // Simple check
+                info!("Processing Triangle Entity: {:?}, Visible: {}", entity, visibility.0);
+            }
+            */
             if visibility.0 { // Check custom visibility component
                 let vertices_changed = changed_entities.contains(&entity);// Populate RenderCommandData from components
                 render_commands.push(RenderCommandData {

@@ -12,6 +12,14 @@ pub struct Vertex {
     pub position: [f32; 2],
 }
 
+// --- Resources needed across framework/app ---
+// Resource holding the Arc<Mutex<VulkanContext>>
+#[derive(bevy_ecs::prelude::Resource, Clone)]
+pub struct VulkanContextResource(pub std::sync::Arc<std::sync::Mutex<gui_framework::VulkanContext>>);
+
+#[derive(bevy_ecs::prelude::Resource, Clone)]
+pub struct RendererResource(pub std::sync::Arc<std::sync::Mutex<gui_framework::rendering::render_engine::Renderer>>);
+
 /// Holds the prepared Vulkan handles needed for a single draw call.
 #[derive(Debug, Clone)]
 pub struct PreparedDrawData {

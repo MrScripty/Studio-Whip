@@ -181,7 +181,6 @@ pub fn cleanup_vulkan(app: &mut VulkanContext) {
          println!("[cleanup_vulkan] Allocator already taken or never initialized.");
     }
 
-
     // Destroy the logical device
     if let Some(device) = app.device.take() {
         println!("[cleanup_vulkan] Destroying logical device...");

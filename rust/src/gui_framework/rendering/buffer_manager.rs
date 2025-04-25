@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use bevy_ecs::prelude::Entity;
 use crate::Vertex;
 use crate::PreparedDrawData;
-use ash::vk::Handle;
 
 struct EntityRenderResources {
     vertex_buffer: vk::Buffer,

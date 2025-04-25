@@ -1,9 +1,8 @@
 use bevy_app::{App, AppExit, Startup, Update, Last};
 use bevy_ecs::prelude::*;
 use std::collections::HashSet;
-//use bevy_ecs::change_detection::DetectChanges;
-use bevy_ecs::schedule::common_conditions::not; // Import 'not' condition
-use bevy_ecs::schedule::common_conditions::on_event; // Import 'on_event' condition
+use bevy_ecs::schedule::common_conditions::not;
+use bevy_ecs::schedule::common_conditions::on_event;
 use bevy_log::{info, error, warn, LogPlugin, Level};
 use bevy_utils::default;
 use bevy_math::Vec2;
@@ -17,35 +16,34 @@ use bevy_a11y::AccessibilityPlugin;
 use bevy_transform::prelude::{Transform, GlobalTransform};
 use bevy_transform::TransformPlugin;
 use bevy_reflect::Reflect;
-use bevy_core::Name; // for debugging
+// Import types defined in lib.rs
+use rusty_whip::{Vertex, RenderCommandData, VulkanContextResource, RendererResource};
 
-use rusty_whip::gui_framework::components::visibility;
-// Import framework components (Vulkan backend + ECS parts)
+use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::env;
+use ash::vk;
+// Import framework components, events, resources, and the new plugin
 use rusty_whip::gui_framework::{
     VulkanContext,
-    context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
     interaction::hotkeys::{HotkeyConfig, HotkeyError},
     components::{ShapeData, Visibility, Interaction},
     events::{EntityClicked, EntityDragged, HotkeyActionTriggered},
-    rendering::render_engine::Renderer,
+    plugins::core::GuiFrameworkCorePlugin,
 };
-// Import types defined in lib.rs
-use rusty_whip::{Vertex, RenderCommandData};
+// Import Bevy Name for debugging entities
+use bevy_core::Name;
 
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf; // Keep for hotkey loading path
-use std::env; // Keep for hotkey loading path
-use ash::vk;
 
 #[derive(Component)]
 struct BackgroundQuad;
 
 // --- Bevy Resources ---
-#[derive(Resource, Clone)]
-struct VulkanContextResource(Arc<Mutex<VulkanContext>>);
-
-#[derive(Resource, Clone)]
-struct RendererResource(Arc<Mutex<Renderer>>);
+// Defined in lib.rs now
+// #[derive(Resource, Clone)]
+// struct VulkanContextResource(Arc<Mutex<VulkanContext>>);
+// #[derive(Resource, Clone)]
+// struct RendererResource(Arc<Mutex<Renderer>>);
 
 // --- Hotkey Configuration Resource ---
 #[derive(Resource, Debug, Clone, Default, Reflect)]
@@ -54,17 +52,16 @@ struct HotkeyResource(HotkeyConfig);
 fn main() {
     info!("Starting Rusty Whip with Bevy ECS integration (Bevy 0.15)...");
 
-    // --- Initialize Vulkan Context (Remains the same) ---
+    // --- Initialize Vulkan Context ---
     let vulkan_context = Arc::new(Mutex::new(VulkanContext::new()));
 
     // --- Build Bevy App ---
     App::new()
-        // == Plugins ==
         .add_plugins((
             LogPlugin { level: Level::INFO, filter: "wgpu=error,naga=warn,bevy_app=info,bevy_ecs=info,rusty_whip=debug".to_string(), ..default() },
             bevy_time::TimePlugin::default(),
-            TransformPlugin::default(), // Add TransformPlugin
-            InputPlugin::default(), // Add InputPlugin explicitly
+            TransformPlugin::default(),
+            InputPlugin::default(),
             WindowPlugin {
                 primary_window: Some(Window {
                     title: "Rusty Whip (Bevy ECS Migration)".into(),
@@ -79,58 +76,51 @@ fn main() {
             // DO NOT ADD DefaultPlugins, RenderPlugin, PbrPlugin, etc.
         ))
         // == Resources ==
-        .insert_resource(VulkanContextResource(vulkan_context))
+        .insert_resource(VulkanContextResource(vulkan_context)) // Insert Vulkan context here
         // HotkeyResource inserted by setup_scene_ecs
-        // RendererResource inserted by create_renderer_system
+        // RendererResource inserted by GuiFrameworkCorePlugin's create_renderer_system
 
         // == Events ==
         .add_event::<EntityClicked>()
         .add_event::<EntityDragged>()
         .add_event::<HotkeyActionTriggered>()
         // == Reflection Registration ==
-        // Register components
-        .register_type::<Interaction>()
-        .register_type::<ShapeData>() // Requires Vertex: Reflect + TypePath in lib.rs
-        .register_type::<Visibility>()
-        // Register events
+        // Core types (Vertex, ShapeData, Visibility) registered by GuiFrameworkCorePlugin
+        // Register app-specific / interaction components & events here
+        .register_type::<Interaction>() 
         .register_type::<EntityClicked>()
         .register_type::<EntityDragged>()
         .register_type::<HotkeyActionTriggered>()
-        // Register resources
         .register_type::<HotkeyResource>()
-        .register_type::<HotkeyConfig>() // Also register the inner config struct
+        .register_type::<HotkeyConfig>() 
+
+        // == Add Core Framework Plugin ==
+        .add_plugins(GuiFrameworkCorePlugin)
 
         // == Startup Systems ==
         .add_systems(Startup,
             (
-                // Setup Vulkan -> Create Renderer -> Setup ECS Scene
-                setup_vulkan_system
-                    .pipe(create_renderer_system) // Create renderer after Vulkan setup
-                    .pipe(setup_scene_ecs), // Setup ECS scene after renderer resource exists
-            ).chain()
+                setup_scene_ecs, // Setup app-specific ECS scene (runs after plugin setup)
+            )//.after(GuiFrameworkCorePlugin::StartupSystems)) // TODO: Use System Sets later
         )
         // == Update Systems ==
         .add_systems(Update,
             (
-                // Input and interaction processing
-                background_resize_system,
+                // Input and interaction processing (App specific)
+                background_resize_system, // App specific background handling
                 interaction_system,
                 hotkey_system,
                 movement_system,
-                // Window and App control
+                // Window and App control (App specific)
                 handle_close_request,
-                handle_resize_system,
                 app_control_system, // for app exit via hotkey
-                // Add the cleanup trigger system here, running if AppExit occurs
-                cleanup_trigger_system.run_if(on_event::<AppExit>),
-            ).chain() // Ensure cleanup runs after other Update systems if AppExit happens
+            ) // Removed .chain()
         )
         // == Rendering System (runs late) ==
-        // Run rendering system only if AppExit hasn't been sent this frame
-        .add_systems(Last, rendering_system.run_if(not(on_event::<AppExit>)))
+        // Moved to GuiFrameworkCorePlugin
 
         // == Shutdown System ==
-        // Removed cleanup_system registration from Last schedule
+        // Moved to GuiFrameworkCorePlugin
 
         // == Run the App ==
         .run();
@@ -138,76 +128,15 @@ fn main() {
 
 // --- Bevy Systems ---
 
-/// Startup system: Initializes Vulkan using the primary window handle. (No changes needed)
-fn setup_vulkan_system(
-    vk_context_res: Res<VulkanContextResource>,
-    primary_window_q: Query<Entity, With<PrimaryWindow>>,
-    winit_windows: NonSend<WinitWindows>,
-) -> Result<(), String> {
-    info!("Running setup_vulkan_system...");
-    let primary_entity = primary_window_q.get_single()
-        .map_err(|e| format!("Failed to get primary window entity: {}", e))?;
-    let winit_window = winit_windows.get_window(primary_entity)
-        .ok_or_else(|| "Failed to get winit window reference from WinitWindows".to_string())?;
-    match vk_context_res.0.lock() {
-        Ok(mut vk_ctx_guard) => {
-            // Pass a mutable reference to the VulkanContext inside the MutexGuard
-            setup_vulkan(&mut vk_ctx_guard, winit_window);
-            info!("Vulkan setup complete.");
-            Ok(())
-        }
-        Err(e) => {
-            let err_msg = format!("Failed to lock VulkanContext mutex for setup: {}", e);
-            error!("{}", err_msg);
-            Err(err_msg)
-        }
-    }
-}
-
-
-/// Startup system (piped): Creates the Renderer instance resource.
-fn create_renderer_system(
-    In(setup_result): In<Result<(), String>>, // Get result from previous system
-    mut commands: Commands,
-    vk_context_res: Res<VulkanContextResource>,
-    primary_window_q: Query<&Window, With<PrimaryWindow>>,
-) -> Result<(), String> { // Return Result for piping
-    if let Err(e) = setup_result {
-        error!("Skipping renderer creation due to Vulkan setup error: {}", e);
-        return Err(e); // Propagate error
-    }
-    info!("Running create_renderer_system...");
-
-    let primary_window = primary_window_q.get_single().expect("Primary window not found");
-    let extent = vk::Extent2D { width: primary_window.physical_width(), height: primary_window.physical_height() };
-
-    // Lock the context to pass to Renderer::new
-    let mut vk_ctx_guard = vk_context_res.0.lock().expect("Failed to lock VulkanContext for renderer creation");
-
-    // Create the *actual* renderer instance
-    let renderer_instance = Renderer::new(&mut vk_ctx_guard, extent); // Pass &mut guard
-    info!("Actual Renderer instance created.");
-
-    // Wrap in Arc<Mutex> and insert as resource
-    let renderer_arc = Arc::new(Mutex::new(renderer_instance));
-    commands.insert_resource(RendererResource(renderer_arc.clone()));
-
-    info!("Renderer resource created.");
-    Ok(()) // Indicate success
-}
-
-/// Startup system (piped): Loads hotkeys and spawns initial ECS entities.
+/// Startup system: Loads hotkeys and spawns initial ECS entities.
 fn setup_scene_ecs(
-    In(renderer_result): In<Result<(), String>>, // Get result from previous system
     mut commands: Commands,
-    vk_context_res: Res<VulkanContextResource>,
     primary_window_q: Query<&Window, With<PrimaryWindow>>,
-    // Add other resources if needed (e.g., AssetServer for shaders later)
 ) {
-     if let Err(e) = renderer_result {
-        error!("Skipping ECS scene setup due to previous error: {}", e);
-        return;
-    }
+    // if let Err(e) = renderer_result { // No longer piped
+    //    error!("Skipping ECS scene setup due to previous error: {}", e);
+    //    return;
+    //}
     info!("Running setup_scene_ecs...");
 
     // --- Load Hotkey Configuration ---
@@ -249,23 +178,19 @@ fn setup_scene_ecs(
 
 
     // --- Spawn Initial Entities ---
-    //let width = 600.0;
-    //let height = 300.0;
-
-    //This makes sure the background matches window size
     let Ok(primary_window) = primary_window_q.get_single() else {
         error!("Primary window not found in setup_scene_ecs!");
         return; // Or handle error appropriately
    };
-   let logical_width = primary_window.width(); // Use logical width()
-   let logical_height = primary_window.height(); // Use logical height()
-   
+   let logical_width = primary_window.width();
+   let logical_height = primary_window.height(); 
+
    info!("Using logical dimensions for background: {}x{}", logical_width, logical_height);
 
     // Background (Not interactive, covers full screen)
     commands.spawn((
         ShapeData {
-            vertices: Arc::new(vec![ // Use Arc for vertices
+            vertices: Arc::new(vec![
                 // Triangle 1
                 Vertex { position: [0.0, 0.0] },   // Bottom-left (0,0)
                 Vertex { position: [0.0, logical_height] }, // Top-left (0, H)
@@ -279,9 +204,9 @@ fn setup_scene_ecs(
             fragment_shader_path: "background.frag.spv".to_string(),
         },
         Transform::from_xyz(0.0, 0.0, 0.0), // Use Z for depth
-        Visibility(true), // Use custom Visibility component
+        Visibility(true),
         Interaction::default(), // Not interactive
-        Name::new("Background"), // Optional: Add bevy_core::Name for 
+        Name::new("Background"), // Optional: Add bevy_core::Name for debugging
         BackgroundQuad,
     ));
 
@@ -296,7 +221,7 @@ fn setup_scene_ecs(
             vertex_shader_path: "triangle.vert.spv".to_string(),
             fragment_shader_path: "triangle.frag.spv".to_string(),
         },
-        Transform::from_xyz(300.0, 150.0, 1.0), // Positioned in center, depth 1
+        Transform::from_xyz(300.0, 150.0, 1.0),
         Visibility(true),
         Interaction { clickable: true, draggable: true },
         Name::new("Triangle"),
@@ -317,7 +242,7 @@ fn setup_scene_ecs(
             vertex_shader_path: "square.vert.spv".to_string(),
             fragment_shader_path: "square.frag.spv".to_string(),
         },
-        Transform::from_xyz(125.0, 75.0, 2.0), // Positioned, depth 2 (on top)
+        Transform::from_xyz(125.0, 75.0, 2.0),
         Visibility(true),
         Interaction { clickable: true, draggable: true },
         Name::new("Square"),
@@ -326,33 +251,6 @@ fn setup_scene_ecs(
     // TODO: Add instancing later using ECS patterns
 
     info!("Initial ECS entities spawned.");
-}
-
-
-/// Update system: Handles window resize events. (Simplified)
-fn handle_resize_system(
-    mut resize_reader: EventReader<bevy_window::WindowResized>,
-    renderer_res_opt: Option<ResMut<RendererResource>>, // Use ResMut
-    vk_context_res_opt: Option<Res<VulkanContextResource>>,
-) {
-    let Some(renderer_res) = renderer_res_opt else { return; };
-    let Some(vk_context_res) = vk_context_res_opt else { return; };
-
-    for event in resize_reader.read() {
-        info!("WindowResized event: {:?}", event);
-        if event.width > 0.0 && event.height > 0.0 {
-            if let (Ok(mut renderer_guard), Ok(mut vk_ctx_guard)) = ( // vk_ctx needs mut lock too
-                renderer_res.0.lock(),
-                vk_context_res.0.lock(),
-            ) {
-                info!("Calling actual resize logic.");
-                // Pass mutable references from the guards
-                renderer_guard.resize_renderer(&mut vk_ctx_guard, event.width as u32, event.height as u32);
-            } else {
-                warn!("Could not lock resources for resize handling.");
-            }
-        }
-    }
 }
 
 // System to update background vertices on resize
@@ -392,7 +290,7 @@ fn background_resize_system(
     }
 }
 
-/// Update system: Processes mouse input for clicking and dragging. (Modified for Arc<Vec<Vertex>>)
+// Update system: Processes mouse input for clicking and dragging.
 fn interaction_system(
     mouse_button_input: Res<ButtonInput<MouseButton>>,
     mut cursor_evr: EventReader<CursorMoved>,
@@ -482,7 +380,7 @@ fn interaction_system(
 }
 
 
-/// Update system: Applies movement deltas from drag events to Transforms.
+// Update system: Applies movement deltas from drag events to Transforms.
 fn movement_system(
     mut drag_evr: EventReader<EntityDragged>,
     mut query: Query<&mut Transform>,
@@ -490,21 +388,19 @@ fn movement_system(
     for ev in drag_evr.read() {
         if let Ok(mut transform) = query.get_mut(ev.entity) {
             transform.translation.x += ev.delta.x;
-            // OLD: transform.translation.y -= ev.delta.y; // Invert Y delta
-            // NEW: Apply Y delta directly
+            // Apply Y delta directly (Y-up world coordinates)
             transform.translation.y -= ev.delta.y;
         }
     }
 }
 
 
-/// Update system: Detects keyboard input and sends HotkeyActionTriggered events. (No changes needed)
+// Update system: Detects keyboard input and sends HotkeyActionTriggered events.
 fn hotkey_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     hotkey_config: Res<HotkeyResource>,
     mut hotkey_evw: EventWriter<HotkeyActionTriggered>,
 ) {
-    // (Hotkey detection logic remains the same)
     let ctrl = keyboard_input.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let alt = keyboard_input.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
     let shift = keyboard_input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
@@ -544,7 +440,7 @@ fn hotkey_system(
     }
 }
 
-/// Update system: Handles application control actions (e.g., exit). (No changes needed)
+/// Update system: Handles application control actions (e.g., exit).
 fn app_control_system(
     mut hotkey_evr: EventReader<HotkeyActionTriggered>,
     mut app_exit_evw: EventWriter<AppExit>,
@@ -553,64 +449,6 @@ fn app_control_system(
         if ev.action == "CloseRequested" {
             info!("'CloseRequested' hotkey action received, sending AppExit.");
             app_exit_evw.send(AppExit::Success);
-        }
-    }
-}
-
-
-/// Update system: Triggers rendering via the custom Vulkan Renderer. (Modified)
-fn rendering_system(
-    renderer_res_opt: Option<ResMut<RendererResource>>, // Use ResMut
-    vk_context_res_opt: Option<Res<VulkanContextResource>>,
-    // Query for renderable entities using ECS components
-    // Add GlobalTransform to get the final world matrix easily
-    query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility)>,
-    shapes_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
-) {
-    if let (Some(renderer_res), Some(vk_context_res)) =
-        (renderer_res_opt, vk_context_res_opt)
-    {
-        // --- Collect IDs of entities whose ShapeData changed ---
-        let changed_entities: HashSet<Entity> = shapes_query.iter().collect();
-        if !changed_entities.is_empty() {
-             info!("Detected ShapeData changes for entities: {:?}", changed_entities);
-        }
-        // --- Collect Render Data from ECS ---
-        let mut render_commands: Vec<RenderCommandData> = Vec::new();
-        for (entity, global_transform, shape, visibility) in query.iter() {
-            /* // Check if an object is in the rendering system loop
-            if shape.vertex_shader_path.contains("triangle") { // Simple check
-                info!("Processing Triangle Entity: {:?}, Visible: {}", entity, visibility.0);
-            }
-            */
-            if visibility.0 { // Check custom visibility component
-                let vertices_changed = changed_entities.contains(&entity);// Populate RenderCommandData from components
-                render_commands.push(RenderCommandData {
-                    entity_id: entity,
-                    // Get the computed world matrix from GlobalTransform
-                    transform_matrix: global_transform.compute_matrix(),
-                    vertices: shape.vertices.clone(), // Clone the Arc
-                    vertex_shader_path: shape.vertex_shader_path.clone(),
-                    fragment_shader_path: shape.fragment_shader_path.clone(),
-                    // Use Z translation for depth sorting
-                    depth: global_transform.translation().z,
-                    vertices_changed, 
-                });
-            }
-        }
-
-        // Sort render_commands by depth (higher Z drawn later/on top)
-        render_commands.sort_unstable_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
-
-        // --- Call Custom Renderer ---
-        if let (Ok(mut renderer_guard), Ok(mut vk_ctx_guard)) = ( // vk_ctx needs mut lock too
-            renderer_res.0.lock(),
-            vk_context_res.0.lock(),
-        ) {
-            // Pass collected and sorted data to the actual renderer's render method
-            renderer_guard.render(&mut vk_ctx_guard, &render_commands); // Pass &mut guard and commands
-        } else {
-            warn!("Could not lock resources for rendering trigger.");
         }
     }
 }
@@ -626,55 +464,9 @@ fn handle_close_request(
     }
 }
 
-/// System running on AppExit in Update schedule: Takes ownership of Vulkan/Renderer resources via World access and cleans them up immediately.
-fn cleanup_trigger_system(world: &mut World) {
-    info!("ENTERED cleanup_trigger_system (on AppExit)");
-
-    // --- Take Ownership of Resources ---
-    // Remove the resources from the World immediately using direct World access.
-    // This returns Option<T>, giving us ownership.
-    let renderer_res_opt: Option<RendererResource> = world.remove_resource::<RendererResource>();
-    let vk_context_res_opt: Option<VulkanContextResource> = world.remove_resource::<VulkanContextResource>();
-
-    // --- Perform Cleanup ---
-    if let Some(vk_context_res) = vk_context_res_opt {
-        info!("VulkanContextResource taken.");
-        match vk_context_res.0.lock() {
-            Ok(mut vk_ctx_guard) => {
-                info!("Successfully locked VulkanContext Mutex.");
-
-                // 1. Cleanup Renderer (if it existed)
-                if let Some(renderer_res) = renderer_res_opt {
-                    info!("RendererResource taken.");
-                    match renderer_res.0.lock() {
-                        Ok(mut renderer_guard) => {
-                            info!("Successfully locked Renderer Mutex.");
-                            info!("Calling actual Renderer cleanup via MutexGuard.");
-                            renderer_guard.cleanup(&mut vk_ctx_guard); // Pass vk_ctx guard
-                        }
-                        Err(poisoned) => {
-                            error!("Renderer Mutex was poisoned before cleanup: {:?}", poisoned);
-                        }
-                    }
-                } else {
-                    info!("Renderer resource not found or already removed.");
-                }
-
-                // 2. Cleanup Vulkan Context
-                info!("Calling cleanup_vulkan...");
-                cleanup_vulkan(&mut vk_ctx_guard); // Pass vk_ctx guard
-                info!("cleanup_vulkan finished.");
-
-            } // vk_ctx_guard dropped here
-            Err(poisoned) => {
-                error!("VulkanContext Mutex was poisoned before cleanup: {:?}", poisoned);
-            }
-        }
-    } else {
-        warn!("VulkanContext resource not found or already removed during cleanup trigger.");
-    }
-
-    // --- Resources go out of scope ---
-    info!("Cleanup trigger system finished, taken resources going out of scope.");
-    // Drop implementations (including Allocator) run here *after* cleanup_vulkan.
-}
+// Systems moved to GuiFrameworkCorePlugin:
+// - setup_vulkan_system
+// - create_renderer_system
+// - handle_resize_system
+// - rendering_system
+// - cleanup_trigger_system

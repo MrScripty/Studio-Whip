@@ -1,6 +1,5 @@
 use bevy_app::{App, AppExit, Startup, Update};
 use bevy_ecs::prelude::*;
-//use bevy_ecs::change_detection::DetectChanges;
 use bevy_log::{info, error, warn, LogPlugin, Level};
 use bevy_utils::default;
 use bevy_input::InputPlugin; // Keep for app_control_system
@@ -21,8 +20,10 @@ use rusty_whip::gui_framework::{
     VulkanContext, // Still needed for Resource definition in lib.rs and initial creation
     components::{ShapeData, Visibility, Interaction}, // Still needed for setup_scene_ecs
     events::{EntityDragged, HotkeyActionTriggered}, // Still needed for event handling
-    plugins::core::GuiFrameworkCorePlugin, // <-- Import the core plugin
-    plugins::interaction::GuiFrameworkInteractionPlugin, // <-- Import the interaction plugin
+    plugins::core::GuiFrameworkCorePlugin,
+    plugins::interaction::GuiFrameworkInteractionPlugin,
+    plugins::movement::GuiFrameworkDefaultMovementPlugin,
+    plugins::bindings::GuiFrameworkDefaultBindingsPlugin,
 };
 // Import Bevy Name for debugging entities
 use bevy_core::Name;
@@ -79,8 +80,10 @@ fn main() {
         // Interaction types/events registered by GuiFrameworkInteractionPlugin
 
         // == Add Framework Plugins ==
-        .add_plugins(GuiFrameworkCorePlugin) // <-- Add the core plugin
-        .add_plugins(GuiFrameworkInteractionPlugin) // <-- Add the interaction plugin
+        .add_plugins(GuiFrameworkCorePlugin)
+        .add_plugins(GuiFrameworkInteractionPlugin)
+        .add_plugins(GuiFrameworkDefaultMovementPlugin)
+        .add_plugins(GuiFrameworkDefaultBindingsPlugin)
 
         // == Startup Systems ==
         .add_systems(Startup,
@@ -93,8 +96,6 @@ fn main() {
             (
                 // App specific systems
                 background_resize_system, // App specific background handling
-                movement_system,          // App specific movement logic
-                app_control_system,       // App specific hotkey->action mapping (exit)
             )
         )
         // == Rendering System (runs late) ==
@@ -227,45 +228,3 @@ fn background_resize_system(
         }
     }
 }
-
-// Update system: Applies movement deltas from drag events to Transforms (App specific)
-fn movement_system(
-    mut drag_evr: EventReader<EntityDragged>, // Reads events from InteractionPlugin
-    mut query: Query<&mut Transform>,
-) {
-    for ev in drag_evr.read() {
-        if let Ok(mut transform) = query.get_mut(ev.entity) {
-            transform.translation.x += ev.delta.x;
-            // Apply Y delta directly (Y-up world coordinates)
-            transform.translation.y -= ev.delta.y;
-        }
-    }
-}
-
-// Update system: Handles application control actions (e.g., exit) based on hotkeys (App specific)
-fn app_control_system(
-    mut hotkey_evr: EventReader<HotkeyActionTriggered>, // Reads events from InteractionPlugin
-    mut app_exit_evw: EventWriter<AppExit>,
-) {
-    for ev in hotkey_evr.read() {
-        // This system decides what specific actions mean
-        if ev.action == "CloseRequested" {
-            info!("'CloseRequested' hotkey action received, sending AppExit.");
-            app_exit_evw.send(AppExit::Success);
-        }
-        // Add other hotkey action handling here if needed
-    }
-}
-
-// Systems moved to GuiFrameworkCorePlugin:
-// - setup_vulkan_system
-// - create_renderer_system
-// - handle_resize_system
-// - rendering_system
-// - cleanup_trigger_system
-
-// Systems moved to GuiFrameworkInteractionPlugin:
-// - interaction_system
-// - hotkey_system
-// - handle_close_request
-// - load_hotkeys_system (extracted from setup_scene_ecs)

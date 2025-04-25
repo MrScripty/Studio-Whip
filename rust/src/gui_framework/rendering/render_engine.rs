@@ -143,7 +143,6 @@ impl Renderer {
             warn!("[Renderer::render] Queue is None, likely during cleanup. Skipping frame.");
             return;
         };
-        // Clone other handles (cheap)
         let Some(queue) = platform.queue else {
             warn!("[Renderer::render] Queue is None, likely during cleanup. Skipping frame.");
             return;

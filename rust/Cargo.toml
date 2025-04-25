@@ -30,12 +30,13 @@ bevy_input = "0.15"
 bevy_a11y = "0.15"
 bevy_diagnostic = "0.15"
 bevy_time = "0.15"
+bevy_color = "0.15"
 
 #Text Handling
-cosmic-text = "0.11.2" # For text layout and shaping
-fontdb = "0.18.0"      # Database for loading system fonts (used by cosmic-text)
-swash = "0.1.13"       # For glyph rasterization
-rectangle-pack = "0.3.0" # For packing glyphs into an atlas texture
+cosmic-text = "0.14" # For text layout and shaping
+fontdb = "0.23"      # Database for loading system fonts (used by cosmic-text)
+swash = "0.2"       # For glyph rasterization
+rectangle-pack = "0.4" # For packing glyphs into an atlas texture
 
 #Assorted variety fun pack
 toml = "0.8"

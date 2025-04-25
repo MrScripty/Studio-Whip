@@ -30,6 +30,7 @@ pub struct RenderCommandData {
     pub vertex_shader_path: String,
     pub fragment_shader_path: String,
     pub depth: f32, // For sorting
+    pub vertices_changed: bool, // For background quad resizing
     // Add instancing info later if needed
 }
 

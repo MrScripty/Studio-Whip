@@ -1,5 +1,7 @@
 use bevy_app::{App, AppExit, Startup, Update, Last};
 use bevy_ecs::prelude::*;
+use std::collections::HashSet;
+//use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::schedule::common_conditions::not; // Import 'not' condition
 use bevy_ecs::schedule::common_conditions::on_event; // Import 'on_event' condition
 use bevy_log::{info, error, warn, LogPlugin, Level};
@@ -15,27 +17,28 @@ use bevy_a11y::AccessibilityPlugin;
 use bevy_transform::prelude::{Transform, GlobalTransform};
 use bevy_transform::TransformPlugin;
 use bevy_reflect::Reflect;
-use bevy_core::Name; // Add Name for debugging
+use bevy_core::Name; // for debugging
 
-// Import framework components (Vulkan backend + New ECS parts)
+use rusty_whip::gui_framework::components::visibility;
+// Import framework components (Vulkan backend + ECS parts)
 use rusty_whip::gui_framework::{
     VulkanContext,
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
-    interaction::hotkeys::{HotkeyConfig, HotkeyError}, // Keep for resource loading
-    // Import new components and events
+    interaction::hotkeys::{HotkeyConfig, HotkeyError},
     components::{ShapeData, Visibility, Interaction},
     events::{EntityClicked, EntityDragged, HotkeyActionTriggered},
-    // Import the actual Renderer now
-    rendering::render_engine::Renderer, // <-- Use actual Renderer
+    rendering::render_engine::Renderer,
 };
 // Import types defined in lib.rs
-use rusty_whip::{Vertex, RenderCommandData}; // <-- Import RenderCommandData from lib
+use rusty_whip::{Vertex, RenderCommandData};
 
 use std::sync::{Arc, Mutex};
-// Removed Any import
 use std::path::PathBuf; // Keep for hotkey loading path
 use std::env; // Keep for hotkey loading path
 use ash::vk;
+
+#[derive(Component)]
+struct BackgroundQuad;
 
 // --- Bevy Resources ---
 #[derive(Resource, Clone)]
@@ -110,13 +113,14 @@ fn main() {
         .add_systems(Update,
             (
                 // Input and interaction processing
-                interaction_system, // New system for mouse interaction
-                hotkey_system, // New system for keyboard hotkeys
-                movement_system, // New system to apply drag movements
+                background_resize_system,
+                interaction_system,
+                hotkey_system,
+                movement_system,
                 // Window and App control
-                handle_close_request, // Keep this
-                handle_resize_system, // Keep this (but simplified)
-                app_control_system, // New system for app exit via hotkey
+                handle_close_request,
+                handle_resize_system,
+                app_control_system, // for app exit via hotkey
                 // Add the cleanup trigger system here, running if AppExit occurs
                 cleanup_trigger_system.run_if(on_event::<AppExit>),
             ).chain() // Ensure cleanup runs after other Update systems if AppExit happens
@@ -207,7 +211,6 @@ fn setup_scene_ecs(
     info!("Running setup_scene_ecs...");
 
     // --- Load Hotkey Configuration ---
-    // (Hotkey loading logic remains the same)
     let mut hotkey_path: Option<PathBuf> = None;
     let mut config_load_error: Option<String> = None;
     match env::current_exe() {
@@ -278,7 +281,8 @@ fn setup_scene_ecs(
         Transform::from_xyz(0.0, 0.0, 0.0), // Use Z for depth
         Visibility(true), // Use custom Visibility component
         Interaction::default(), // Not interactive
-        Name::new("Background"), // Optional: Add bevy_core::Name for debugging
+        Name::new("Background"), // Optional: Add bevy_core::Name for 
+        BackgroundQuad,
     ));
 
     // Triangle (Draggable and Clickable)
@@ -346,6 +350,43 @@ fn handle_resize_system(
                 renderer_guard.resize_renderer(&mut vk_ctx_guard, event.width as u32, event.height as u32);
             } else {
                 warn!("Could not lock resources for resize handling.");
+            }
+        }
+    }
+}
+
+// System to update background vertices on resize
+fn background_resize_system(
+    mut resize_reader: EventReader<bevy_window::WindowResized>,
+    // Query for the background entity's ShapeData, identified by BackgroundQuad marker
+    mut background_query: Query<&mut ShapeData, With<BackgroundQuad>>,
+) {
+    // Iterate through resize events (usually just one per frame)
+    for event in resize_reader.read() {
+        // Use the logical width/height from the event
+        if event.width > 0.0 && event.height > 0.0 {
+            let logical_width = event.width;
+            let logical_height = event.height;
+            info!("Window resized to logical: {}x{}. Updating background vertices.", logical_width, logical_height);
+
+            // Try to get the background entity's ShapeData
+            if let Ok(mut shape_data) = background_query.get_single_mut() {
+                // Recalculate vertices based on new logical size
+                // Use Arc::make_mut to get a mutable reference if the Arc is unique,
+                // or clone if it might be shared (safer default). Cloning is fine here.
+                // Or simply replace the Arc entirely. Replacing is simplest:
+                shape_data.vertices = Arc::new(vec![
+                    Vertex { position: [0.0, 0.0] },
+                    Vertex { position: [0.0, logical_height] },
+                    Vertex { position: [logical_width, 0.0] },
+                    Vertex { position: [logical_width, 0.0] },
+                    Vertex { position: [0.0, logical_height] },
+                    Vertex { position: [logical_width, logical_height] },
+                ]);
+                // The Changed<ShapeData> detection will handle buffer updates
+            } else {
+                // This might happen briefly during shutdown or if setup failed
+                warn!("BackgroundQuad entity ShapeData not found during resize update.");
             }
         }
     }
@@ -524,15 +565,21 @@ fn rendering_system(
     // Query for renderable entities using ECS components
     // Add GlobalTransform to get the final world matrix easily
     query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility)>,
+    shapes_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
 ) {
     if let (Some(renderer_res), Some(vk_context_res)) =
         (renderer_res_opt, vk_context_res_opt)
     {
+        // --- Collect IDs of entities whose ShapeData changed ---
+        let changed_entities: HashSet<Entity> = shapes_query.iter().collect();
+        if !changed_entities.is_empty() {
+             info!("Detected ShapeData changes for entities: {:?}", changed_entities);
+        }
         // --- Collect Render Data from ECS ---
         let mut render_commands: Vec<RenderCommandData> = Vec::new();
         for (entity, global_transform, shape, visibility) in query.iter() {
             if visibility.0 { // Check custom visibility component
-                // Populate RenderCommandData from components
+                let vertices_changed = changed_entities.contains(&entity);// Populate RenderCommandData from components
                 render_commands.push(RenderCommandData {
                     entity_id: entity,
                     // Get the computed world matrix from GlobalTransform
@@ -542,6 +589,7 @@ fn rendering_system(
                     fragment_shader_path: shape.fragment_shader_path.clone(),
                     // Use Z translation for depth sorting
                     depth: global_transform.translation().z,
+                    vertices_changed, 
                 });
             }
         }

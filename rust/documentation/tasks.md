@@ -1,156 +1,76 @@
 # Tasks for `rusty_whip` GUI Framework Enhancements
+*Updated: March 19, 2025*
 
 ## Overview
-These tasks enhance `gui_framework` to support a future divider system in `gui_app`, adding efficient element creation, grouping, instancing, and input handling. The framework remains generic, with `gui_app` building specific UIs atop it. Recent focus: Implementing event bus, refactoring rendering, logical grouping, batch updates via events, visibility toggling, and a configurable hotkey system. The main event loop now uses `EventLoop::run` within `main.rs`.
+These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin structure, supporting future features like advanced UI elements and collaborative editing. The framework uses Bevy's core non-rendering features (ECS, input, events, etc.) and drives a custom Vulkan rendering backend.
+
+**Current Status:** The migration to Bevy (v0.15) is complete (Tasks 6.1-6.4). Core logic resides in Bevy systems within `main.rs`. Rendering uses the custom Vulkan backend, handles dynamic resizing (including background quad vertices), uses a Y-up world coordinate system with correct projection matrix (Y-flip), and supports dynamic vertex buffer updates via `Changed<ShapeData>`. The next major step is refactoring the framework logic currently in `main.rs` into dedicated Bevy plugins.
 
 ## Task 1: Implement Event Bus and Convert Existing Functionality
 - **Goal**: Introduce an event bus to decouple components and convert current interactions (dragging, instancing) to use it.
-- **Status**: **Complete**
-- **Summary**: Implemented `EventBus`, converted dragging/instancing, refactored `Renderer`/`BufferManager`/`PipelineManager`, implemented `SceneEventHandler`.
+- **Status**: **Complete** (Legacy - Pre-Bevy Migration)
+- **Summary**: Implemented `EventBus`, converted dragging/instancing, refactored `Renderer`/`BufferManager`/`PipelineManager`, implemented `SceneEventHandler`. Functionality superseded by Bevy Events in Task 6.3.
 
 ## Task 2: Redesign Grouping System for Logical Organization
 - **Goal**: Redesign groups as named, logical containers decoupled from rendering/interaction, supporting multiple group membership per object. Prepare for batch operations.
-- **Affected Modules**: `src/gui_framework/scene/scene.rs`, `src/gui_framework/scene/group.rs`, `src/gui_framework/mod.rs`.
-- **Status**: **Complete**
-- **Summary**: Created `group.rs` with `GroupManager`/`GroupEditor`, integrated into `Scene`.
+- **Status**: **Complete** (Legacy - Pre-Bevy Migration)
+- **Summary**: Created `group.rs` with `GroupManager`/`GroupEditor`, integrated into `Scene`. Functionality superseded by Bevy ECS queries/components.
 
 ## Task 3: Implement Group Batch Update Trigger via Events
 - **Goal**: Add functionality to `GroupEditor` to efficiently *trigger* updates for all objects within a group by publishing *individual* `FieldUpdated` events for each object. Supports fields like `visible`, `is_draggable`, `offset`, `depth`.
-- **Affected Modules**: `src/gui_framework/scene/group.rs`, `src/gui_framework/scene/scene.rs`, `src/gui_framework/event_bus.rs`, `src/main.rs` (event handling).
-- **Status**: **Complete**
-- **Summary**: Added `visible` state flag to `RenderObject`. Added `FieldError` enum. Added `FieldUpdated` variant to `BusEvent` (using `Arc<dyn Any + Send + Sync>`). Implemented `GroupEditor::set_field` to publish individual events for group members. Updated `SceneEventHandler` (subscribed in `main.rs`) to handle `FieldUpdated` and modify `RenderObject` state. Tested in `main.rs`.
-- **Notes**: Implements batch *triggering*. Changing `depth` requires renderer re-sorting (not implemented). Changing `visible` requires renderer modification (Task 3.1).
+- **Status**: **Complete** (Legacy - Pre-Bevy Migration)
+- **Summary**: Added `visible` state flag to `RenderObject`. Added `FieldError` enum. Added `FieldUpdated` variant to `BusEvent`. Implemented `GroupEditor::set_field` to publish individual events for group members. Updated `SceneEventHandler` to handle `FieldUpdated`. Functionality superseded by Bevy ECS queries and component updates.
 
 ## Task 3.1: Implement Visibility Check in Renderer
 - **Goal**: Modify the rendering loop to query and respect the `RenderObject.visible` state flag, skipping draw calls for non-visible objects.
-- **Affected Modules**: `src/gui_framework/rendering/renderable.rs`, `src/gui_framework/rendering/buffer_manager.rs`, `src/gui_framework/rendering/command_buffers.rs`.
-- **Status**: **Complete**
-- **Summary**: Added `visible: bool` field to `Renderable`. Updated `BufferManager::new` to copy visibility state from `RenderObject` to `Renderable`. Modified `record_command_buffers` to check `renderable.visible` before issuing draw commands. Tested by setting initial visibility in `main.rs`.
+- **Status**: **Complete** (Legacy - Pre-Bevy Migration)
+- **Summary**: Added `visible: bool` field to `Renderable`. Updated `BufferManager::new` to copy visibility state. Modified `record_command_buffers` to check visibility. Functionality superseded by `Visibility` component and `rendering_system` query in Task 6.3.
 
 ## Task 4: Implement Keyboard Hotkey System
 - **Goal**: Add a configurable hotkey system using a TOML file (`user/hotkeys.toml`) to map keys/modifiers to action strings, gracefully handling undefined hotkeys. Use `Escape` key for closing the window via event bus and proxy.
-- **Affected Modules**: `src/gui_framework/interaction/controller.rs`, `src/gui_framework/interaction/hotkeys.rs`, `src/gui_framework/mod.rs`, `src/gui_framework/event_bus.rs`, `src/main.rs`, `build.rs`, `Cargo.toml`.
-- **Status**: **Complete**
-- **Summary**: Added `toml` and `thiserror` dependencies. Created `hotkeys.rs` for config loading/parsing (`HotkeyConfig`, `HotkeyError`) and key formatting (`format_key_event`). Updated `InteractionController` to load config relative to executable (using path from `build.rs`), track modifier state (`current_modifiers`, handles `ModifiersChanged`), and publish `BusEvent::HotkeyPressed(Some(action_string))` on recognized key presses. Updated `build.rs` (`copy_user_files`) to copy `user/hotkeys.toml` to the target directory. Updated `main.rs` to use `EventLoop::run` and `EventLoopProxy<UserEvent>`, added `HotkeyActionHandler` subscriber that listens for `HotkeyPressed(Some("CloseRequested"))` and sends `UserEvent::Exit` via proxy to trigger clean shutdown. Tested `Escape`, `Ctrl+S`, `Alt+P`.
-- **Constraints**: Uses `EventBus` and `EventLoopProxy`. Relies on `build.rs` copying config.
+- **Status**: **Complete** (Partially Superseded by Task 6.3)
+- **Summary**: Added `toml` and `thiserror` dependencies. Created `hotkeys.rs` for config loading/parsing (`HotkeyConfig`, `HotkeyError`) and key formatting. Updated `InteractionController` to load config and publish `BusEvent::HotkeyPressed`. Updated `build.rs` to copy config. Updated `main.rs` to use `EventLoopProxy` and `HotkeyActionHandler` for exit. Hotkey loading (`HotkeyConfig`, `HotkeyResource`) and config file copying remain relevant, but input detection and event dispatch moved to `hotkey_system` using Bevy Input/Events in Task 6.3.
 
 ## Task 5: Add Generic Click Handling via Event Router
 - **Goal**: Implement a generic mechanism to handle mouse clicks on any `RenderObject` by publishing an `ObjectClicked` event and providing an easy way for the application to register specific callback functions for different object IDs using a central router.
-- **Affected Modules**: `src/gui_framework/event_bus.rs`, `src/gui_framework/interaction/controller.rs`, `src/main.rs` (for router definition, instantiation, and testing).
-- **Status**: **Complete**
-- **Steps**:
-    1.  **Event Bus:** Add a new variant `ObjectClicked(usize, Option<usize>)` to the `BusEvent` enum in `src/gui_framework/event_bus.rs`. This event will carry the ID of the clicked object and the optional ID of the specific instance clicked.
-    2.  **Interaction Controller:** Modify `InteractionController::handle_event` in `src/gui_framework/interaction/controller.rs`. In the `WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }` handler, when `scene.pick_object_at()` returns a target `(object_id, instance_id)`, publish `BusEvent::ObjectClicked(object_id, instance_id)` instead of `BusEvent::ObjectPicked`.
-    3.  **Click Router (Definition):** Define a new struct `ClickRouter` within `src/main.rs`.
-        *   Give it a field like `callbacks: std::collections::HashMap<usize, Box<dyn FnMut(usize, Option<usize>) + 'static>>`.
-        *   Implement a `new()` function.
-        *   Implement the `EventHandler` trait for `ClickRouter`. The `handle` method should check for `BusEvent::ObjectClicked`, look up the `object_id` in the `callbacks` map, and execute the associated closure if found.
-    4.  **Click Router (API & Usage):**
-        *   Implement a public method `register_click_handler(&mut self, object_id: usize, callback: impl FnMut(usize, Option<usize>) + 'static)` on `ClickRouter` in `src/main.rs` to add callbacks to the map.
-        *   In `main.rs`, instantiate the `ClickRouter`, wrap it in `Arc<Mutex<>>`, and subscribe it to the `EventBus` using `event_bus.subscribe_arc()`.
-        *   After creating scene objects and getting their IDs, lock the router and use `register_click_handler` to add at least one test callback (e.g., using `println!`) associated with a specific `RenderObject` ID.
-    5.  **Testing:** Run the application. Click the `RenderObject` for which a callback was registered. Verify that the output from the test callback appears in the console.
-- **Constraints**: Event-driven; relies on hit detection; uses a central router pattern defined in the application (`main.rs`) rather than the framework itself. Requires closures to have a `'static` lifetime.
+- **Status**: **Complete** (Legacy - Pre-Bevy Migration)
+- **Summary**: Added `ObjectClicked` to `BusEvent`. Modified `InteractionController` to publish `ObjectClicked`. Defined `ClickRouter` in `main.rs` implementing `EventHandler` and subscribed it to `EventBus`. Added `register_click_handler` method. Functionality superseded by `EntityClicked` event and standard Bevy event handling in Task 6.3.
 
 ## Task 6: Incremental Migration to Bevy Ecosystem
 
-**Overall Goal:** Gradually replace custom framework components (windowing, input, scene management, event bus, math) with their equivalents from the Bevy ecosystem (`bevy_app`, `bevy_winit`, `bevy_input`, `bevy_ecs`, `bevy_math`, `bevy_log`, `bevy_reflect`, `bevy_utils`) while keeping the application functional at each stage. The custom Vulkan rendering backend remains but adapts its data inputs. **Crucially, this migration must strictly avoid integrating any part of Bevy's rendering stack (`bevy_render`, `bevy_pbr`, `bevy_sprite`, `bevy_ui`, `wgpu`, etc.). The application will rely *solely* on the custom Vulkan renderer.**
+**Overall Goal:** Gradually replace custom framework components (windowing, input, scene management, event bus, math) with Bevy equivalents (`bevy_app`, `bevy_winit`, `bevy_input`, `bevy_ecs`, `bevy_math`, `bevy_log`, `bevy_reflect`, `bevy_utils`), keeping the custom Vulkan renderer. **Strictly avoid `bevy_render`**.
 
-**Status:** Task 6.1 & 6.2 Complete. Task 6.3 Not Started.
+**Status:** **Complete** (Tasks 6.1 - 6.4)
 
-### Task 6.1: Integrate Bevy App & Windowing (`bevy_app`, `bevy_winit`, `bevy_window`, Core Deps)
-
-*   **Goal:** Replace the manual `winit` event loop and window creation with `bevy_app` and `bevy_winit`. The existing custom `Scene`, `EventBus`, `InteractionController`, `Renderer`, and `VulkanContext` will be kept *for now* and triggered from within the Bevy app structure using temporary bridging mechanisms.
+### Task 6.1: Integrate Bevy App & Windowing
 *   **Status:** **Complete**
-*   **Steps:**
-    1.  **Add Dependencies:** Add `bevy_app`, `bevy_winit`, `bevy_window`. This will also pull in `bevy_ecs`, `bevy_utils`, `bevy_log`, `bevy_reflect`, `bevy_core`. Start with `MinimalPlugins` and add `WinitPlugin`. Check `bevy_window` docs for exact plugin usage.
-        *   **Note:** It is essential *not* to use `DefaultPlugins`, as this would pull in Bevy's rendering plugins. Stick to the minimal required plugins like `WindowPlugin`, `WinitPlugin`, `InputPlugin`, `LogPlugin`, etc.
-    2.  **Refactor `main.rs` (Entry Point):**
-        *   Remove the manual `winit::EventLoop::run(...)` structure.
-        *   Instantiate `bevy_app::App::new()`.
-        *   Add `MinimalPlugins` and necessary windowing plugins (e.g., `WinitPlugin::default()`).
-        *   Keep the existing `Arc<Mutex<...>>` containers for `VulkanContext`, `Scene`, `EventBus`, `InteractionController`, `Renderer`, `ClickRouter`. **Store these Arcs as Bevy Resources** (`app.insert_resource(scene_arc.clone())`, etc.).
-        *   Add a Bevy `Startup` system (`setup_vulkan_system`) that:
-            *   Takes `NonSend<WinitWindows>` (from `bevy_winit`), `ResMut<Arc<Mutex<VulkanContext>>>` as parameters.
-            *   Retrieves the primary `winit::Window` handle (use `Query<&Window, With<PrimaryWindow>>` from `bevy_window`).
-            *   Calls the existing `setup_vulkan` function, passing the `VulkanContext` and the `Window` handle.
-        *   Add another `Startup` system (`create_renderer_system`) that runs *after* `setup_vulkan_system` (use `.after()`). It takes `Res<Arc<Mutex<VulkanContext>>>`, `Res<Arc<Mutex<Scene>>>`, `Res<Arc<Mutex<Renderer>>>` and creates the `Renderer` instance, storing it back in the resource.
-        *   Add a Bevy `Update` system (`winit_event_bridge_system`) that:
-            *   Takes `EventReader<bevy_window::RawWindowThreadEvent>` (confirm event name and if plugin needs config), or alternatively reads raw Winit events if necessary via custom runner integration.
-            *   Takes `Res<Arc<Mutex<InteractionController>>>`, `Res<Arc<Mutex<Scene>>>`.
-            *   For relevant Winit events, locks the `InteractionController` and calls its `handle_event` method, passing the (locked) `Scene` resource if needed. *This is the temporary input bridge.*
-        *   Add a Bevy `Update` system (`render_trigger_system`) that runs late in the schedule (e.g., in `RenderStages::Render` or `Last`). It takes `Res<Arc<Mutex<Renderer>>>`, `Res<Arc<Mutex<Scene>>>`, `Res<Arc<Mutex<VulkanContext>>>` and calls `renderer.render(vk_ctx, scene)`.
-        *   Add systems to handle `bevy_window::WindowCloseRequested` or `bevy_app::AppExit` events for clean shutdown. Vulkan cleanup (`cleanup_vulkan` and `renderer.cleanup`) needs to be triggered here, likely via an `OnExit` system for a specific state or listening to `AppExit`. Use `.run()` conditions based on `AppExit` reader.
-        *   Call `app.run()`.
-    3.  **Testability:**
-        *   The application should compile and launch, showing the Winit window managed by Bevy.
-        *   The initial scene should be rendered by the `render_trigger_system` calling the existing renderer.
-        *   Input handling via the `winit_event_bridge_system` calling the old `InteractionController` *might* work, but could be fragile. Test clicking, dragging, hotkeys.
-        *   Closing the window should trigger cleanup and exit.
-*   **Outcome:** The app runs using `bevy_app`'s runner and `bevy_winit`, but the core logic still resides in the old structs accessed via Resources. Input is temporarily bridged.
+*   **Outcome:** App runs using `bevy_app` runner and `bevy_winit`. Old logic temporarily bridged via Resources.
 
-### Task 6.2: Adopt Bevy Math (`bevy_math`)
-
-*   **Goal:** Replace all usage of the `glam` crate with `bevy_math` types (`Vec2`, `Mat4`, etc.) throughout the *entire existing codebase* (including rendering logic, custom structs).
+### Task 6.2: Adopt Bevy Math
 *   **Status:** **Complete**
-*   **Steps:**
-    1.  **Add Dependency:** Ensure `bevy_math` is available (pulled in by `bevy_app`). Remove direct `glam` dependency from `Cargo.toml`.
-    2.  **Code Replacement:** Search and replace `glam::Vec2` -> `bevy_math::Vec2`, `glam::Mat4` -> `bevy_math::Mat4`, etc. Update `Vertex` struct. Update matrix methods (e.g., `orthographic_rh` might be slightly different).
-    3.  **Compile and Fix:** Resolve any compiler errors resulting from the type changes.
-*   **Testability:** The application should compile and run. Visually inspect that rendering positions, scaling, and dragging behaviour (if working) appear identical.
-*   **Outcome:** The codebase now uses Bevy's standard math types, preparing for ECS component definitions.
+*   **Outcome:** Codebase uses `bevy_math` types (`Vec2`, `Mat4`).
 
 ### Task 6.3: Migrate Core Logic to Bevy ECS & Input
-
-*   **Goal:** Remove the custom `Scene`, `ElementPool`, `RenderObject`, `EventBus`, `InteractionController`, `ClickRouter`. Replace them with Bevy ECS Components, Resources, Events, and Systems. Utilize `bevy_input` for cleaner input handling.
-*   **Status:** Steps 1-6 Completed
-*   **Steps:**
-    1.  **Add `bevy_input`:** Add the `InputPlugin::default()` to the `App` in `main.rs`. Remove the temporary `winit_event_bridge_system`.
-    2.  **Define Core Components:** Create component structs in `src/gui_framework/components/`:
-        *   `Transform` (use `bevy_transform::components::Transform`).
-        *   `ShapeData { vertices: Vec<Vertex>, shader_path: String }`.
-        *   `Visibility`: **Define a custom `Visibility` component (e.g., `struct Visibility(pub bool);`). Do *not* use `bevy_render::view::Visibility` or any components from `bevy_render`.** Mark it with `#[derive(Component)]`.
-        *   `Interaction { clickable: bool, draggable: bool }`. Mark them with `#[derive(Component)]`.
-    3.  **Define Core Events:** Create event structs in `src/gui_framework/events/`: `EntityClicked { entity: Entity }`, `EntityDragged { entity: Entity, delta: Vec2 }`, `HotkeyActionTriggered { action: String }`. Add them via `app.add_event::<...>()`.
-    4.  **Refactor Setup:** Remove the old `SceneResource`, `EventBusResource`, `InteractionControllerResource`, `ClickRouterResource` resources. Modify the `Startup` system(s) to spawn entities directly using `commands.spawn((Transform::from_xyz(...), ShapeData{...}, Interaction{...}, Visibility(...), ...))`. Load `HotkeyConfig` into a Bevy resource (`Res<HotkeyConfig>`).
-    5.  **Create Input/Interaction Systems:**
-        *   Create `interaction_system` (in `src/gui_framework/systems/`):
-            *   Takes `Res<Input<MouseButton>>`, `EventReader<CursorMoved>` (from `bevy_window`), `Query<&Window, With<PrimaryWindow>>`.
-            *   Queries entities with `&bevy_transform::components::Transform`, `&ShapeData`, `&Visibility` (custom), `&Interaction`.
-            *   Performs hit-testing using Bevy input resources/events. Access window via query.
-            *   Manages drag state (e.g., via a `Local<Option<Entity>>` or a `DraggingState` resource).
-            *   Writes `EntityClicked` and `EntityDragged` events using `EventWriter`.
-    6.  **Create Logic Systems:**
-        *   Create `movement_system`: Reads `EventReader<EntityDragged>`, updates `Query<&mut bevy_transform::components::Transform>`.
-        *   Create `hotkey_system`: Reads `Res<Input<KeyCode>>`, `Res<HotkeyConfig>`, writes `EventWriter<HotkeyActionTriggered>`. (Handle modifiers via `Input<KeyCode>.pressed()`).
-        *   Create `app_control_system`: Reads `EventReader<HotkeyActionTriggered>` or `EventReader<WindowCloseRequested>`, sends `EventWriter<AppExit>`. Modify the exit handler in `main.rs` to listen for `AppExit`.
-    7.  **Refactor Rendering Path:**
-        *   Modify the `render_trigger_system` (rename to `rendering_system`):
-            *   Queries entities with `&bevy_transform::components::Transform`, `&ShapeData`, `&Visibility` (our custom component).
-            *   Collects data into a temporary structure (e.g., `Vec<RenderCommandData>`), sorts by depth (`Transform.translation.z`).
-            *   Takes `Res<Arc<Mutex<Renderer>>>` (our custom Vulkan renderer wrapper), `Res<Arc<Mutex<VulkanContext>>>`.
-            *   **Calls the *modified custom Vulkan* `Renderer::render` method**, passing the collected ECS component data (`render(vk_ctx, collected_render_data)`). **This system must *only* interact with the custom Vulkan renderer and must not involve any Bevy rendering systems, pipelines, or render graphs.**
-        *   Adapt *custom* `Renderer`, `BufferManager` APIs: `render` now accepts `&[RenderCommandData]`. `BufferManager` needs significant rework: maybe manage buffers per `ShapeData` hash or via Entity ID mapping. Updates need to be driven by `Changed<Transform>` or similar for efficiency (requires `bevy_ecs` change detection features). Instancing needs ECS approach (e.g., component linking).
-    8.  **Remove Obsolete Code:** Delete old `Scene`, `EventBus`, `InteractionController`, etc., modules/files and associated structs/resources.
-*   **Testability:** Test incrementally: entity spawning, input state, hit-testing events, drag events, transform updates, hotkey events, rendering output reflecting ECS state.
-*   **Outcome:** Core logic runs within ECS. Custom scene/event management removed. Input uses `bevy_input`. Rendering consumes ECS data via the custom Vulkan path only.
+*   **Status:** **Complete**
+*   **Outcome:** Core logic runs within ECS (`ShapeData`, `Visibility`, `Interaction`, `Transform`). Custom scene/event management removed. Input uses `bevy_input`. Rendering consumes ECS data via the custom Vulkan path, including **dynamic vertex buffer updates** based on `Changed<ShapeData>`. Coordinate systems (Y-up world, Y-flip projection) corrected. Application-specific logic like `background_resize_system` added to `main.rs`.
 
 ### Task 6.4: Integrate Logging & Reflection
-*   **Goal:** Integrate `bevy_log` for consistent logging and `bevy_reflect` for potential future use (editors, serialization).
 *   **Status:** **Complete**
-*   **Summary & Progress:**
-    *   **Logging:** `LogPlugin` added. `println!`/`eprintln!` replaced with `bevy_log` macros (`info!`, `warn!`, `error!`). (**Complete**)
-    *   **Reflection:** Components (`Interaction`, `ShapeData`, `Visibility`), Events (`EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`), Resources (`HotkeyResource`, `HotkeyConfig`), and shared types (`Vertex`) derive `Reflect` and are registered via `app.register_type::<T>()`. (**Complete**)
-*   **Outcome:** Logging is standardized via `bevy_log`. Core data types are reflectable.
-*   **Goal:** Integrate `bevy_log` for consistent logging and `bevy_reflect` for potential future use (editors, serialization).
-*   **Status:** Not Started
-*   **Steps:**
-    1.  **Logging:** Ensure `LogPlugin` is added (likely part of `MinimalPlugins` or `DefaultPlugins`). Replace `println!`/`eprintln!` calls with `info!`, `warn!`, `error!`, `debug!`, `trace!` macros from `bevy_log` (or `tracing`).
-    2.  **Reflection:** Add `bevy_reflect::ReflectPlugin` to the app if not already present. Add `#[derive(Component, Reflect)]`, `#[derive(Resource, Reflect)]`, `#[derive(Event, Reflect)]` etc., to relevant structs/enums. Add `#[reflect(Component)]` attributes. Register types using `.register_type::<MyComponent>()` in a setup system or plugin.
-*   **Testability:** Check console output for logs formatted by `bevy_log`. Add a simple system that accesses the `AppTypeRegistry` resource to verify types have been registered via reflection.
-*   **Outcome:** Logging is standardized, and reflection capabilities are enabled for future development.
+*   **Outcome:** Logging standardized via `bevy_log`. Core data types are reflectable.
 
-## Task 7: Text Handling - Layout and Rendering Foundation
+## Task 7: Refactor Framework into Bevy Plugins
+- **Goal**: Refactor framework logic currently residing in `main.rs` into dedicated, modular Bevy plugins (`GuiFrameworkCorePlugin`, `GuiFrameworkInteractionPlugin`, `GuiFrameworkDefaultMovementPlugin`, `GuiFrameworkDefaultBindingsPlugin`) for improved encapsulation, reusability, and a cleaner application entry point (`main.rs`).
+- **Status**: Not Started
+- **Affected Modules**: `main.rs`, `src/gui_framework/mod.rs`, create `src/gui_framework/plugins/mod.rs`, `core.rs`, `interaction.rs`, `movement.rs`, `bindings.rs`.
+- **Steps**:
+    1.  **Phase 1: Establish Core Plugin:** Create `plugins/core.rs`. Move Vulkan/Renderer setup (`setup_vulkan_system`, `create_renderer_system`), rendering (`rendering_system`), cleanup (`cleanup_trigger_system`), and resize handling (`handle_resize_system`) systems into `GuiFrameworkCorePlugin`. Register core resources (`VulkanContextResource`) and types (`ShapeData`, `Visibility`, `Vertex`).
+    2.  **Phase 2: Establish Interaction Plugin:** Create `plugins/interaction.rs`. Move hotkey loading (`load_hotkeys_system` - extracted from `setup_scene_ecs`), input processing (`interaction_system`, `hotkey_system`), and window close request handling (`handle_close_request`) systems into `GuiFrameworkInteractionPlugin`. Register interaction resources (`HotkeyResource`), events (`EntityClicked`, etc.), and types (`Interaction`, `HotkeyConfig`, etc.).
+    3.  **Phase 3: Establish Default Behavior Plugins:** Create `plugins/movement.rs` and `plugins/bindings.rs`. Move `movement_system` into `GuiFrameworkDefaultMovementPlugin`. Move `app_control_system` into `GuiFrameworkDefaultBindingsPlugin`.
+    4.  **Phase 4: Refinement (System Sets & Cleanup):** Implement Bevy `SystemSet`s within the plugins to manage internal execution order and dependencies between plugins. Ensure application systems in `main.rs` (like `setup_app_scene`) correctly order themselves relative to framework sets. Perform final cleanup of `main.rs`, removing all moved logic and registrations.
+    5.  **Phase 5: Documentation:** Create `usage.md` explaining prerequisites (required Bevy plugins), how to add framework plugins, configuration, creating UI elements, and reacting to events. Update `architecture.md` and `modules.md` to reflect the plugin-based structure.
+- **Constraints**: Requires Task 6.4 completion. Relies heavily on Bevy's Plugin and System Set mechanisms. Requires careful dependency management between plugins and application systems.
+
+## Task 8: Text Handling - Layout and Rendering Foundation
 - **Goal**: Integrate `cosmic-text` for layout/shaping and implement a custom Vulkan bitmap glyph atlas renderer integrated with the existing Vulkan backend. Display static sample text represented as Bevy ECS entities.
 - **Status**: Not started
 - **Affected Components/Systems/Resources**:
@@ -183,9 +103,9 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
         *   Integrates with the main `rendering_system`: Provides necessary data (vertex buffers, atlas descriptor set, pipeline) for the `rendering_system` to issue draw calls during the appropriate render phase. Requires defining a text-specific Vulkan pipeline and descriptor set layout for the glyph atlas sampler.
     7.  **Integrate into App:** Add the `Text` component, `FontServer`, `GlyphAtlasResource`, and the new systems to the Bevy `App`. Add necessary Vulkan setup for text pipeline/descriptors in a setup system.
     8.  **Test:** Spawn entities with `Transform` and `Text` components. Verify static text renders correctly. Modify `Text` component content and verify the display updates.
-- **Constraints**: Requires Task 6 completion. Initial focus on non-wrapping, static text. Rendering must use the custom Vulkan backend.
+- **Constraints**: Requires Task 7 (Plugin Refactor) completion. Initial focus on non-wrapping, static text. Rendering must use the custom Vulkan backend.
 
-## Task 8: Text Handling - Editing & Interaction
+## Task 9: Text Handling - Editing & Interaction
 - **Goal**: Integrate `yrs` (`YText`) for collaborative data storage. Implement basic mouse/keyboard editing for text entities using Bevy Input and Systems.
 - **Status**: Not started
 - **Affected Components/Systems/Resources**:
@@ -212,9 +132,9 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
         *   Update the `String` content within the entity's `Text` component to match the Yrs state. This `Changed<Text>` will trigger the `text_layout_system`.
     7.  **Cursor Rendering:** Modify `text_rendering_system` to query for the entity with `Focus` and cursor position data. Render a visual cursor (e.g., a simple quad) using the custom Vulkan renderer.
     8.  **Test:** Spawn an entity with `Text` and `EditableText`. Click to focus. Type characters, press backspace/delete. Verify the text updates visually and the cursor moves appropriately. Check underlying Yrs data if possible.
-- **Constraints**: Requires Task 7. Focus on basic local editing (single cursor, basic input). P2P synchronization of the `YrsDocResource` is deferred.
+- **Constraints**: Requires Task 8. Focus on basic local editing. P2P synchronization deferred.
 
-## Task 9: Implement Radial Pie Context Menu
+## Task 10: Implement Radial Pie Context Menu
 - **Goal**: Implement a popup pie-style context menu triggered by a hotkey, using Bevy ECS entities for UI elements and Bevy events/resources for state management.
 - **Status**: Not started
 - **Affected Components/Systems/Resources**:
@@ -236,10 +156,10 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
     4.  **Rendering:** Existing `rendering_system` and `text_rendering_system` (using custom Vulkan backend) will render the spawned UI entities based on their standard components (`Transform`, `ShapeData`, `Text`, `Visibility`).
     5.  **Action Handling:** Create other systems that listen for `PieOptionSelected` events and perform the corresponding actions.
     6.  **Test:** Trigger menu via hotkey. Verify UI elements appear correctly positioned. Click an option, verify `PieOptionSelected` event is sent and the menu disappears. Click outside the menu, verify it disappears.
-- **Constraints**: Requires Task 6 and 7. UI element appearance defined by standard components. Rendering must use the custom Vulkan backend.
+- **Constraints**: Requires Task 7 and 8. UI rendering uses custom Vulkan backend.
 
-## Task 10: Implement Optional Divider System in Framework
-- **Goal**: Implement an optional divider system *within* the framework for managing resizable layout regions using Bevy ECS entities, components, and systems.
+## Task 11: Implement Optional Divider System in Framework
+- **Goal**: Implement an optional divider system *within* the framework for managing resizable layout regions using Bevy ECS entities, components, and systems. Potentially delivered as another optional plugin.
 - **Status**: Not started
 - **Affected Components/Systems/Resources**:
     - New Components: `Divider { axis: Axis, min: f32, max: f32, region_a: Entity, region_b: Entity }`, `LayoutRegion { bounds: Rect }`, `DraggableDivider` (marker, works with `Interaction` component).
@@ -263,9 +183,9 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
         *   Send `RegionResized` events for affected regions using `EventWriter`.
     5.  **Application Integration:** Application systems can query `LayoutRegion` components to position their own content or listen for `RegionResized` events to react to layout changes.
     6.  **Test:** Enable the system via config. Verify dividers and region entities are spawned. Drag a divider handle visually. Check that associated `LayoutRegion` bounds update correctly (log them). Verify `RegionResized` events are sent with correct data.
-- **Constraints**: Requires Task 6. Handles layout bounds; rendering content within regions is the application's responsibility (using the custom Vulkan renderer).
+- **Constraints**: Requires Task 7. Handles layout bounds; rendering content within regions is the application's responsibility.
 
-## Task 11: Enhance Prompt Tool - Code Signature Stripping
+## Task 12: Enhance Prompt Tool - Code Signature Stripping
 - *(No changes needed, this task is external to the Rust codebase architecture)*
 - **Goal**: Add a new option to `utilities/llm_prompt_tool.sh` that processes Rust files, stripping out function bodies while retaining signatures, `impl` blocks, structs, comments, and other surrounding code.
 - **Affected Modules**: `utilities/llm_prompt_tool.sh`.
@@ -276,9 +196,9 @@ These tasks enhance `gui_framework` to support a future divider system in `gui_a
 ## Deferred Features (For Future Consideration)
 - Text: Markdown rendering, syntax highlighting (`tree-sitter`), code folding.
 - Text: Advanced editing (complex selections, IME support).
-- Text: SDF-based rendering (`glyphon` or custom), ensuring integration uses the *custom Vulkan backend* and not Bevy's rendering pipeline.
-- Rendering: Optimizing *custom Vulkan* buffer updates using Bevy change detection (`Changed<T>`).
-- Rendering: Advanced instancing techniques within ECS, implemented *within the custom Vulkan renderer* (avoiding Bevy's specific `BatchedMeshInstances` if it implies `bevy_render`).
-- Collaboration: Full P2P synchronization of Components/Resources using `yrs` or other CRDTs, integrating with `YrsDocResource`.
-- UI: Context switching (using Bevy `States<T>`), undo/redo system (potentially via command pattern integrated with ECS).
+- Text: SDF-based rendering (`glyphon` or custom), ensuring integration uses the *custom Vulkan backend*.
+- Rendering: Resource removal for despawned entities (using `RemovedComponents`).
+- Rendering: Advanced instancing techniques within ECS, implemented *within the custom Vulkan renderer*.
+- Collaboration: Full P2P synchronization of Components/Resources using `yrs` or other CRDTs.
+- UI: Context switching (using Bevy `States<T>`), undo/redo system.
 - General: Performance optimizations leveraging ECS parallelism and queries.

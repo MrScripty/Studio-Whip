@@ -8,13 +8,14 @@ build = "build.rs"
 name = "rusty_whip"
 
 [dependencies]
+#Vulkan
 ash = "0.38"
 vk-mem = "0.4"
 raw-window-handle = "0.6"
 winit = "0.30.9" #Being replaced by bevy_winit
 ash-window = "0.13"
-toml = "0.8"
-thiserror = "2.0"
+
+#Bevy stuff
 bevy_transform = "0.15"
 bevy_app = "0.15"
 bevy_core = "0.15"
@@ -29,6 +30,16 @@ bevy_input = "0.15"
 bevy_a11y = "0.15"
 bevy_diagnostic = "0.15"
 bevy_time = "0.15"
+
+#Text Handling
+cosmic-text = "0.11.2" # For text layout and shaping
+fontdb = "0.18.0"      # Database for loading system fonts (used by cosmic-text)
+swash = "0.1.13"       # For glyph rasterization
+rectangle-pack = "0.3.0" # For packing glyphs into an atlas texture
+
+#Assorted variety fun pack
+toml = "0.8"
+thiserror = "2.0"
 
 [build-dependencies]
 walkdir = "2"

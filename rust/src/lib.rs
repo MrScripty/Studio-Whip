@@ -26,6 +26,9 @@ pub struct HotkeyResource(pub gui_framework::interaction::hotkeys::HotkeyConfig)
 #[derive(bevy_ecs::prelude::Resource, Clone)]
 pub struct GlyphAtlasResource(pub std::sync::Arc<std::sync::Mutex<gui_framework::rendering::glyph_atlas::GlyphAtlas>>);
 
+#[derive(bevy_ecs::prelude::Resource, Clone)]
+pub struct FontServerResource(pub std::sync::Arc<std::sync::Mutex<gui_framework::rendering::font_server::FontServer>>);
+
 /// Holds the prepared Vulkan handles needed for a single draw call.
 #[derive(Debug, Clone)]
 pub struct PreparedDrawData {

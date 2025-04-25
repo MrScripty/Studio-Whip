@@ -18,11 +18,12 @@ use crate::gui_framework::{
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
     rendering::render_engine::Renderer,
     rendering::glyph_atlas::GlyphAtlas,
+    rendering::font_server::FontServer,
     components::{ShapeData, Visibility, Text, FontId, TextAlignment},
 };
 
 // Import resources used/managed by this plugin's systems
-use crate::{VulkanContextResource, RendererResource, GlyphAtlasResource};
+use crate::{VulkanContextResource, RendererResource, GlyphAtlasResource, FontServerResource};
 
 // --- System Sets ---
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -30,6 +31,7 @@ pub enum CoreSet {
     SetupVulkan,
     CreateRenderer,
     CreateGlyphAtlas,
+    CreateFontServer,
     HandleResize,
     Render,
     Cleanup,
@@ -61,12 +63,14 @@ impl Plugin for GuiFrameworkCorePlugin {
                 CoreSet::SetupVulkan, 
                 CoreSet::CreateRenderer, 
                 CoreSet::CreateGlyphAtlas,
+                CoreSet::CreateFontServer,
             ).chain()
         )
             .add_systems(Startup, (
                 setup_vulkan_system.in_set(CoreSet::SetupVulkan),
                 create_renderer_system.in_set(CoreSet::CreateRenderer),
                 create_glyph_atlas_system.in_set(CoreSet::CreateGlyphAtlas),
+                create_font_server_system.in_set(CoreSet::CreateFontServer),
         ))
             // == Update Systems ==
             .configure_sets(Update,
@@ -150,6 +154,16 @@ fn create_glyph_atlas_system(
     }
 }
 
+fn create_font_server_system(mut commands: Commands) {
+    info!("Running create_font_server_system (Core Plugin)...");
+    // FontServer::new() can take some time if loading many system fonts.
+    // Consider running this asynchronously or loading fewer fonts if startup time is critical.
+    let font_server = FontServer::new();
+    let font_server_arc = Arc::new(Mutex::new(font_server));
+    commands.insert_resource(FontServerResource(font_server_arc));
+    info!("FontServer resource created and inserted (Core Plugin).");
+}
+
 // Update system: Handles window resize events.
 fn handle_resize_system(
     mut resize_reader: EventReader<bevy_window::WindowResized>,
@@ -183,6 +197,7 @@ fn rendering_system(
     shapes_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
     // text_query: Query<(Entity, &GlobalTransform, &Text, &Visibility)>,
     // glyph_atlas_res: Option<Res<GlyphAtlasResource>>, // Will need this later
+    // font_server_res: Option<Res<FontServerResource>>, // Will need this later
 ) {
     if let (Some(renderer_res), Some(vk_context_res)) =
         (renderer_res_opt, vk_context_res_opt)
@@ -212,6 +227,7 @@ fn rendering_system(
         // 3. Calling glyph_atlas.add_glyph() for needed glyphs (triggering rasterization/upload if new).
         // 4. Generating vertex data for text quads using GlyphInfo UVs.
         // 5. Passing text vertex data + atlas texture to the renderer.
+        // Will use FontServerResource here for shaping
 
         render_commands.sort_unstable_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
 

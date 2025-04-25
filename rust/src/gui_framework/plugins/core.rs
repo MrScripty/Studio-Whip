@@ -17,18 +17,19 @@ use crate::{Vertex, RenderCommandData};
 use crate::gui_framework::{
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
     rendering::render_engine::Renderer,
-    // Use the re-exported types from components::mod.rs
+    rendering::glyph_atlas::GlyphAtlas,
     components::{ShapeData, Visibility, Text, FontId, TextAlignment},
 };
 
 // Import resources used/managed by this plugin's systems
-use crate::{VulkanContextResource, RendererResource};
+use crate::{VulkanContextResource, RendererResource, GlyphAtlasResource};
 
 // --- System Sets ---
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CoreSet {
     SetupVulkan,
     CreateRenderer,
+    CreateGlyphAtlas,
     HandleResize,
     Render,
     Cleanup,
@@ -45,6 +46,7 @@ impl Plugin for GuiFrameworkCorePlugin {
         app.register_type::<ShapeData>();
         app.register_type::<Visibility>();
         app.register_type::<Vertex>();
+        // Note: Resources like GlyphAtlasResource don't need registration if they derive Resource
         // Register new Text component and related types
         app.register_type::<Text>();
         app.register_type::<FontId>();
@@ -54,25 +56,29 @@ impl Plugin for GuiFrameworkCorePlugin {
 
         // --- System Setup ---
         app
-        // == Startup Systems ==
-        .configure_sets(Startup,
-            (CoreSet::SetupVulkan, CoreSet::CreateRenderer).chain()
+            // == Startup Systems ==
+            .configure_sets(Startup,(
+                CoreSet::SetupVulkan, 
+                CoreSet::CreateRenderer, 
+                CoreSet::CreateGlyphAtlas,
+            ).chain()
         )
-        .add_systems(Startup, (
-            setup_vulkan_system.in_set(CoreSet::SetupVulkan),
-            create_renderer_system.in_set(CoreSet::CreateRenderer),
+            .add_systems(Startup, (
+                setup_vulkan_system.in_set(CoreSet::SetupVulkan),
+                create_renderer_system.in_set(CoreSet::CreateRenderer),
+                create_glyph_atlas_system.in_set(CoreSet::CreateGlyphAtlas),
         ))
-        // == Update Systems ==
-        .configure_sets(Update,
-            CoreSet::HandleResize
+            // == Update Systems ==
+            .configure_sets(Update,
+                CoreSet::HandleResize
         )
-        .add_systems(Update,
-            handle_resize_system.in_set(CoreSet::HandleResize)
+            .add_systems(Update,
+                handle_resize_system.in_set(CoreSet::HandleResize)
         )
-        // == Rendering System (runs late) ==
-        .add_systems(Last, (
-            rendering_system.run_if(not(on_event::<AppExit>)).in_set(CoreSet::Render),
-            cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup),
+            // == Rendering System (runs late) ==
+            .add_systems(Last, (
+                rendering_system.run_if(not(on_event::<AppExit>)).in_set(CoreSet::Render),
+                cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup),
         ));
         info!("GuiFrameworkCorePlugin built.");
     }
@@ -81,7 +87,7 @@ impl Plugin for GuiFrameworkCorePlugin {
 
 // --- Systems Moved from main.rs ---
 
-/// Startup system: Initializes Vulkan using the primary window handle.
+// Startup system: Initializes Vulkan using the primary window handle.
 fn setup_vulkan_system(
     vk_context_res: Res<VulkanContextResource>,
     primary_window_q: Query<Entity, With<PrimaryWindow>>,
@@ -99,7 +105,7 @@ fn setup_vulkan_system(
     info!("Vulkan setup complete (Core Plugin).");
 }
 
-/// Startup system (piped): Creates the Renderer instance resource.
+// Startup system (piped): Creates the Renderer instance resource.
 fn create_renderer_system(
     mut commands: Commands,
     vk_context_res: Res<VulkanContextResource>,
@@ -121,7 +127,30 @@ fn create_renderer_system(
     info!("Renderer resource created and inserted (Core Plugin).");
 }
 
-/// Update system: Handles window resize events.
+fn create_glyph_atlas_system(
+    mut commands: Commands,
+    vk_context_res: Res<VulkanContextResource>,
+) {
+    info!("Running create_glyph_atlas_system (Core Plugin)...");
+    let mut vk_ctx_guard = vk_context_res.0.lock().expect("Failed to lock VulkanContext for glyph atlas creation");
+
+    // Choose an initial size for the atlas
+    let initial_extent = vk::Extent2D { width: 1024, height: 1024 };
+
+    match GlyphAtlas::new(&mut vk_ctx_guard, initial_extent) {
+        Ok(atlas) => {
+            let atlas_arc = Arc::new(Mutex::new(atlas));
+            commands.insert_resource(GlyphAtlasResource(atlas_arc));
+            info!("GlyphAtlas resource created and inserted (Core Plugin).");
+        }
+        Err(e) => {
+            // Use expect here because atlas is critical for text rendering
+            panic!("Failed to create GlyphAtlas: {}", e);
+        }
+    }
+}
+
+// Update system: Handles window resize events.
 fn handle_resize_system(
     mut resize_reader: EventReader<bevy_window::WindowResized>,
     renderer_res_opt: Option<ResMut<RendererResource>>,
@@ -146,13 +175,14 @@ fn handle_resize_system(
     }
 }
 
-/// Last system: Triggers rendering via the custom Vulkan Renderer.
+// Last system: Triggers rendering via the custom Vulkan Renderer.
 fn rendering_system(
     renderer_res_opt: Option<ResMut<RendererResource>>,
     vk_context_res_opt: Option<Res<VulkanContextResource>>,
     query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility)>,
     shapes_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
-    // text_query: Query<(Entity, &GlobalTransform, &Text, &Visibility)>, // Keep commented for now
+    // text_query: Query<(Entity, &GlobalTransform, &Text, &Visibility)>,
+    // glyph_atlas_res: Option<Res<GlyphAtlasResource>>, // Will need this later
 ) {
     if let (Some(renderer_res), Some(vk_context_res)) =
         (renderer_res_opt, vk_context_res_opt)
@@ -175,8 +205,13 @@ fn rendering_system(
             }
         }
 
-        // --- Collect Text Render Data (Placeholder for later) ---
-        // ...
+        // --- TODO: Collect Text Render Data ---
+        // This will involve:
+        // 1. Querying text entities.
+        // 2. Accessing the GlyphAtlasResource.
+        // 3. Calling glyph_atlas.add_glyph() for needed glyphs (triggering rasterization/upload if new).
+        // 4. Generating vertex data for text quads using GlyphInfo UVs.
+        // 5. Passing text vertex data + atlas texture to the renderer.
 
         render_commands.sort_unstable_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -192,12 +227,13 @@ fn rendering_system(
 }
 
 
-/// System running on AppExit in Last schedule: Takes ownership of Vulkan/Renderer resources via World access and cleans them up immediately.
+// System running on AppExit in Last schedule: Takes ownership of Vulkan/Renderer resources via World access and cleans them up immediately.
 fn cleanup_trigger_system(world: &mut World) {
     info!("ENTERED cleanup_trigger_system (Core Plugin on AppExit)");
 
     let renderer_res_opt: Option<RendererResource> = world.remove_resource::<RendererResource>();
     let vk_context_res_opt: Option<VulkanContextResource> = world.remove_resource::<VulkanContextResource>();
+    let glyph_atlas_res_opt: Option<GlyphAtlasResource> = world.remove_resource::<GlyphAtlasResource>();
 
     if let Some(vk_context_res) = vk_context_res_opt {
         info!("VulkanContextResource taken (Core Plugin).");
@@ -205,6 +241,7 @@ fn cleanup_trigger_system(world: &mut World) {
             Ok(mut vk_ctx_guard) => {
                 info!("Successfully locked VulkanContext Mutex (Core Plugin).");
 
+                // 1. Cleanup Renderer
                 if let Some(renderer_res) = renderer_res_opt {
                     info!("RendererResource taken (Core Plugin).");
                     match renderer_res.0.lock() {
@@ -217,10 +254,22 @@ fn cleanup_trigger_system(world: &mut World) {
                             error!("Renderer Mutex was poisoned before cleanup (Core Plugin): {:?}", poisoned);
                         }
                     }
-                } else {
-                    info!("Renderer resource not found or already removed (Core Plugin).");
-                }
+                } else { info!("Renderer resource not found or already removed (Core Plugin)."); }
 
+                // 2. Cleanup Glyph Atlas
+                if let Some(atlas_res) = glyph_atlas_res_opt {
+                    info!("GlyphAtlasResource taken (Core Plugin).");
+                     match atlas_res.0.lock() {
+                        Ok(mut atlas_guard) => {
+                            info!("Successfully locked GlyphAtlas Mutex (Core Plugin).");
+                            // Pass immutable borrow of vk_ctx_guard needed for cleanup
+                            atlas_guard.cleanup(&vk_ctx_guard);
+                        }
+                        Err(poisoned) => error!("GlyphAtlas Mutex poisoned: {:?}", poisoned),
+                    }
+                } else { info!("GlyphAtlas resource not found (Core Plugin)."); }
+
+                // 3. Cleanup Vulkan Context (Must be last after resources using it are cleaned)
                 info!("Calling cleanup_vulkan (Core Plugin)...");
                 cleanup_vulkan(&mut vk_ctx_guard);
                 info!("cleanup_vulkan finished (Core Plugin).");

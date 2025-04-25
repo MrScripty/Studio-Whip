@@ -11,95 +11,92 @@
     *   Role: Orchestrates the custom Vulkan rendering pipeline per frame. Manages `BufferManager`, descriptor pool/layout handles, and Vulkan sync objects (fences, semaphores). Calls `BufferManager` to prepare resources based on ECS data and `command_buffers` to record draw calls. Handles swapchain recreation on resize, calculating projection matrix based on **logical window size with Y-flip** for Vulkan NDC. Accessed via `RendererResource`.
     *   Key Modules: `render_engine.rs`, `buffer_manager.rs`, `resize_handler.rs`, `command_buffers.rs`, `swapchain.rs`, `shader_utils.rs`.
 3.  **Pipeline Manager (`rendering/pipeline_manager.rs`)**
-    *   Role: **Initialization helper.** Creates Vulkan `PipelineLayout`, `DescriptorSetLayout` (defining bindings for global and per-object data), and `DescriptorPool` during application setup. These resources are then transferred to `VulkanContext` (layout) or `Renderer` (pool, set layout) for operational use and cleanup.
+    *   Role: **Initialization helper.** Creates Vulkan `PipelineLayout`, `DescriptorSetLayout`, and `DescriptorPool` during application setup. These resources are then transferred to `VulkanContext` (layout) or `Renderer` (pool, set layout) for operational use and cleanup.
     *   Key Modules: `pipeline_manager.rs`.
 4.  **Buffer Manager (`rendering/buffer_manager.rs`)**
-    *   Role: **Core resource manager.** Manages the global projection uniform buffer and per-entity Vulkan resources (vertex buffers, transform UBOs, descriptor sets) based on ECS `RenderCommandData`. Uses layout/pool provided during initialization to allocate per-entity descriptor sets. **Caches pipelines and shader modules** based on shader paths. Updates vertex buffers based on `vertices_changed` flag in `RenderCommandData`. Updates descriptor sets **immediately per-entity** to prevent state bleed. **Lacks optimization for resource removal (despawned entities).**
+    *   Role: **Core resource manager.** Manages the global projection uniform buffer and per-entity Vulkan resources (vertex buffers, transform UBOs, descriptor sets) based on ECS `RenderCommandData`. Uses layout/pool provided during initialization to allocate per-entity descriptor sets. **Caches pipelines and shader modules** based on shader paths. Updates vertex buffers based on `vertices_changed` flag in `RenderCommandData`. Updates descriptor sets **immediately per-entity**. **Lacks optimization for resource removal (despawned entities).**
     *   Key Modules: `buffer_manager.rs`.
-5.  **Bevy ECS Components (`components/` and `main.rs`)**
-    *   Role: Defines the data associated with entities (e.g., shape, visibility, interaction properties, background marker). Used alongside `bevy_transform::components::Transform`. Implements `bevy_reflect::Reflect`.
-    *   Key Modules: `shape_data.rs` (uses `Arc<Vec<Vertex>>`), `visibility.rs` (custom), `interaction.rs`, `main.rs` (defines `BackgroundQuad`).
+5.  **Bevy ECS Components (`components/`)**
+    *   Role: Defines the data associated with entities (e.g., shape, visibility, interaction properties). Used alongside `bevy_transform::components::Transform`. Implements `bevy_reflect::Reflect`.
+    *   Key Modules: `shape_data.rs` (uses `Arc<Vec<Vertex>>`), `visibility.rs` (custom), `interaction.rs`.
 6.  **Bevy Events (`events/`)**
     *   Role: Defines event types for communication between systems (e.g., user interactions, hotkey triggers). Implements `bevy_reflect::Reflect`.
     *   Key Modules: `interaction_events.rs`.
 7.  **Hotkey Loading (`interaction/hotkeys.rs`)**
-    *   Role: Loads hotkey configurations from a TOML file. The configuration (`HotkeyConfig`) and wrapper resource (`HotkeyResource`) implement `bevy_reflect::Reflect`.
+    *   Role: Defines logic for loading hotkey configurations from a TOML file (`HotkeyConfig`).
     *   Key Modules: `hotkeys.rs`.
-8.  **Bevy App Core (`main.rs`)**
-    *   Role: Bootstraps the application using `bevy_app::App`. Initializes Bevy plugins (`bevy_winit`, `bevy_input`, `bevy_log`, `bevy_transform`, etc., *excluding rendering plugins*). Registers reflectable types. Defines Bevy systems (`Startup`, `Update`, `Last`) for lifecycle management, ECS setup (`setup_scene_ecs`), input handling (`interaction_system`, `hotkey_system`), state updates (`movement_system`, `background_resize_system`), and application control (`app_control_system`). Spawns initial entities with components. Manages the Vulkan context (`VulkanContextResource`) and the custom renderer (`RendererResource`). Orchestrates setup, updates, rendering triggers (calling `Renderer::render`), and **synchronous cleanup on `AppExit` via `cleanup_trigger_system`**. Handles Bevy events (`WindowResized`, `WindowCloseRequested`, `AppExit`, custom events).
-9.  **Build Script (`build.rs`)**
+8.  **Framework Plugins (`plugins/`)**
+    *   Role: Encapsulate core framework logic into modular Bevy plugins for better organization and reusability. Define `SystemSet`s (`CoreSet`, `InteractionSet`, etc.) to manage execution order.
+    *   Key Modules: `core.rs` (Vulkan/Renderer setup, rendering, resize, cleanup), `interaction.rs` (Input processing, hotkey loading/dispatch, window close), `movement.rs` (Default drag movement), `bindings.rs` (Default hotkey actions).
+9.  **Bevy App Core (`main.rs`)**
+    *   Role: Bootstraps the application using `bevy_app::App`. Initializes core Bevy plugins and framework plugins. Inserts initial `VulkanContextResource`. Defines and schedules **application-specific** systems (e.g., `setup_scene_ecs`, `background_resize_system`). Spawns initial entities with components.
+10. **Build Script (`build.rs`)**
     *   Role: Compiles GLSL shaders (`.vert`, `.frag`) to SPIR-V (`.spv`) using `glslc`, copies compiled shaders and runtime assets (e.g., `user/hotkeys.toml`) to the target build directory. Tracks shader source files for recompilation.
     *   Key Modules: `build.rs`.
 
-## Data Flow (Post Rendering Fixes)
-1.  `main.rs` initializes `bevy_app::App`, adds core non-rendering plugins, registers custom components/events/resources for reflection, and inserts initial resources (`VulkanContextResource`).
+## Data Flow (Post Plugin Refactor)
+1.  `main.rs` initializes `bevy_app::App`, adds core non-rendering Bevy plugins, inserts `VulkanContextResource`, and adds framework plugins (`GuiFrameworkCorePlugin`, `GuiFrameworkInteractionPlugin`, etc.).
 2.  Bevy `Startup` schedule runs:
-    *   `setup_vulkan_system` initializes core Vulkan via `VulkanContextResource`.
-    *   `create_renderer_system` creates the `Renderer` (which initializes `BufferManager`, swapchain, framebuffers, command pool, sync objects, and writes **initial projection matrix with Y-flip**), wraps it in `RendererResource`. Stores `pipeline_layout` in `VulkanContextResource`.
-    *   `setup_scene_ecs` loads hotkeys into `HotkeyResource` and spawns initial entities (including background with `BackgroundQuad` marker) with `Transform`, `ShapeData`, `Visibility`, `Interaction` components. Background vertices use **initial logical window size**.
+    *   `GuiFrameworkCorePlugin` systems (`CoreSet::SetupVulkan`, `CoreSet::CreateRenderer`) initialize Vulkan and create the `RendererResource`.
+    *   `GuiFrameworkInteractionPlugin` system (`InteractionSet::LoadHotkeys`) loads hotkeys into `HotkeyResource`.
+    *   `main.rs` system `setup_scene_ecs` (ordered `.after(CoreSet::CreateRenderer)`) spawns initial application entities.
 3.  Bevy `Update` schedule runs:
     *   `InputPlugin` populates `ButtonInput<T>` resources.
-    *   `interaction_system` reads input resources, queries interactive entities, performs hit-testing (using **Y-up world coordinates**), and writes `EntityClicked` / `EntityDragged` events.
-    *   `hotkey_system` reads input resources and `HotkeyResource`, writes `HotkeyActionTriggered` events.
-    *   `movement_system` reads `EntityDragged` events and updates `Transform` components (using **Y-up world coordinates**).
-    *   `handle_resize_system` reads `WindowResized` events, calls `Renderer::resize_renderer` (which triggers swapchain recreation via `ResizeHandler` and updates projection matrix using **new logical size**).
-    *   `background_resize_system` reads `WindowResized` events, updates `ShapeData.vertices` for the `BackgroundQuad` entity using **new logical size**.
-    *   `handle_close_request` reads `WindowCloseRequested` events, sends `AppExit` event.
-    *   `app_control_system` reads `HotkeyActionTriggered` events (e.g., "CloseRequested"), sends `AppExit` event.
-    *   **If `AppExit` event occurred:** `cleanup_trigger_system` runs, takes ownership of `VulkanContextResource` and `RendererResource` via `world.remove_resource()`, calls `Renderer::cleanup` and `cleanup_vulkan`, then drops the owned resources.
+    *   `GuiFrameworkInteractionPlugin` systems (`InteractionSet::InputHandling`, `InteractionSet::WindowClose`) process input, send interaction/hotkey events, and handle window close requests.
+    *   `GuiFrameworkDefaultMovementPlugin` system (`MovementSet::ApplyMovement`, ordered `.after(InteractionSet::InputHandling)`) updates `Transform` based on `EntityDragged` events.
+    *   `GuiFrameworkDefaultBindingsPlugin` system (`BindingsSet::HandleActions`, ordered `.after(InteractionSet::InputHandling)`) handles default hotkey actions (e.g., sending `AppExit`).
+    *   `GuiFrameworkCorePlugin` system (`CoreSet::HandleResize`) handles `WindowResized` events for the renderer.
+    *   `main.rs` system `background_resize_system` handles `WindowResized` events for the background quad.
 4.  Bevy `Last` schedule runs:
-    *   **If `AppExit` event did *not* occur:** `rendering_system` queries ECS for renderable entities (`GlobalTransform`, `ShapeData`, `Visibility`), checks **`Changed<ShapeData>` to set `vertices_changed` flag**, collects data into `Vec<RenderCommandData>`, sorts by depth, and calls `Renderer::render` via `RendererResource`, passing the collected data.
-    *   `Renderer::render`: Waits for fence, calls `BufferManager::prepare_frame_resources` (which updates UBOs, potentially **updates/recreates vertex buffers based on `vertices_changed`**, and **updates descriptor sets immediately**), acquires image, records commands, submits, presents.
+    *   `GuiFrameworkCorePlugin` system `rendering_system` (runs if `AppExit` not sent) queries ECS, collects `RenderCommandData`, and calls `Renderer::render`.
+    *   `GuiFrameworkCorePlugin` system `cleanup_trigger_system` (runs if `AppExit` *is* sent) takes ownership of resources and performs synchronous Vulkan/Renderer cleanup.
 
-## Key Interactions (Post Rendering Fixes)
-- **Bevy Systems (`main.rs`) <-> ECS (Components, Events, Resources)**: Systems query/modify components, read/write events, and access resources (`VulkanContextResource`, `RendererResource`, `HotkeyResource`, `ButtonInput`).
-- **`setup_vulkan_system` -> `vulkan_setup::setup_vulkan`**: Initializes core Vulkan.
-- **`create_renderer_system` -> `Renderer::new`**: Initializes custom renderer state, swapchain, framebuffers, sync objects, command pool, `BufferManager`, and **initial projection UBO (with Y-flip)**. Stores `pipeline_layout` in `VulkanContext`.
-- **`rendering_system` -> `Renderer::render`**: Triggers frame rendering, passing `RenderCommandData` (including **`vertices_changed` flag**). (Conditional on `AppExit`).
-- **`Renderer::render` -> `BufferManager::prepare_frame_resources`**: Prepares Vulkan resources based on ECS data, using caches, **updating vertex buffers if needed**, **updating descriptor sets immediately**.
-- **`Renderer::render` -> `record_command_buffers`**: Records draw commands using `PreparedDrawData`.
-- **`Renderer` <-> `BufferManager`**: Renderer owns and calls BufferManager for resource prep/cleanup.
-- **`BufferManager` <-> `VulkanContext`**: BufferManager uses `pipeline_layout` and other context info.
-- **`Renderer::resize_renderer` -> `ResizeHandler::resize`**: Handles window resize logic, passing **logical extent**.
-- **`ResizeHandler::resize` -> `swapchain::cleanup_swapchain_resources`, `swapchain::create_swapchain`, `swapchain::create_framebuffers`**: Recreates swapchain and related resources using physical extent. Updates projection UBO using **logical extent (with Y-flip)**.
-- **`background_resize_system` <- `WindowResized` Event**: Reads resize event.
-- **`background_resize_system` -> `ShapeData` Component**: Modifies vertices of the background entity.
-- **`cleanup_trigger_system` (on `AppExit`) -> `World::remove_resource`, `Renderer::cleanup`, `vulkan_setup::cleanup_vulkan`**: Takes ownership of resources and triggers synchronous cleanup on exit.
-- **`interaction_system` -> `EntityClicked`, `EntityDragged` Events**: Publishes interaction events.
-- **`hotkey_system` -> `HotkeyActionTriggered` Events**: Publishes hotkey events.
-- **`movement_system` <- `EntityDragged` Events**: Updates `Transform` based on drag events.
-- **`app_control_system` <- `HotkeyActionTriggered` Events**: Sends `AppExit`.
-- **`VulkanContext` <-> Vulkan Components**: Provides core Vulkan resources (instance, device, allocator, pipeline layout, swap extent, etc.).
-- **`build.rs` -> Target Directory**: Compiles shaders, copies `.spv` files and configuration files.
+## Key Interactions (Post Plugin Refactor)
+- **Plugins <-> Bevy App**: Plugins register components/resources/events and add systems to schedules.
+- **Plugins <-> System Sets**: Plugins define and use `SystemSet`s (`CoreSet`, `InteractionSet`, etc.) to configure execution order internally and relative to each other (e.g., `MovementSet::ApplyMovement.after(InteractionSet::InputHandling)`).
+- **App Systems (`main.rs`) <-> Plugin Sets**: Application systems (`setup_scene_ecs`) use `.after()` to order themselves relative to plugin sets (e.g., `.after(CoreSet::CreateRenderer)`).
+- **Interaction Plugin -> Events**: `interaction_system` writes `EntityClicked`/`EntityDragged`. `hotkey_system` writes `HotkeyActionTriggered`. `handle_close_request` writes `AppExit`.
+- **Movement Plugin <- Events**: `movement_system` reads `EntityDragged`.
+- **Bindings Plugin <- Events**: `app_control_system` reads `HotkeyActionTriggered`.
+- **Core Plugin -> Rendering**: `rendering_system` reads ECS data, calls `Renderer::render`.
+- **Core Plugin -> Cleanup**: `cleanup_trigger_system` calls `Renderer::cleanup`, `vulkan_setup::cleanup_vulkan`.
+- **Renderer <-> BufferManager**: Renderer owns and calls BufferManager for resource prep/cleanup.
+- **BufferManager <-> VulkanContext**: BufferManager uses `pipeline_layout` and other context info.
+- **Core Plugin <-> ResizeHandler**: `handle_resize_system` calls `Renderer::resize_renderer` which uses `ResizeHandler`.
+- **App Systems (`main.rs`) <-> Components**: `background_resize_system` modifies `ShapeData`.
+- **VulkanContext <-> Vulkan Components**: Provides core Vulkan resources.
+- **Build Script -> Target Directory**: Compiles shaders, copies assets.
 
-## Current Capabilities (Post Rendering Fixes)
-- **Bevy Integration**: Application runs within `bevy_app`, using core non-rendering plugins (`bevy_log`, `bevy_input`, `bevy_transform`, `bevy_window`, `bevy_winit`, etc.).
+## Current Capabilities (Post Plugin Refactor)
+- **Bevy Integration**: Application runs within `bevy_app`, using core non-rendering plugins.
+- **Modular Framework**: Core rendering, interaction, and default behaviors encapsulated in Bevy Plugins (`GuiFrameworkCorePlugin`, `GuiFrameworkInteractionPlugin`, etc.).
+- **System Set Ordering**: Explicit execution order defined using Bevy `SystemSet`s.
 - **Bevy Math**: Uses `bevy_math` types (`Vec2`, `Mat4`).
-- **Bevy ECS**: Defines and uses custom components (`ShapeData` [using `Arc<Vec<Vertex>>`], `Visibility`, `Interaction`, `BackgroundQuad`) and `bevy_transform::components::Transform`. Entities spawned at startup.
+- **Bevy ECS**: Defines and uses custom components (`ShapeData`, `Visibility`, `Interaction`, `BackgroundQuad`) and `bevy_transform::components::Transform`.
 - **Bevy Events**: Defines and uses custom events (`EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`) for system communication.
-- **Bevy Reflection**: Core components, events, and hotkey resources implement `Reflect` and are registered.
+- **Bevy Reflection**: Core framework and interaction components, events, and resources implement `Reflect` and are registered.
 - **Bevy Change Detection**: Uses `Changed<ShapeData>` filter to trigger vertex buffer updates.
-- **Input Processing**: Uses `bevy_input` (`ButtonInput<T>`, `CursorMoved`) via Bevy systems (`interaction_system`, `hotkey_system`). Basic click detection, dragging (**correct Y-axis handling for Y-up world**), and hotkey dispatching implemented. Hit detection uses **Y-up world coordinates**.
-- **Vulkan Setup**: Core context initialized via Bevy system.
-- **Rendering Bridge**: Custom Vulkan context (`VulkanContextResource`) and actual custom renderer (`RendererResource`) managed as Bevy resources.
+- **Input Processing**: Uses `bevy_input` via `GuiFrameworkInteractionPlugin`. Basic click detection, dragging, and hotkey dispatching implemented. Hit detection uses **Y-up world coordinates**.
+- **Vulkan Setup**: Core context initialized via `GuiFrameworkCorePlugin`.
+- **Rendering Bridge**: Custom Vulkan context (`VulkanContextResource`) and renderer (`RendererResource`) managed as Bevy resources.
 - **ECS-Driven Resource Management**: `BufferManager` creates/updates Vulkan buffers (including **vertex buffer updates via change detection**) and descriptor sets based on `RenderCommandData` from the ECS. Descriptor sets updated **immediately per-entity**.
 - **Resource Caching**: `BufferManager` caches Vulkan `Pipeline` and `ShaderModule` resources.
 - **Rendering Path**: Data flows from ECS (`rendering_system`) through `Renderer` to `BufferManager` (resource prep) and `command_buffers` (draw recording). Synchronization corrected using fences. **Projection matrix uses logical window size and Y-flip.**
-- **Configurable Hotkeys**: Loads from TOML file into `HotkeyResource`, processed by `hotkey_system`.
+- **Configurable Hotkeys**: Loads from TOML file into `HotkeyResource` via `GuiFrameworkInteractionPlugin`.
 - **Build Script**: Compiles GLSL shaders to SPIR-V, copies assets, tracks shader changes.
-- **Resize Handling**: Correctly handles window resizing, swapchain recreation, framebuffer updates, **projection matrix updates (using logical size)**, and **dynamic background vertex updates**.
+- **Resize Handling**: Correctly handles window resizing, swapchain recreation, framebuffer updates, **projection matrix updates (using logical size)**, and **dynamic background vertex updates** (via `main.rs` system).
 - **Visual Output**: Functional 2D rendering of shapes based on ECS data. Background dynamically resizes. Objects positioned correctly according to **Y-up world coordinates**.
-- **Robust Shutdown**: Application exit sequence correctly cleans up Vulkan resources via `cleanup_trigger_system`, preventing leaks and assertions.
+- **Robust Shutdown**: Application exit sequence correctly cleans up Vulkan resources via `cleanup_trigger_system` in the `Last` schedule.
 
 ## Future Extensions
 - **Rendering Optimization**: Implement resource removal for despawned entities (using `RemovedComponents`).
-- **Hit Detection**: Improve Z-sorting/picking logic in `interaction_system` for overlapping objects. Consider more robust bounding box checks if rotation/scaling is added.
-- **Complete Bevy Migration**: **Refactor framework logic into Bevy Plugins.** Consider Bevy State for managing application modes.
+- **Hit Detection**: Improve Z-sorting/picking logic in `interaction_system` for overlapping objects.
+- **Bevy State Integration**: Consider Bevy State for managing application modes (e.g., editing vs. viewing).
 - Instancing via ECS.
 - Batch operations for groups (using ECS queries/components).
 - P2P networking.
 - 3D rendering and AI-driven content generation.
-- Text rendering and editing (Task 7+).
+- Text rendering and editing (Task 8+).
 - Context menus (Task 9).
 - Divider system (Task 10).
 
@@ -108,7 +105,7 @@
 - Logical errors (`HotkeyError`) use `Result` or `thiserror`.
 - Hotkey file loading/parsing errors handled gracefully with defaults and logs.
 - Bevy logging integrated via `LogPlugin`. Mutex poisoning handled with logs.
-- Renderer checks for `None` resources during shutdown to prevent panics.
+- Renderer checks for `None` resources during shutdown to prevent panics. Startup systems now `panic!` on critical setup errors.
 
 ## Shader Integration
 - GLSL shaders (`.vert`, `.frag`) in `shaders/` compiled to SPIR-V (`.spv`) by `build.rs`. Compiled `.spv` files copied to target directory.
@@ -121,7 +118,7 @@
 - Shaders: Precompiled `.spv` files in target directory.
 
 ## Notes
-- **Migration State**: Application core logic uses Bevy ECS/Input/Events/Reflection. Custom Vulkan rendering backend implements ECS-driven resource management with pipeline/shader caching, corrected synchronization, and **dynamic vertex buffer updates**. Strict avoidance of `bevy_render`.
+- **Framework Structure**: Core logic refactored into Bevy Plugins (`GuiFrameworkCorePlugin`, `GuiFrameworkInteractionPlugin`, `GuiFrameworkDefaultMovementPlugin`, `GuiFrameworkDefaultBindingsPlugin`) using System Sets for ordering. Application logic resides in `main.rs`.
 - **Coordinate System**: Uses a **Y-up world coordinate system** (origin bottom-left). Projection matrix includes a Y-flip to match Vulkan's default Y-down NDC space. Input and movement systems handle coordinate conversions correctly.
 - **Known Issues**: `BufferManager` lacks resource removal for despawned entities. Hit detection Z-sorting needs review for overlapping objects. `vulkan_setup` still uses `winit::window::Window` directly.
-- **Cleanup Logic**: Synchronous cleanup on `AppExit` is handled by `cleanup_trigger_system`.
+- **Cleanup Logic**: Synchronous cleanup on `AppExit` is handled by `cleanup_trigger_system` within the `GuiFrameworkCorePlugin`, running in the `Last` schedule.

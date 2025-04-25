@@ -492,7 +492,7 @@ fn movement_system(
             transform.translation.x += ev.delta.x;
             // OLD: transform.translation.y -= ev.delta.y; // Invert Y delta
             // NEW: Apply Y delta directly
-            transform.translation.y += ev.delta.y;
+            transform.translation.y -= ev.delta.y;
         }
     }
 }

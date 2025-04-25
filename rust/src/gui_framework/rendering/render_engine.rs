@@ -48,7 +48,11 @@ impl Renderer {
         let initial_logical_width = extent.width as f32; // Use the extent passed to Renderer::new
         let initial_logical_height = extent.height as f32;
         unsafe {
-            let proj_matrix = Mat4::orthographic_rh(0.0, initial_logical_width, 0.0, initial_logical_height, -1.0, 1.0);
+            let proj = Mat4::orthographic_rh(0.0, initial_logical_width, 0.0, initial_logical_height, -1.0, 1.0);
+            // We are flipping Y beacuse Bevy coord space uses +Y and Vulkan uses -Y 
+            let flip_y = Mat4::from_scale(bevy_math::Vec3::new(1.0, -1.0, 1.0));
+            let proj_matrix = flip_y * proj;
+
             let allocator = platform.allocator.as_ref().unwrap();
             let info = allocator.get_allocation_info(&buffer_mgr.uniform_allocation);
             bevy_log::info!("Renderer::new: Writing initial projection for logical extent {}x{}, Matrix:\n{:?}", initial_logical_width, initial_logical_height, proj_matrix);

@@ -43,7 +43,9 @@ impl ResizeHandler {
         let allocator = vulkan_context.allocator.as_ref().expect("Allocator not available for resize");
 
         // 4. Update projection matrix using the *actual* swap extent stored in the context
-        let proj_matrix = Mat4::orthographic_rh(0.0, logical_extent.width as f32, 0.0, logical_extent.height as f32, -100.0, 100.0);
+        let proj = Mat4::orthographic_rh(0.0, logical_extent.width as f32, 0.0, logical_extent.height as f32, -100.0, 100.0);
+        let flip_y = Mat4::from_scale(bevy_math::Vec3::new(1.0, -1.0, 1.0));
+        let proj_matrix = flip_y * proj;
         unsafe {
             bevy_log::info!("ResizeHandler: Updating projection for extent {:?}, Matrix:\n{:?}",
             logical_extent, proj_matrix);

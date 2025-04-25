@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use vk_mem::Allocation;
 use vk_mem::Alloc;
+use bevy_reflect::{Reflect, FromReflect};
 
 // Represents the location and UV coordinates of a single glyph within the atlas
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Reflect)]
 pub struct GlyphInfo {
     // Store pixel coordinates directly later when packing is implemented
     pub pixel_x: u32,

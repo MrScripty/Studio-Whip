@@ -4,11 +4,13 @@ use bevy_ecs::schedule::{SystemSet, common_conditions::{not, on_event}};
 use bevy_log::{info, error, warn};
 use bevy_window::{PrimaryWindow, Window};
 use bevy_winit::WinitWindows;
-use bevy_transform::prelude::GlobalTransform;
+use bevy_transform::prelude::{GlobalTransform, Transform};
 use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
-use ash::vk;
+use ash::{vk, prelude::VkResult};
 use bevy_color::Color;
+use bevy_math::{Vec2, IVec2};
+use cosmic_text::{Attrs, BufferLine, FontSystem, Metrics, Shaping, SwashCache, Wrap, Color as CosmicColor};
 
 // Import types from the crate root (lib.rs)
 use crate::{Vertex, RenderCommandData};
@@ -17,13 +19,13 @@ use crate::{Vertex, RenderCommandData};
 use crate::gui_framework::{
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
     rendering::render_engine::Renderer,
-    rendering::glyph_atlas::GlyphAtlas,
+    rendering::glyph_atlas::{GlyphAtlas, GlyphInfo},
     rendering::font_server::FontServer,
-    components::{ShapeData, Visibility, Text, FontId, TextAlignment},
+    components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph},
 };
 
 // Import resources used/managed by this plugin's systems
-use crate::{VulkanContextResource, RendererResource, GlyphAtlasResource, FontServerResource};
+use crate::{VulkanContextResource, RendererResource, GlyphAtlasResource, FontServerResource, SwashCacheResource};
 
 // --- System Sets ---
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -32,7 +34,9 @@ pub enum CoreSet {
     CreateRenderer,
     CreateGlyphAtlas,
     CreateFontServer,
+    CreateSwashCache,
     HandleResize,
+    TextLayout,
     Render,
     Cleanup,
 }
@@ -54,6 +58,9 @@ impl Plugin for GuiFrameworkCorePlugin {
         app.register_type::<FontId>();
         app.register_type::<TextAlignment>();
         app.register_type::<Color>();
+        // Register math types used in reflection
+        app.register_type::<Vec2>();
+        app.register_type::<IVec2>();
 
 
         // --- System Setup ---
@@ -64,6 +71,7 @@ impl Plugin for GuiFrameworkCorePlugin {
                 CoreSet::CreateRenderer, 
                 CoreSet::CreateGlyphAtlas,
                 CoreSet::CreateFontServer,
+                CoreSet::CreateSwashCache,
             ).chain()
         )
             .add_systems(Startup, (
@@ -71,18 +79,25 @@ impl Plugin for GuiFrameworkCorePlugin {
                 create_renderer_system.in_set(CoreSet::CreateRenderer),
                 create_glyph_atlas_system.in_set(CoreSet::CreateGlyphAtlas),
                 create_font_server_system.in_set(CoreSet::CreateFontServer),
+                create_swash_cache_system.in_set(CoreSet::CreateSwashCache),
         ))
             // == Update Systems ==
-            .configure_sets(Update,
-                CoreSet::HandleResize
-        )
-            .add_systems(Update,
-                handle_resize_system.in_set(CoreSet::HandleResize)
+            .configure_sets(Update, (
+                CoreSet::HandleResize,
+                CoreSet::TextLayout.after(CoreSet::HandleResize),
+        ))
+        .add_systems(Update, ( // <-- Correct: This tuple contains the systems
+            handle_resize_system.in_set(CoreSet::HandleResize),
+            text_layout_system.in_set(CoreSet::TextLayout),
+        ))
+            .configure_sets(Last,
+                // Ensure Render runs after TextLayout
+                CoreSet::Render.after(CoreSet::TextLayout)
         )
             // == Rendering System (runs late) ==
             .add_systems(Last, (
                 rendering_system.run_if(not(on_event::<AppExit>)).in_set(CoreSet::Render),
-                cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup),
+                cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup).after(CoreSet::Render),
         ));
         info!("GuiFrameworkCorePlugin built.");
     }
@@ -189,26 +204,156 @@ fn handle_resize_system(
     }
 }
 
+fn create_swash_cache_system(mut commands: Commands) {
+    info!("Running create_swash_cache_system (Core Plugin)...");
+    let swash_cache = SwashCache::new(); // SwashCache::new() is available
+    commands.insert_resource(SwashCacheResource(Mutex::new(swash_cache)));
+    info!("SwashCache resource created and inserted (Core Plugin).");
+}
+
+fn text_layout_system(
+    mut commands: Commands,
+    query: Query<(Entity, &Text, &Transform), (Changed<Text>, With<Visibility>)>, // Only process visible text
+    // Access resources needed for layout and glyph management
+    font_server_res: Res<FontServerResource>,
+    glyph_atlas_res: Res<GlyphAtlasResource>,
+    // We also need a SwashCache for cosmic-text rasterization/layout
+    // It's mutable, so needs its own resource or needs to be part of FontServer/GlyphAtlas
+    swash_cache_res: ResMut<SwashCacheResource>, // Use Local resource for cache state
+) {
+    let Ok(mut font_server) = font_server_res.0.lock() else {
+        error!("Failed to lock FontServerResource in text_layout_system");
+        return;
+    };
+    let Ok(mut glyph_atlas) = glyph_atlas_res.0.lock() else {
+        error!("Failed to lock GlyphAtlasResource in text_layout_system");
+        return;
+    };
+    let Ok(mut swash_cache) = swash_cache_res.0.lock() else { // <-- Lock the Mutex in the resource
+        error!("Failed to lock SwashCacheResource in text_layout_system");
+        return;
+    };
+
+    // Get mutable access to FontSystem
+    let font_system = &mut font_server.font_system;
+
+    for (entity, text, transform) in query.iter() {
+        // --- Prepare cosmic-text Buffer ---
+        // TODO: Reuse buffers per entity? Maybe store BufferOwned in a component?
+        let metrics = Metrics::new(text.size, text.size * 1.2); // font_size, line_height
+        let mut buffer = cosmic_text::Buffer::new(font_system, metrics);
+
+        // Set text content
+        // TODO: Handle different text attributes (color, style) if needed later
+        // Manual color conversion
+        let cosmic_color = match text.color {
+            // Destructure Srgba as a tuple variant
+            Color::Srgba(rgba) => CosmicColor::rgba(
+                (rgba.red * 255.0) as u8,
+                (rgba.green * 255.0) as u8,
+                (rgba.blue * 255.0) as u8,
+                (rgba.alpha * 255.0) as u8,
+            ),
+            // Handle other Color variants if necessary (e.g., SRgba, LinearRgba)
+            // For now, default to white or black if it's not standard Rgba
+            _ => {
+                warn!("Unsupported Bevy color type encountered in text layout, defaulting.");
+                CosmicColor::rgb(255, 255, 255) // Default to white
+            }
+        };
+        let attrs = Attrs::new().color(cosmic_color);
+        buffer.set_text(font_system, &text.content, &attrs, Shaping::Advanced);
+
+        // Set size/wrapping
+        if let Some(bounds) = text.bounds {
+            buffer.set_size(font_system, Some(bounds.x), Some(bounds.y));
+            // TODO: Set wrap mode based on component?
+            buffer.set_wrap(font_system, Wrap::Word);
+        } else {
+             buffer.set_size(font_system, None, None); // No wrapping
+             buffer.set_wrap(font_system, Wrap::None);
+        }
+
+        // --- Shape the buffer ---
+        buffer.shape_until_scroll(font_system, true); // Shape all lines
+
+        // --- Process Layout Glyphs ---
+        let mut positioned_glyphs = Vec::new();
+
+        for run in buffer.layout_runs() {
+            for layout_glyph in run.glyphs.iter() {
+                // --- Request Glyph from Atlas ---
+                // Generate a unique key for this glyph variant (font, id, size, variations)
+                // For now, use a simple placeholder key (glyph_id) - THIS IS INSUFFICIENT for real use
+                // Use glyph_id from cache_key - STILL INSUFFICIENT for variations/fonts
+                let glyph_key = layout_glyph.glyph_id as u64;
+                // TODO: Get actual bitmap data using SwashCache
+                // Attempt to add/get glyph from atlas
+                // This currently errors out because add_glyph is not implemented
+                match glyph_atlas.add_glyph(/* glyph_key, ... bitmap data, width, height ... */) {
+                    Ok(glyph_info_ref) => {
+                        let glyph_info = *glyph_info_ref; // Deref the reference
+
+                        // --- Calculate Quad Vertices (Relative to Entity Origin) ---
+                        // Physical glyph info from cosmic-text
+                        let x = layout_glyph.x;
+                        let y = run.line_y - layout_glyph.y; // Adjust y based on line position
+                        let w = layout_glyph.w; // Use layout width
+                        let h = text.size; // Approximate height using font size? Or get from rasterizer?
+
+                        // Define quad vertices (adjust based on desired origin - bottom-left?)
+                        let top_left = Vec2::new(x, y - h);
+                        let top_right = Vec2::new(x + w, y - h);
+                        let bottom_right = Vec2::new(x + w, y);
+                        let bottom_left = Vec2::new(x, y);
+
+                        positioned_glyphs.push(PositionedGlyph {
+                            glyph_info,
+                            layout_glyph: layout_glyph.clone(), // Clone cosmic's layout info
+                            vertices: [top_left, top_right, bottom_right, bottom_left],
+                        });
+                    }
+                    Err(e) => {
+                        // Log error for now, skip rendering this glyph
+                        warn!(
+                            "Failed to add/get glyph (key: {}) from atlas: {}. Skipping glyph.",
+                            glyph_key, e
+                        );
+                        // In a real scenario, might need fallback or error handling
+                    }
+                }
+            }
+        }
+
+        // --- Update or Insert TextLayoutOutput Component ---
+        commands.entity(entity).insert(TextLayoutOutput {
+            glyphs: positioned_glyphs,
+        });
+    }
+}
+
 // Last system: Triggers rendering via the custom Vulkan Renderer.
 fn rendering_system(
     renderer_res_opt: Option<ResMut<RendererResource>>,
     vk_context_res_opt: Option<Res<VulkanContextResource>>,
-    query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility)>,
-    shapes_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
-    // text_query: Query<(Entity, &GlobalTransform, &Text, &Visibility)>,
-    // glyph_atlas_res: Option<Res<GlyphAtlasResource>>, // Will need this later
-    // font_server_res: Option<Res<FontServerResource>>, // Will need this later
+    // Query for shapes
+    shape_query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility), Without<TextLayoutOutput>>, // Exclude text entities
+    shape_change_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
+    // Query for text entities that have layout results
+    text_query: Query<(Entity, &GlobalTransform, &TextLayoutOutput, &Visibility)>, // Query layout output
+    // Resources
+    glyph_atlas_res: Option<Res<GlyphAtlasResource>>, // Need atlas for texture binding
 ) {
-    if let (Some(renderer_res), Some(vk_context_res)) =
-        (renderer_res_opt, vk_context_res_opt)
+    if let (Some(renderer_res), Some(vk_context_res), Some(atlas_res)) =
+        (renderer_res_opt, vk_context_res_opt, glyph_atlas_res) // Check atlas exists
     {
-        let changed_entities: HashSet<Entity> = shapes_query.iter().collect();
-
-        let mut render_commands: Vec<RenderCommandData> = Vec::new();
-        for (entity, global_transform, shape, visibility) in query.iter() {
+        // --- Collect Shape Render Data ---
+        let changed_shape_entities: HashSet<Entity> = shape_change_query.iter().collect();
+        let mut shape_render_commands: Vec<RenderCommandData> = Vec::new();
+        for (entity, global_transform, shape, visibility) in shape_query.iter() {
             if visibility.is_visible() {
-                let vertices_changed = changed_entities.contains(&entity);
-                render_commands.push(RenderCommandData {
+                let vertices_changed = changed_shape_entities.contains(&entity);
+                shape_render_commands.push(RenderCommandData {
                     entity_id: entity,
                     transform_matrix: global_transform.compute_matrix(),
                     vertices: shape.vertices.clone(),
@@ -219,26 +364,24 @@ fn rendering_system(
                 });
             }
         }
+        shape_render_commands.sort_unstable_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
 
-        // --- TODO: Collect Text Render Data ---
-        // This will involve:
-        // 1. Querying text entities.
-        // 2. Accessing the GlyphAtlasResource.
-        // 3. Calling glyph_atlas.add_glyph() for needed glyphs (triggering rasterization/upload if new).
-        // 4. Generating vertex data for text quads using GlyphInfo UVs.
-        // 5. Passing text vertex data + atlas texture to the renderer.
-        // Will use FontServerResource here for shaping
+        // --- Collect Text Render Data (Placeholder) ---
+        // TODO:
+        // 1. Iterate through `text_query`.
+        // 2. For each entity, iterate through `TextLayoutOutput.glyphs`.
+        // 3. Combine `PositionedGlyph.vertices` with `GlobalTransform`.
+        // 4. Collect all text vertices into one or more dynamic Vulkan vertex buffers.
+        // 5. Get the GlyphAtlas texture/sampler handles from `atlas_res`.
+        // 6. Create a separate `TextRenderCommand` struct containing vertex buffer info,
+        //    atlas texture/sampler handles, and potentially a text-specific pipeline.
+        let text_render_commands: Vec<()> = Vec::new(); // Placeholder
 
-        render_commands.sort_unstable_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
-
-        if let (Ok(mut renderer_guard), Ok(mut vk_ctx_guard)) = (
-            renderer_res.0.lock(),
-            vk_context_res.0.lock(),
-        ) {
-            renderer_guard.render(&mut vk_ctx_guard, &render_commands);
-        } else {
-            warn!("Could not lock resources for rendering trigger (Core Plugin).");
-        }
+        // --- Call Custom Renderer ---
+        if let (Ok(mut renderer_guard), Ok(mut vk_ctx_guard)) = (renderer_res.0.lock(), vk_context_res.0.lock()) {
+            // TODO: Modify Renderer::render to accept both shape and text commands
+            renderer_guard.render(&mut vk_ctx_guard, &shape_render_commands /*, &text_render_commands */);
+        } else { warn!("Could not lock resources for rendering trigger (Core Plugin)."); }
     }
 }
 

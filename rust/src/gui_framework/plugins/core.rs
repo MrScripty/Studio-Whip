@@ -1,11 +1,10 @@
 use bevy_app::{App, AppExit, Plugin, Startup, Update, Last};
 use bevy_ecs::prelude::*;
-use bevy_ecs::schedule::common_conditions::{not, on_event};
+use bevy_ecs::schedule::{SystemSet, common_conditions::{not, on_event}};
 use bevy_log::{info, error, warn};
-use bevy_window::{PrimaryWindow, Window, WindowResized};
+use bevy_window::{PrimaryWindow, Window};
 use bevy_winit::WinitWindows;
 use bevy_transform::prelude::GlobalTransform;
-use bevy_reflect::Reflect;
 use std::sync::{Arc, Mutex};
 use std::collections::HashSet; // For rendering_system change detection
 use ash::vk;
@@ -15,7 +14,6 @@ use crate::{Vertex, RenderCommandData};
 
 // Import types/functions from the gui_framework
 use crate::gui_framework::{
-    VulkanContext,
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
     rendering::render_engine::Renderer,
     components::{ShapeData, Visibility},
@@ -24,6 +22,16 @@ use crate::gui_framework::{
 // Import resources used/managed by this plugin's systems
 // These resources are defined in lib.rs and inserted elsewhere (main.rs or this plugin)
 use crate::{VulkanContextResource, RendererResource};
+
+// --- System Sets ---
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CoreSet {
+    SetupVulkan,
+    CreateRenderer,
+    HandleResize,
+    Render,
+    Cleanup,
+}
 
 // --- Core Plugin Definition ---
 
@@ -46,26 +54,30 @@ impl Plugin for GuiFrameworkCorePlugin {
 
         // --- System Setup ---
         app
-            // == Startup Systems ==
-            // Setup Vulkan -> Create Renderer
-            // RendererResource is inserted here
-            // Pass the piped system configuration directly
-            .add_systems(Startup, setup_vulkan_system.pipe(create_renderer_system))
-            // == Update Systems ==
-            .add_systems(Update,(
-                // Vulkan Renderer specific updates
-                handle_resize_system,
-                )
-            )
-            // == Rendering System (runs late) ==
-            // Run rendering system only if AppExit hasn't been sent this frame
-            .add_systems(Last, (
-                // Run rendering system only if AppExit hasn't been sent this frame
-                rendering_system.run_if(not(on_event::<AppExit>)),
-                // Run cleanup system *if* AppExit has been sent
-                cleanup_trigger_system.run_if(on_event::<AppExit>),
-            )); // Systems in Last run concurrently by default unless chained
-
+        // == Startup Systems ==
+        // Setup Vulkan -> Create Renderer
+        .configure_sets(Startup,
+            (CoreSet::SetupVulkan, CoreSet::CreateRenderer).chain()
+        )
+        .add_systems(Startup, (
+            setup_vulkan_system.in_set(CoreSet::SetupVulkan),
+            create_renderer_system.in_set(CoreSet::CreateRenderer),
+        ))
+        // == Update Systems ==
+        .configure_sets(Update,
+            // Run resize handling before potential cleanup check
+            CoreSet::HandleResize // No specific order needed within Update for now
+        )
+        .add_systems(Update,
+            handle_resize_system.in_set(CoreSet::HandleResize)
+        )
+        // == Rendering System (runs late) ==
+        // Run rendering system only if AppExit hasn't been sent this frame
+        // No explicit set needed for single system in Last unless ordering with other Last systems is required
+        .add_systems(Last, (
+            rendering_system.run_if(not(on_event::<AppExit>)).in_set(CoreSet::Render),
+            cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup), // Moved cleanup to Last
+        ));
         info!("GuiFrameworkCorePlugin built.");
     }
 }

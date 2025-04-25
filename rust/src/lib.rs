@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::Entity;
 use std::sync::Arc;
 use ash::vk;
-use bevy_reflect::{Reflect, TypePath};
+use bevy_reflect::Reflect;
 
 pub mod gui_framework;
 

@@ -1,26 +1,26 @@
-use bevy_app::{App, AppExit, Startup, Update};
+use bevy_app::{App, Startup, Update};
 use bevy_ecs::prelude::*;
 use bevy_log::{info, error, warn, LogPlugin, Level};
 use bevy_utils::default;
-use bevy_input::InputPlugin; // Keep for app_control_system
+use bevy_input::InputPlugin;
 use bevy_window::{
     PrimaryWindow, Window, WindowPlugin, PresentMode,
-    WindowResolution, // Keep for background_resize_system
+    WindowResolution,
 };
 use bevy_winit::{WinitPlugin, WakeUp};
 use bevy_a11y::AccessibilityPlugin;
-use bevy_transform::prelude::Transform; // Keep for movement_system & setup_scene_ecs
+use bevy_transform::prelude::Transform; // Keep for setup_scene_ecs
 use bevy_transform::TransformPlugin;
 // Import types defined in lib.rs
-use rusty_whip::{Vertex, VulkanContextResource}; // Import resources from lib.rs
-
+use rusty_whip::{Vertex, VulkanContextResource};
 use std::sync::{Arc, Mutex};
 // Import framework components, events, resources, and the new plugin
 use rusty_whip::gui_framework::{
-    VulkanContext, // Still needed for Resource definition in lib.rs and initial creation
-    components::{ShapeData, Visibility, Interaction}, // Still needed for setup_scene_ecs
-    events::{EntityDragged, HotkeyActionTriggered}, // Still needed for event handling
+    VulkanContext,
+    components::{ShapeData, Visibility, Interaction},
     plugins::core::GuiFrameworkCorePlugin,
+    // Import plugin SystemSets for ordering
+    plugins::core::CoreSet,
     plugins::interaction::GuiFrameworkInteractionPlugin,
     plugins::movement::GuiFrameworkDefaultMovementPlugin,
     plugins::bindings::GuiFrameworkDefaultBindingsPlugin,
@@ -31,15 +31,6 @@ use bevy_core::Name;
 
 #[derive(Component)]
 struct BackgroundQuad;
-
-// --- Bevy Resources ---
-// Defined in lib.rs now
-// #[derive(Resource, Clone)]
-// struct VulkanContextResource(Arc<Mutex<VulkanContext>>);
-// #[derive(Resource, Clone)]
-// struct RendererResource(Arc<Mutex<Renderer>>);
-// #[derive(Resource, Debug, Clone, Default, Reflect)]
-// struct HotkeyResource(HotkeyConfig); // Defined in lib.rs now
 
 fn main() {
     info!("Starting Rusty Whip with Bevy ECS integration (Bevy 0.15)...");
@@ -69,41 +60,26 @@ fn main() {
         ))
         // == Resources ==
         .insert_resource(VulkanContextResource(vulkan_context)) // Insert Vulkan context here
-        // HotkeyResource inserted by GuiFrameworkInteractionPlugin's load_hotkeys_system
-        // RendererResource inserted by GuiFrameworkCorePlugin's create_renderer_system
-
-        // == Events ==
-        // Events are added by GuiFrameworkInteractionPlugin
-
-        // == Reflection Registration ==
-        // Core types (Vertex, ShapeData, Visibility) registered by GuiFrameworkCorePlugin
-        // Interaction types/events registered by GuiFrameworkInteractionPlugin
-
         // == Add Framework Plugins ==
         .add_plugins(GuiFrameworkCorePlugin)
-        .add_plugins(GuiFrameworkInteractionPlugin)
-        .add_plugins(GuiFrameworkDefaultMovementPlugin)
-        .add_plugins(GuiFrameworkDefaultBindingsPlugin)
+        .add_plugins(GuiFrameworkInteractionPlugin) 
+        .add_plugins(GuiFrameworkDefaultMovementPlugin) 
+        .add_plugins(GuiFrameworkDefaultBindingsPlugin) 
 
         // == Startup Systems ==
         .add_systems(Startup,
-            (
-                setup_scene_ecs, // Setup app-specific ECS scene (runs after plugin setup)
-            )//.after(...) // TODO: Use System Sets later for explicit ordering if needed
+            // Ensure app scene setup runs after core renderer and hotkey loading are done
+            setup_scene_ecs
+                .after(CoreSet::CreateRenderer) // From core plugin
+                // .after(InteractionSet::LoadHotkeys) // Optional: If setup needs hotkeys loaded
         )
         // == Update Systems ==
         .add_systems(Update,
             (
                 // App specific systems
-                background_resize_system, // App specific background handling
+                background_resize_system,
             )
         )
-        // == Rendering System (runs late) ==
-        // Moved to GuiFrameworkCorePlugin
-
-        // == Shutdown System ==
-        // Moved to GuiFrameworkCorePlugin
-
         // == Run the App ==
         .run();
 }
@@ -116,9 +92,6 @@ fn setup_scene_ecs(
     primary_window_q: Query<&Window, With<PrimaryWindow>>,
 ) {
     info!("Running setup_scene_ecs...");
-
-    // --- Hotkey Configuration Loading Moved to GuiFrameworkInteractionPlugin ---
-
     // --- Spawn Initial Entities ---
     let Ok(primary_window) = primary_window_q.get_single() else {
         error!("Primary window not found in setup_scene_ecs!");
@@ -155,7 +128,7 @@ fn setup_scene_ecs(
     // Triangle (Draggable and Clickable)
     commands.spawn((
         ShapeData {
-            vertices: Arc::new(vec![ // Use Arc
+            vertices: Arc::new(vec![
                 Vertex { position: [-25.0, -25.0] }, // Bottom-left local
                 Vertex { position: [0.0, 25.0] },    // Top-center local
                 Vertex { position: [25.0, -25.0] }, // Bottom-right local
@@ -165,7 +138,7 @@ fn setup_scene_ecs(
         },
         Transform::from_xyz(300.0, 150.0, 1.0),
         Visibility(true),
-        Interaction { clickable: true, draggable: true }, // Handled by InteractionPlugin
+        Interaction { clickable: true, draggable: true },
         Name::new("Triangle"),
     ));
 
@@ -173,20 +146,20 @@ fn setup_scene_ecs(
     commands.spawn((
         ShapeData {
             vertices: Arc::new(vec![ // Use Arc
-                Vertex { position: [-25.0, -25.0] }, // Bottom-left local
-                Vertex { position: [-25.0, 25.0] },  // Top-left local
-                Vertex { position: [25.0, -25.0] },  // Bottom-right local
+                Vertex { position: [-25.0, -25.0] },
+                Vertex { position: [-25.0, 25.0] },
+                Vertex { position: [25.0, -25.0] },
                 // Triangle 2
-                Vertex { position: [25.0, -25.0] },  // Bottom-right local
-                Vertex { position: [-25.0, 25.0] },  // Top-left local
-                Vertex { position: [25.0, 25.0] },   // Top-right local
+                Vertex { position: [25.0, -25.0] },
+                Vertex { position: [-25.0, 25.0] },
+                Vertex { position: [25.0, 25.0] },
             ]),
             vertex_shader_path: "square.vert.spv".to_string(),
             fragment_shader_path: "square.frag.spv".to_string(),
         },
         Transform::from_xyz(125.0, 75.0, 2.0),
         Visibility(true),
-        Interaction { clickable: true, draggable: true }, // Handled by InteractionPlugin
+        Interaction { clickable: true, draggable: true },
         Name::new("Square"),
     ));
 

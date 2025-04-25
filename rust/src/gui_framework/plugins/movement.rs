@@ -1,21 +1,32 @@
 use bevy_app::{App, Plugin, Update};
-use bevy_ecs::prelude::*;
+use bevy_ecs::{prelude::*, schedule::SystemSet}; 
 use bevy_log::info;
-use bevy_math::Vec2; // Needed for delta calculation interpretation
 use bevy_transform::prelude::Transform;
 // Import events from the gui_framework
 use crate::gui_framework::events::EntityDragged;
+// Import sets from other plugins for ordering
+use super::interaction::InteractionSet; // Use super:: to access sibling module
+
+// --- System Sets ---
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MovementSet { ApplyMovement }
+
 // --- Default Movement Plugin Definition ---
 /// A plugin providing a default system to move entities based on EntityDragged events.
 pub struct GuiFrameworkDefaultMovementPlugin;
 impl Plugin for GuiFrameworkDefaultMovementPlugin {
 fn build(&self, app: &mut App) {
 info!("Building GuiFrameworkDefaultMovementPlugin...");
-app.add_systems(Update, movement_system);
+// Ensure movement happens after input is processed
+app.configure_sets(Update,
+    MovementSet::ApplyMovement.after(InteractionSet::InputHandling)
+);
+app.add_systems(Update, movement_system.in_set(MovementSet::ApplyMovement));
+
 info!("GuiFrameworkDefaultMovementPlugin built.");
 }
 }
-// --- System Moved from main.rs ---
+
 /// Update system: Applies movement deltas from EntityDragged events to Transform components.
 /// This provides a default way to handle dragging; applications can disable this plugin
 /// or add their own systems to handle EntityDragged differently.

@@ -1,10 +1,9 @@
 use bevy_app::{App, AppExit, Plugin, Startup, Update};
-use bevy_ecs::prelude::*;
+use bevy_ecs::{prelude::*, schedule::SystemSet};
 use bevy_log::{info, error, warn};
 use bevy_window::{PrimaryWindow, Window, WindowCloseRequested, CursorMoved};
 use bevy_input::{keyboard::KeyCode, mouse::MouseButton, ButtonInput};
 use bevy_math::Vec2;
-use bevy_reflect::Reflect;
 use std::path::PathBuf;
 use std::env;
 
@@ -21,6 +20,14 @@ use crate::gui_framework::{
 // Import resources used/managed by this plugin's systems
 // HotkeyResource is defined in main.rs for now, but inserted by this plugin
 use crate::HotkeyResource; // Assuming HotkeyResource is defined in main.rs or lib.rs
+
+// --- System Sets ---
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum InteractionSet {
+    LoadHotkeys,
+    InputHandling, // Group mouse/keyboard input processing
+    WindowClose,
+}
 
 // --- Interaction Plugin Definition ---
 
@@ -47,16 +54,11 @@ impl Plugin for GuiFrameworkInteractionPlugin {
 
         // --- System Setup ---
         app
-            // == Startup Systems ==
-            .add_systems(Startup, load_hotkeys_system) // Load hotkeys and insert resource
-            // == Update Systems ==
+            .add_systems(Startup, load_hotkeys_system.in_set(InteractionSet::LoadHotkeys))
             .add_systems(Update,
                 (
-                    interaction_system,
-                    hotkey_system,
-                    handle_close_request, // Handles window close X button
-                    // Note: app_control_system (exit via hotkey) remains in main.rs for now
-                    // Note: movement_system remains in main.rs for now
+                    (interaction_system, hotkey_system).in_set(InteractionSet::InputHandling),
+                    handle_close_request.in_set(InteractionSet::WindowClose),
                 )
             );
 

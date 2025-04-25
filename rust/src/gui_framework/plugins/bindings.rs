@@ -1,24 +1,31 @@
 use bevy_app::{App, AppExit, Plugin, Update};
-use bevy_ecs::prelude::*;
+use bevy_ecs::{prelude::*, schedule::SystemSet};
 use bevy_log::info;
 
 // Import events from the gui_framework
 use crate::gui_framework::events::HotkeyActionTriggered;
 
-// --- Default Bindings Plugin Definition ---
+ // Import sets from other plugins for ordering
+ use super::interaction::InteractionSet; // Use super:: to access sibling module
 
+// --- System Sets ---
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum BindingsSet { HandleActions }
+
+// --- Default Bindings Plugin Definition ---
 /// A plugin providing a default system to handle basic hotkey actions like closing the app.
 pub struct GuiFrameworkDefaultBindingsPlugin;
 
 impl Plugin for GuiFrameworkDefaultBindingsPlugin {
     fn build(&self, app: &mut App) {
         info!("Building GuiFrameworkDefaultBindingsPlugin...");
-        app.add_systems(Update, app_control_system);
+        app.configure_sets(Update,
+            BindingsSet::HandleActions.after(InteractionSet::InputHandling)
+        );
+        app.add_systems(Update, app_control_system.in_set(BindingsSet::HandleActions));
         info!("GuiFrameworkDefaultBindingsPlugin built.");
     }
 }
-
-// --- System Moved from main.rs ---
 
 /// Update system: Handles default application control actions based on `HotkeyActionTriggered` events.
 /// Currently, only handles the "CloseRequested" action. Applications can disable this plugin

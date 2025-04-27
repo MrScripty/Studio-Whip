@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 // Import framework components, events, resources, and the new plugin
 use rusty_whip::gui_framework::{
     VulkanContext,
-    components::{ShapeData, Visibility, Interaction},
+    components::{ShapeData, Visibility, Interaction, Text, TextAlignment},
     plugins::core::GuiFrameworkCorePlugin,
     // Import plugin SystemSets for ordering
     plugins::core::CoreSet,
@@ -27,6 +27,7 @@ use rusty_whip::gui_framework::{
 };
 // Import Bevy Name for debugging entities
 use bevy_core::Name;
+use bevy_color::Color;
 
 
 #[derive(Component)]
@@ -162,6 +163,21 @@ fn setup_scene_ecs(
         Interaction { clickable: true, draggable: true },
         Name::new("Square"),
     ));
+
+    // --- Spawn Sample Text ---
+    commands.spawn((
+        Text {
+            content: "Hello, Rusty Whip!\nThis is a test of text rendering.".to_string(),
+            size: 24.0, // Font size
+            color: Color::WHITE, // Text color
+            alignment: TextAlignment::Left, // Text alignment
+            bounds: None, // No specific bounds for wrapping initially
+        },
+        Transform::from_xyz(50.0, 250.0, 3.0), // Position the text (ensure Z > shapes if needed)
+        Visibility(true),
+        Name::new("SampleText"),
+    ));
+
 
     // TODO: Add instancing later using ECS patterns
 

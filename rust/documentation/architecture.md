@@ -17,7 +17,7 @@
     *   Role: **Shape resource manager.** Manages the global projection uniform buffer and per-entity Vulkan resources (vertex buffers, transform UBOs, descriptor sets) for shapes based on ECS `RenderCommandData`. Uses shape layout/pool provided during initialization. Caches shape pipelines and shader modules. Updates vertex buffers based on `vertices_changed` flag. Updates descriptor sets immediately per-entity. **Lacks optimization for resource removal (despawned entities).**
     *   Key Modules: `buffer_manager.rs`.
 5.  **Text Handling (`rendering/font_server.rs`, `rendering/glyph_atlas.rs`, `components/text_data.rs`, `components/text_layout.rs`)**
-    *   Role: Manages font loading (`font_server`), text layout/shaping (`text_layout_system`), glyph caching/rasterization/upload (`glyph_atlas`), and prepares text data (`Text`, `TextLayoutOutput`) for rendering.
+    *   Role: Manages font loading (`font_server`), text layout/shaping (`text_layout_system`), glyph caching/packing/upload (`glyph_atlas` using `rectangle-pack`), and prepares text data (`Text`, `TextLayoutOutput`) for rendering.
     *   Key Modules: `font_server.rs`, `glyph_atlas.rs`, `text_data.rs`, `text_layout.rs`. Systems in `plugins/core.rs` orchestrate layout and vertex generation.
 6.  **Bevy ECS Components (`components/`)**
     *   Role: Defines the data associated with entities (e.g., shape, text, visibility, interaction properties). Used alongside `bevy_transform::components::Transform`. Implements `bevy_reflect::Reflect` where possible.
@@ -32,7 +32,7 @@
     *   Role: Encapsulate core framework logic into modular Bevy plugins for better organization and reusability. Define `SystemSet`s (`CoreSet`, `InteractionSet`, etc.) to manage execution order.
     *   Key Modules: `core.rs` (Vulkan/Renderer/Text setup, text layout, **text vertex generation**, rendering, resize, cleanup), `interaction.rs` (Input processing, hotkey loading/dispatch, window close), `movement.rs` (Default drag movement), `bindings.rs` (Default hotkey actions).
 10. **Bevy App Core (`main.rs`)**
-    *   Role: Bootstraps the application using `bevy_app::App`. Initializes core Bevy plugins and framework plugins. Inserts initial `VulkanContextResource`. Defines and schedules **application-specific** systems (e.g., `setup_scene_ecs`, `background_resize_system`). Spawns initial entities with components.
+    *   Role: Bootstraps the application using `bevy_app::App`. Initializes core Bevy plugins and framework plugins. Inserts initial `VulkanContextResource`. Defines and schedules **application-specific** systems (e.g., `setup_scene_ecs`, `background_resize_system`). Spawns initial entities with components (including sample text).
 11. **Build Script (`build.rs`)**
     *   Role: Compiles GLSL shaders (`.vert`, `.frag`) to SPIR-V (`.spv`) using `glslc`, copies compiled shaders and runtime assets (e.g., `user/hotkeys.toml`) to the target build directory. Tracks shader source files for recompilation.
     *   Key Modules: `build.rs`.
@@ -42,14 +42,14 @@
 2.  Bevy `Startup` schedule runs:
     *   `GuiFrameworkCorePlugin` systems initialize Vulkan, create `RendererResource` (which creates text pipeline/buffer), `GlyphAtlasResource`, `FontServerResource`, `SwashCacheResource`.
     *   `GuiFrameworkInteractionPlugin` system loads hotkeys.
-    *   `main.rs` system `setup_scene_ecs` spawns initial entities.
+    *   `main.rs` system `setup_scene_ecs` spawns initial entities (shapes and text).
 3.  Bevy `Update` schedule runs:
     *   Input processing, interaction events, movement, hotkey actions handled by respective plugins.
     *   `GuiFrameworkCorePlugin` system `handle_resize_system` handles `WindowResized` for the renderer.
     *   `main.rs` system `background_resize_system` handles `WindowResized` for the background quad.
-    *   `GuiFrameworkCorePlugin` system `text_layout_system` queries `Text`, uses `FontServer`, `SwashCache`, calls `GlyphAtlas::add_glyph` (uploading glyphs), and updates `TextLayoutOutput`.
+    *   `GuiFrameworkCorePlugin` system `text_layout_system` queries `Text`, uses `FontServer`, `SwashCache`, calls `GlyphAtlas::add_glyph` (packing/uploading glyphs), and updates `TextLayoutOutput`.
 4.  Bevy `Last` schedule runs:
-    *   `GuiFrameworkCorePlugin` system `rendering_system` queries ECS for shapes (`ShapeData`) and text (`TextLayoutOutput`). It prepares `RenderCommandData` for shapes. It **generates world-space `TextVertex` data** for text and collects it into a `Vec`. It calls `Renderer::render`, passing shape commands, the text vertex `Vec`, and `GlyphAtlasResource`.
+    *   `GuiFrameworkCorePlugin` system `rendering_system` queries ECS for shapes (`ShapeData`) and text (`TextLayoutOutput`). It prepares `RenderCommandData` for shapes. It **generates world-space `TextVertex` data** for text (with baseline alignment and flipped UVs) and collects it into a `Vec`. It calls `Renderer::render`, passing shape commands, the text vertex `Vec`, and `GlyphAtlasResource`.
     *   `Renderer::render` updates shape resources via `BufferManager`, **updates the dynamic text vertex buffer**, ensures the atlas descriptor set exists, acquires swapchain image, calls `record_command_buffers`, submits commands, and presents.
     *   `record_command_buffers` records draw calls for shapes and **text (binding text pipeline, text vertex buffer, atlas descriptor set)**.
     *   `GuiFrameworkCorePlugin` system `cleanup_trigger_system` runs on `AppExit`, cleaning up `Renderer` (including text resources), `GlyphAtlas`, and `VulkanContext`.
@@ -88,18 +88,18 @@
 - **Input Processing**: Uses `bevy_input` via `GuiFrameworkInteractionPlugin`. Basic click detection, dragging, and hotkey dispatching implemented. Hit detection uses **Y-up world coordinates**.
 - **Vulkan Setup**: Core context initialized via `GuiFrameworkCorePlugin`. Separate pipeline layouts for shapes and text created.
 - **Rendering Bridge**: Custom Vulkan context (`VulkanContextResource`) and renderer (`RendererResource`) managed as Bevy resources.
-- **ECS-Driven Resource Management**: `BufferManager` creates/updates Vulkan resources for **shapes**. `GlyphAtlas` manages Vulkan texture for glyphs (packing, rasterization, upload). **`Renderer` manages dynamic vertex buffer, descriptor set, and pipeline for text.**
+- **ECS-Driven Resource Management**: `BufferManager` creates/updates Vulkan resources for **shapes**. `GlyphAtlas` manages Vulkan texture for glyphs (packing, rasterization data input, upload). **`Renderer` manages dynamic vertex buffer, descriptor set, and pipeline for text.**
 - **Resource Caching**: `BufferManager` caches shape pipelines/shaders. `GlyphAtlas` caches glyph locations/UVs.
 - **Rendering Path**: Data flows from ECS (`rendering_system`) through `Renderer` (shape prep via `BufferManager`, **text vertex buffer update**) to `command_buffers` (shape and **text** draw recording). Synchronization corrected. Projection matrix uses logical window size and Y-flip.
 - **Configurable Hotkeys**: Loads from TOML file into `HotkeyResource` via `GuiFrameworkInteractionPlugin`.
 - **Build Script**: Compiles GLSL shaders (including text shaders) to SPIR-V, copies assets, tracks shader changes.
 - **Resize Handling**: Correctly handles window resizing, swapchain recreation, framebuffer updates, projection matrix updates, and dynamic background vertex updates.
-- **Visual Output**: Functional 2D rendering of **shapes** and **static text** based on ECS data. Background dynamically resizes. Objects positioned correctly according to **Y-up world coordinates**. Alpha blending enabled for text.
+- **Visual Output**: Functional 2D rendering of **shapes** and **static, baseline-aligned text** based on ECS data. Background dynamically resizes. Objects positioned correctly according to **Y-up world coordinates**. Alpha blending enabled for text.
 - **Text Foundation**:
     - Text component definition (`Text`, `TextVertex`).
     - Font loading and management (`FontServer`, `FontServerResource`).
-    - Glyph atlas resource management (`GlyphAtlas`, `GlyphAtlasResource`), including packing, rasterization, and upload logic.
-    - CPU-side text layout system (`text_layout_system` using `cosmic-text`).
+    - Glyph atlas resource management (`GlyphAtlas`, `GlyphAtlasResource`), including packing via `rectangle-pack`, rasterization data input, and upload logic.
+    - CPU-side text layout system (`text_layout_system` using `cosmic-text`, calculates baseline-aligned vertex positions).
     - Intermediate text layout component (`TextLayoutOutput`).
     - Text shaders (`text.vert`, `text.frag`) created and used by text pipeline.
     - Text-specific Vulkan layouts and pipeline created.
@@ -107,7 +107,7 @@
 - **Robust Shutdown**: Application exit sequence correctly cleans up Vulkan resources (`Renderer` including text resources, `GlyphAtlas`, `VulkanContext`) via `cleanup_trigger_system`.
 
 ## Future Extensions
-- **Text Handling**: Implement text editing (`yrs`), context menus (Task 9). Refactor text rendering resource management (see Notes).
+- **Text Handling**: Implement text editing (`yrs`), context menus (Task 9). Refactor text rendering resource management (see Notes). Improve text rendering quality (e.g., SDF).
 - **Rendering Optimization**: Implement resource removal for despawned entities (using `RemovedComponents`). Optimize text vertex buffer updates (process only changed entities). Fix text descriptor set binding (Set 0).
 - **Hit Detection**: Improve Z-sorting/picking logic in `interaction_system` for overlapping objects.
 - **Bevy State Integration**: Consider Bevy State for managing application modes.
@@ -136,10 +136,10 @@
 
 ## Notes
 - **Framework Structure**: Core logic refactored into Bevy Plugins using System Sets for ordering. Application logic resides in `main.rs`.
-- **Coordinate System**: Uses a **Y-up world coordinate system** (origin bottom-left). Projection matrix includes a Y-flip to match Vulkan's default Y-down NDC space. Input and movement systems handle coordinate conversions correctly. Text vertex generation in `rendering_system` correctly transforms relative glyph coordinates to world space.
+- **Coordinate System**: Uses a **Y-up world coordinate system** (origin bottom-left). Projection matrix includes a Y-flip to match Vulkan's default Y-down NDC space. Input and movement systems handle coordinate conversions correctly. Text vertex generation in `rendering_system` correctly transforms relative glyph coordinates (calculated for baseline alignment) to world space.
 - **Known Issues**:
     - `BufferManager` lacks resource removal for despawned entities and only handles shapes.
     - Hit detection Z-sorting needs review.
     - `vulkan_setup` still uses `winit::window::Window` directly.
-    - **Text Rendering:** Current implementation manages text Vulkan resources within `Renderer`, which could be refactored for better encapsulation/efficiency. Binding descriptor Set 0 for text uses an incorrect workaround and needs fixing.
+    - **Text Rendering:** Current implementation manages text Vulkan resources within `Renderer`, which could be refactored for better encapsulation/efficiency. Binding descriptor Set 0 for text uses an incorrect workaround and needs fixing. Minor visual artifacts may occur near glyph edges with linear filtering.
 - **Cleanup Logic**: Synchronous cleanup on `AppExit` is handled by `cleanup_trigger_system` within the `GuiFrameworkCorePlugin`, running in the `Last` schedule.

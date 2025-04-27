@@ -1,10 +1,9 @@
 # Tasks for `rusty_whip` GUI Framework Enhancements
-*Updated: March 19, 2025*
 
 ## Overview
 These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin structure, supporting future features like advanced UI elements and collaborative editing. The framework uses Bevy's core non-rendering features (ECS, input, events, etc.) and drives a custom Vulkan rendering backend.
 
-**Current Status:** The migration to Bevy (v0.15) and the refactor into Bevy plugins (Tasks 6 & 7) are complete. Core logic resides in Bevy systems within framework plugins (`GuiFrameworkCorePlugin`, etc.). Rendering uses the custom Vulkan backend, handles dynamic resizing, uses a Y-up world coordinate system, and supports dynamic vertex buffer updates for shapes. **Basic text rendering is now implemented:** text layout occurs via `cosmic-text`, glyphs are cached/uploaded (placeholder logic) to a Vulkan atlas, vertices are generated in world space, and text is drawn using a dedicated pipeline and dynamic vertex buffer managed by the `Renderer`. Known issues remain regarding text descriptor set binding and potential optimizations/refactoring.
+**Current Status:** The migration to Bevy (v0.15) and the refactor into Bevy plugins (Tasks 6 & 7) are complete. Core logic resides in Bevy systems within framework plugins (`GuiFrameworkCorePlugin`, etc.). Rendering uses the custom Vulkan backend, handles dynamic resizing, uses a Y-up world coordinate system, and supports dynamic vertex buffer updates for shapes. **Task 8 (Text Rendering Foundation) is now complete:** text layout occurs via `cosmic-text`, glyphs are cached/uploaded to a Vulkan atlas managed by `GlyphAtlas` (using `rectangle-pack` for packing), vertices are generated with correct baseline alignment, and text is drawn using a dedicated pipeline and dynamic vertex buffer managed by the `Renderer`. Known issues remain regarding text descriptor set binding and potential optimizations/refactoring.
 
 ## Task 1: Implement Event Bus and Convert Existing Functionality
 - **Goal**: Introduce an event bus to decouple components and convert current interactions (dragging, instancing) to use it.
@@ -72,7 +71,7 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
 
 ## Task 8: Text Handling - Layout and Rendering Foundation
 - **Goal**: Integrate `cosmic-text` for layout/shaping and implement a custom Vulkan bitmap glyph atlas renderer integrated with the existing Vulkan backend. Display static sample text represented as Bevy ECS entities.
-- **Status**: **Mostly Complete** (Steps 1, 2, 4, 5, 6, 7 complete; Step 3 partially complete; Step 8 ready but needs verification)
+- **Status**: **Complete**
 - **Affected Components/Systems/Resources**:
     - New Component: `Text { content: String, size: f32, color: Color, alignment: TextAlignment, bounds: Option<Vec2> }` (`#[derive(Component, Reflect)]`) - **Implemented**
     - New Component: `TextLayoutOutput { glyphs: Vec<PositionedGlyph> }` (`#[derive(Component)]`) - **Implemented** (Not Reflectable)
@@ -88,11 +87,11 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
 - **Steps**:
     1.  **Add Dependencies:** Add `cosmic-text`, `fontdb`, `swash`, `rectangle-pack`, `bevy_color` to `Cargo.toml`. - **Complete.**
     2.  **Define `Text` Component:** Create the `Text` component struct (`text_data.rs`) to hold text data. - **Complete.**
-    3.  **Implement `GlyphAtlas` Logic:** Create a module/struct (`glyph_atlas.rs`) responsible for managing a Vulkan texture atlas. - **Partially Complete.**
+    3.  **Implement `GlyphAtlas` Logic:** Create a module/struct (`glyph_atlas.rs`) responsible for managing a Vulkan texture atlas. - **Complete.**
         *   Initialize the Vulkan `Image`, `ImageView`, `Sampler`. - **Complete.**
         *   Manage state via `GlyphAtlasResource`. - **Complete.**
-        *   Use `rectangle-pack` to find space for new glyphs. - **Not Implemented** (Placeholder packing in `add_glyph`).
-        *   Use `swash` and `FontServer` resource to rasterize glyphs. - **Not Implemented** (Placeholder rasterization in `add_glyph`).
+        *   Use `rectangle-pack` to find space for new glyphs (persistent packing state). - **Implemented.**
+        *   Use `swash` image data as input for glyph dimensions and bitmap. - **Implemented.**
         *   Upload glyph bitmaps to the Vulkan texture (using staging buffers). - **Implemented** (via `upload_glyph_bitmap`).
         *   Store glyph UV coordinates (`GlyphInfo`). - **Implemented.**
     4.  **Implement `FontServer` Resource:** Create a resource (`font_server.rs`) to load and manage fonts using `cosmic_text::FontSystem` and `fontdb`. Load system fonts at startup. - **Complete.**
@@ -100,19 +99,20 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
         *   Queries for entities with `(Changed<Text>, &Transform, With<Visibility>)`.
         *   Uses `FontServerResource`, `GlyphAtlasResource`, `SwashCacheResource`.
         *   Uses `cosmic_text::Buffer` for layout/shaping.
-        *   Calls `GlyphAtlas::add_glyph` (which now handles upload).
+        *   Calculates baseline-aligned vertex positions using `run.line_y`, `layout_glyph.y`, and `swash_image.placement`.
+        *   Calls `GlyphAtlas::add_glyph` (which now handles packing/upload).
         *   Stores layout results (`PositionedGlyph`) in `TextLayoutOutput` component.
     6.  **Implement Text Rendering Pipeline:** - **Complete.** (Integrated into `rendering_system` and `Renderer`)
         *   `rendering_system` queries `TextLayoutOutput`.
-        *   `rendering_system` generates world-space `TextVertex` data.
+        *   `rendering_system` generates world-space `TextVertex` data (with flipped V coordinates for UV mapping).
         *   `Renderer` manages dynamic Vulkan vertex buffer for text (creation, resize, update).
         *   `Renderer` manages Vulkan descriptor set for glyph atlas.
         *   `Renderer` creates and manages text graphics pipeline.
         *   `Renderer::render` calls `record_command_buffers` with text data.
         *   `record_command_buffers` binds text pipeline, vertex buffer, descriptor sets, and issues draw calls.
-    7.  **Integrate into App:** - **Complete.** (`Text` component, `FontServerResource`, `GlyphAtlasResource`, `SwashCacheResource`, `text_layout_system`, text rendering logic in `rendering_system`/`Renderer`/`command_buffers`, text shaders, Vulkan layouts/pipeline all integrated).
-    8.  **Test:** - **Ready.** (Basic text should render, but needs verification and testing).
-- **Constraints**: Requires Task 7 (Plugin Refactor) completion. Initial focus on non-wrapping, static text. Rendering uses the custom Vulkan backend. **Known issues:** Glyph packing/rasterization logic in `GlyphAtlas` is placeholder. Text descriptor Set 0 binding uses an incorrect workaround. Text rendering resource management could be refactored for efficiency/encapsulation.
+    7.  **Integrate into App:** - **Complete.** (`Text` component, `FontServerResource`, `GlyphAtlasResource`, `SwashCacheResource`, `text_layout_system`, text rendering logic in `rendering_system`/`Renderer`/`command_buffers`, text shaders, Vulkan layouts/pipeline all integrated). Sample text added in `main.rs`.
+    8.  **Test:** - **Complete.** (Basic text renders with correct baseline alignment. Minor artifacts with linear filtering noted).
+- **Constraints**: Requires Task 7 (Plugin Refactor) completion. Initial focus on non-wrapping, static text. Rendering uses the custom Vulkan backend. **Known issues:** Text descriptor Set 0 binding uses an incorrect workaround. Text rendering resource management could be refactored for efficiency/encapsulation. Minor visual artifacts may occur near glyph edges with linear filtering.
 
 ## Task 9: Text Handling - Editing & Interaction
 - **Goal**: Integrate `yrs` (`YText`) for collaborative data storage. Implement basic mouse/keyboard editing for text entities using Bevy Input and Systems.
@@ -162,7 +162,7 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
             *   Send `PieOptionSelected` event with the action string.
             *   Set `ActivePieMenuState.is_active = false`.
         *   **Deactivation/Cleanup:** If `ActivePieMenuState.is_active` becomes false (or on any click outside?), despawn all entities with `PieMenuUIElement` component using `Commands`.
-    4.  **Rendering:** Existing `rendering_system` and `text_rendering_system` (using custom Vulkan backend) will render the spawned UI entities based on their standard components (`Transform`, `ShapeData`, `Text`, `Visibility`).
+    4.  **Rendering:** Existing `rendering_system` (using custom Vulkan backend) will render the spawned UI entities based on their standard components (`Transform`, `ShapeData`, `Text`, `Visibility`).
     5.  **Action Handling:** Create other systems that listen for `PieOptionSelected` events and perform the corresponding actions.
     6.  **Test:** Trigger menu via hotkey. Verify UI elements appear correctly positioned. Click an option, verify `PieOptionSelected` event is sent and the menu disappears. Click outside the menu, verify it disappears.
 - **Constraints**: Requires Task 7 and 8. UI rendering uses custom Vulkan backend.

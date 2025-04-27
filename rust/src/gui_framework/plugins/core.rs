@@ -214,14 +214,11 @@ fn create_swash_cache_system(mut commands: Commands) {
 fn text_layout_system(
     mut commands: Commands,
     query: Query<(Entity, &Text, &Transform), (Changed<Text>, With<Visibility>)>,
-    // Access resources needed for layout and glyph management
     font_server_res: Res<FontServerResource>,
     glyph_atlas_res: Res<GlyphAtlasResource>,
-    swash_cache_res: Res<SwashCacheResource>, // Use Res, not ResMut if only reading cache state
-    // Need Vulkan context for add_glyph uploads
+    swash_cache_res: Res<SwashCacheResource>,
     vk_context_res: Res<VulkanContextResource>,
 ) {
-    // Lock resources needed for the loop
     let Ok(mut font_server) = font_server_res.0.lock() else {
         error!("Failed to lock FontServerResource in text_layout_system");
         return;
@@ -234,135 +231,136 @@ fn text_layout_system(
         error!("Failed to lock SwashCacheResource in text_layout_system");
         return;
     };
-    // Lock Vulkan context - immutable borrow should be sufficient for add_glyph
     let Ok(vk_context) = vk_context_res.0.lock() else {
         error!("Failed to lock VulkanContextResource in text_layout_system");
         return;
     };
 
     for (entity, text, transform) in query.iter() {
-        // --- Prepare cosmic-text Buffer ---
-        // TODO: Reuse buffers per entity? Maybe store BufferOwned in a component?
-        let metrics = Metrics::new(text.size, text.size * 1.2); // font_size, line_height
-        // Pass mutable borrow directly
+        let metrics = Metrics::new(text.size, text.size * 1.2);
         let mut buffer = cosmic_text::Buffer::new(&mut font_server.font_system, metrics);
 
-        // Set text content
-        // TODO: Handle different text attributes (color, style) if needed later
-        // Manual color conversion
         let cosmic_color = match text.color {
-            // Destructure Srgba as a tuple variant
             Color::Srgba(rgba) => CosmicColor::rgba(
                 (rgba.red * 255.0) as u8,
                 (rgba.green * 255.0) as u8,
                 (rgba.blue * 255.0) as u8,
                 (rgba.alpha * 255.0) as u8,
             ),
-            // Handle other Color variants if necessary (e.g., SRgba, LinearRgba)
-            // For now, default to white or black if it's not standard Rgba
             _ => {
                 warn!("Unsupported Bevy color type encountered in text layout, defaulting.");
-                CosmicColor::rgb(255, 255, 255) // Default to white
+                CosmicColor::rgb(255, 255, 255)
             }
         };
         let attrs = Attrs::new().color(cosmic_color);
         buffer.set_text(&mut font_server.font_system, &text.content, &attrs, Shaping::Advanced);
 
-        // Set size/wrapping
         if let Some(bounds) = text.bounds {
             buffer.set_size(&mut font_server.font_system, Some(bounds.x), Some(bounds.y));
-            // TODO: Set wrap mode based on component?
             buffer.set_wrap(&mut font_server.font_system, Wrap::Word);
         } else {
-             buffer.set_size(&mut font_server.font_system, None, None);
-             buffer.set_wrap(&mut font_server.font_system, Wrap::None);
+            buffer.set_size(&mut font_server.font_system, None, None);
+            buffer.set_wrap(&mut font_server.font_system, Wrap::None);
         }
 
-        // --- Shape the buffer ---
         buffer.shape_until_scroll(&mut font_server.font_system, true);
 
-        // --- Process Layout Glyphs ---
         let mut positioned_glyphs = Vec::new();
 
         for run in buffer.layout_runs() {
+            // Calculate the baseline for this line (convert Y-down to Y-up)
+            let baseline_y = -run.line_y;
+
             for layout_glyph in run.glyphs.iter() {
-                // --- Use CacheKey::new constructor ---
-                // TODO: Determine correct flags based on run.attrs if needed (e.g., bold, italic, variations)
                 let flags = cosmic_text::CacheKeyFlags::empty();
-                // CacheKey::new returns the key and integer pixel offsets (which we ignore for now)
                 let (cache_key, _x_int_offset, _y_int_offset) = cosmic_text::CacheKey::new(
                     layout_glyph.font_id,
                     layout_glyph.glyph_id,
                     layout_glyph.font_size,
-                    (layout_glyph.x, layout_glyph.y), // Pass the subpixel position tuple
+                    (layout_glyph.x, layout_glyph.y),
                     flags,
                 );
 
-                // --- Get swash Image using the constructed key ---
                 let Some(swash_image) = swash_cache.get_image(&mut font_server.font_system, cache_key) else {
                     warn!("Failed to get swash image for glyph key: {:?}", cache_key);
-                    continue; // Skip this glyph if rasterization fails
+                    continue;
                 };
 
-                // --- Request Glyph from Atlas (pass key AND swash_image) ---
-                match glyph_atlas.add_glyph(
-                    &vk_context, // Pass immutable borrow of locked context
-                    cache_key,   // Pass the key generated by CacheKey::new
-                    &swash_image,// Pass the image data
-                ) {
+                match glyph_atlas.add_glyph(&vk_context, cache_key, &swash_image) {
                     Ok(glyph_info_ref) => {
-                        // Note: add_glyph now returns a reference directly from the cache HashMap.
-                        // We need to copy the data out if we want to release the atlas lock sooner,
-                        // or keep the lock for the duration of vertex calculation.
-                        // Let's copy it for simplicity here.
                         let glyph_info = *glyph_info_ref;
+                        let placement = swash_image.placement;
+                        let width = placement.width as f32;
+                        let height = placement.height as f32;
 
-                        // --- Calculate Quad Vertices (Relative to Entity Origin) ---
-                        // Physical glyph info from cosmic-text
-                        let x = layout_glyph.x;
-                        let y = run.line_y - layout_glyph.y; // Adjust y based on line position
-                        let w = layout_glyph.w; // Use layout width
-                        let h = text.size; // Approximate height using font size? Or get from rasterizer?
+                        // Get the font to retrieve metrics
+                        let font = match font_server.font_system.get_font(layout_glyph.font_id) {
+                            Some(font) => font,
+                            None => {
+                                warn!("Font with ID {:?} not found for glyph {:?}", layout_glyph.font_id, layout_glyph.glyph_id);
+                                continue;
+                            }
+                        };
 
-                        // Define quad vertices (adjust based on desired origin - bottom-left?)
-                        // Y-axis is typically down in font coordinates, but our world is Y-up.
-                        // Let's calculate relative to the text entity's origin (bottom-left).
-                        // Cosmic-text's line_y is the baseline. layout_glyph.y is distance *below* baseline.
-                        // So, baseline_world_y = transform.translation.y + run.line_y
-                        // glyph_top_world_y = baseline_world_y - (font_size - ascent) ? Need ascent.
-                        // glyph_bottom_world_y = baseline_world_y + descent ? Need descent.
-                        // Let's use a simpler approach for now: place relative to bottom-left origin.
-                        // Assume run.line_y is distance from bottom. layout_glyph.y is distance from baseline.
-                        // This needs careful coordinate checking.
-                        // For now: Use layout_glyph x, w. Use run.line_y and layout_glyph.y for y.
-                        // This assumes Y-down relative to entity origin, which needs correction in rendering.
-                        // Let's stick to the previous calculation and fix in rendering system vertex generation.
-                        let top_left = Vec2::new(x, y - h); // Relative Y-down
-                        let top_right = Vec2::new(x + w, y - h);
-                        let bottom_right = Vec2::new(x + w, y);
-                        let bottom_left = Vec2::new(x, y);
+                        // Create a FontRef for swash to access metrics
+                        let font_ref = swash::FontRef {
+                            data: font.as_ref().data(),
+                            offset: 0, // Assuming single font face; adjust if using font collections
+                            key: Default::default(),
+                        };
 
+                        // Get the font metrics (unscaled)
+                        let metrics = font_ref.metrics(&[]); // No variations
+                        // Scale the metrics to the font size
+                        let units_per_em = metrics.units_per_em as f32;
+                        if units_per_em == 0.0 {
+                            warn!("Units per em is 0 for font ID {:?}, defaulting to ascent 0", layout_glyph.font_id);
+                            continue;
+                        }
+                        let scale_factor = layout_glyph.font_size / units_per_em;
+                        let ascent = metrics.ascent * scale_factor; // Ascent is positive upward in swash (Y-up)
+                        let descent = metrics.descent * scale_factor; // Descent is negative downward in swash (Y-up)
+
+                        // Position the quad such that its baseline is at baseline_y
+                        // placement.top is the distance from the baseline to the top of the bitmap (positive downward in Y-down)
+                        // In Y-up, the top of the bitmap is at baseline_y + placement.top
+                        let relative_top_y = baseline_y + placement.top as f32;
+                        let relative_bottom_y = relative_top_y - height;
+
+                        // Horizontal positioning (unchanged)
+                        let relative_left_x = layout_glyph.x;
+                        let relative_right_x = relative_left_x + width;
+
+                        // Define quad vertices (TL, TR, BR, BL order)
+                        let top_left = Vec2::new(relative_left_x, relative_top_y);
+                        let top_right = Vec2::new(relative_right_x, relative_top_y);
+                        let bottom_right = Vec2::new(relative_right_x, relative_bottom_y);
+                        let bottom_left = Vec2::new(relative_left_x, relative_bottom_y);
+
+                        let relative_vertices = [top_left, top_right, bottom_right, bottom_left];
+
+                        // Debug logging to verify positioning
+                        info!(
+                            "Glyph {:?}: baseline_y={:.2}, placement_top={:.2}, top_y={:.2}, bottom_y={:.2}, ascent={:.2}, descent={:.2}",
+                            layout_glyph.glyph_id, baseline_y, placement.top as f32, relative_top_y, relative_bottom_y, ascent, descent
+                        );
 
                         positioned_glyphs.push(PositionedGlyph {
                             glyph_info,
-                            layout_glyph: layout_glyph.clone(), // Clone cosmic's layout info
-                            vertices: [top_left, top_right, bottom_right, bottom_left],
+                            layout_glyph: layout_glyph.clone(),
+                            vertices: relative_vertices,
                         });
                     }
                     Err(e) => {
-                        // Log error for now, skip rendering this glyph
-                        // Use cache_key obtained from swash_image earlier
                         warn!(
                             "Failed to add/get glyph (key: {:?}) from atlas: {}. Skipping glyph.",
                             cache_key, e
                         );
-                        // In a real scenario, might need fallback or error handling
                     }
                 }
             }
         }
 
-        // --- Update or Insert TextLayoutOutput Component ---
         commands.entity(entity).insert(TextLayoutOutput {
             glyphs: positioned_glyphs,
         });
@@ -428,14 +426,14 @@ fn rendering_system(
 
                     // Create vertices for two triangles (quad)
                     // Triangle 1: top-left, bottom-left, bottom-right
-                    all_text_vertices.push(TextVertex { position: tl_world.into(), uv: [uv_min[0], uv_min[1]] }); // Top-left UV
-                    all_text_vertices.push(TextVertex { position: bl_world.into(), uv: [uv_min[0], uv_max[1]] }); // Bottom-left UV
-                    all_text_vertices.push(TextVertex { position: br_world.into(), uv: [uv_max[0], uv_max[1]] }); // Bottom-right UV
+                    all_text_vertices.push(TextVertex { position: tl_world.into(), uv: [uv_min[0], uv_min[1]] }); // Top-Left UV
+                    all_text_vertices.push(TextVertex { position: bl_world.into(), uv: [uv_min[0], uv_max[1]] }); // Bottom-Left UV
+                    all_text_vertices.push(TextVertex { position: br_world.into(), uv: [uv_max[0], uv_max[1]] }); // Bottom-Right UV
 
                     // Triangle 2: top-left, bottom-right, top-right
-                    all_text_vertices.push(TextVertex { position: tl_world.into(), uv: [uv_min[0], uv_min[1]] }); // Top-left UV
-                    all_text_vertices.push(TextVertex { position: br_world.into(), uv: [uv_max[0], uv_max[1]] }); // Bottom-right UV
-                    all_text_vertices.push(TextVertex { position: tr_world.into(), uv: [uv_max[0], uv_min[1]] }); // Top-right UV
+                    all_text_vertices.push(TextVertex { position: tl_world.into(), uv: [uv_min[0], uv_min[1]] }); // Top-Left UV
+                    all_text_vertices.push(TextVertex { position: br_world.into(), uv: [uv_max[0], uv_max[1]] }); // Bottom-Right UV
+                    all_text_vertices.push(TextVertex { position: tr_world.into(), uv: [uv_max[0], uv_min[1]] }); // Top-Right UV
                 }
             }
         }

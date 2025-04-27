@@ -36,6 +36,7 @@ pub struct GlyphAtlas {
     pub sampler: vk::Sampler,
     pub extent: vk::Extent2D,
     pub format: vk::Format,
+    target_bins: BTreeMap<u32, TargetBin>,
     padding: u32, // Padding between glyphs
     glyph_cache: HashMap<CacheKey, GlyphInfo>, // Maps glyph key to its info
     scale_context: ScaleContext,
@@ -105,7 +106,7 @@ impl GlyphAtlas {
         let sampler_create_info = vk::SamplerCreateInfo {
             s_type: vk::StructureType::SAMPLER_CREATE_INFO,
             mag_filter: vk::Filter::LINEAR, // Linear filtering for smoother scaling
-            min_filter: vk::Filter::LINEAR,
+            min_filter: vk::Filter::LINEAR, // Nearerst helps remove some sampling artifacts around text 
             mipmap_mode: vk::SamplerMipmapMode::LINEAR,
             address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
             address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
@@ -128,7 +129,11 @@ impl GlyphAtlas {
 
         // Initialize swash scale context
         let scale_context = ScaleContext::new();
-        let padding = 1; // Define padding value needed for struct init
+        // Initialize the target bin map
+        let mut target_bins = BTreeMap::new();
+        target_bins.insert(0, TargetBin::new(initial_extent.width, initial_extent.height, 1)); // Bin ID 0
+        
+        let padding = 3; // Define padding value needed for struct init
 
         Ok(Self {
             image,
@@ -137,6 +142,7 @@ impl GlyphAtlas {
             sampler,
             extent: initial_extent,
             format,
+            target_bins,
             padding: padding,
             glyph_cache: HashMap::new(),
             scale_context,
@@ -156,7 +162,10 @@ impl GlyphAtlas {
         if self.glyph_cache.contains_key(&cache_key) {
             // Key exists, so we can safely get and return the immutable reference now.
             // The unwrap is safe because we just checked contains_key.
-            return Ok(self.glyph_cache.get(&cache_key).unwrap());
+            let existing_info = self.glyph_cache.get(&cache_key).unwrap();
+            // Log cache hit
+            info!("[add_glyph] Cache HIT for key {:?}: {:?}", cache_key, existing_info); // Log existing info on cache hit
+            return Ok(existing_info);
         }
         // --- Key not found, proceed with rasterization, packing, and insertion ---
 
@@ -188,18 +197,16 @@ impl GlyphAtlas {
         // Associate the CacheKey ID when pushing the rect data
         rects_to_place.push_rect(cache_key, Some(vec![0]), rect_data);
 
-        // Define the target bin (our single atlas texture) using BTreeMap
-        let mut target_bins = BTreeMap::new();
-        // TargetBin::new takes u32 dimensions
-        target_bins.insert(0, TargetBin::new(self.extent.width, self.extent.height, 1)); // Bin ID 0, depth 1
-
         // Call pack_rects - requires BTreeMap, heuristic, and custom data (&() is fine if unused)
-        match pack_rects(&rects_to_place, &mut target_bins, &volume_heuristic, &contains_smallest_box) { // Use contains_smallest_box
+        match pack_rects(&rects_to_place, &mut self.target_bins, &volume_heuristic, &contains_smallest_box) {
             Ok(pack_result) => {
                 // packed_locations maps RectId (CacheKey) -> (BinId, PackedLocation)
                 if let Some((_bin_id, packed_location)) = pack_result.packed_locations().get(&cache_key) {
-                    // Successfully packed! Get coordinates from the PackedLocation struct.
                     // Successfully packed! Get coordinates directly from PackedLocation methods.
+                    let packed_x_i32 = packed_location.x();
+                    let packed_y_i32 = packed_location.y();
+                    // Log the raw coordinates returned by the packer
+                    info!("[add_glyph] Packed location for key {:?}: ({}, {})", cache_key, packed_x_i32, packed_y_i32);
                     let pixel_x = packed_location.x() as u32;
                     let pixel_y = packed_location.y() as u32;
 
@@ -237,7 +244,8 @@ impl GlyphAtlas {
 
                     // Use entry API to insert and return reference
                     let inserted_info = self.glyph_cache.entry(cache_key).or_insert(glyph_info);
-                    Ok(inserted_info) // Return the reference to the newly inserted info
+                    info!("[add_glyph] Returning NEW info for key {:?}: {:?}", cache_key, inserted_info);
+                    Ok(inserted_info)
 
                 } else {
                     // This case *shouldn't* happen if pack_rects returned Ok, but handle defensively.

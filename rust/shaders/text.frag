@@ -18,7 +18,7 @@ void main() {
     // Output white color modulated by the sampled alpha
     // TODO: Add support for vertex color or uniform color later
     outColor = vec4(1.0, 1.0, 1.0, alpha);
-
+ac
     // Discard fully transparent pixels to potentially improve performance (optional)
     if (alpha < 0.01) {
         discard;

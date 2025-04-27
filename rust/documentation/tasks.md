@@ -4,7 +4,7 @@
 ## Overview
 These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin structure, supporting future features like advanced UI elements and collaborative editing. The framework uses Bevy's core non-rendering features (ECS, input, events, etc.) and drives a custom Vulkan rendering backend.
 
-**Current Status:** The migration to Bevy (v0.15) is complete (Tasks 6.1-6.4). Core logic resides in Bevy systems within `main.rs`. Rendering uses the custom Vulkan backend, handles dynamic resizing (including background quad vertices), uses a Y-up world coordinate system with correct projection matrix (Y-flip), and supports dynamic vertex buffer updates via `Changed<ShapeData>`. The next major step is refactoring the framework logic currently in `main.rs` into dedicated Bevy plugins.
+**Current Status:** The migration to Bevy (v0.15) and the refactor into Bevy plugins (Tasks 6 & 7) are complete. Core logic resides in Bevy systems within framework plugins (`GuiFrameworkCorePlugin`, etc.). Rendering uses the custom Vulkan backend, handles dynamic resizing, uses a Y-up world coordinate system, and supports dynamic vertex buffer updates for shapes. **Basic text rendering is now implemented:** text layout occurs via `cosmic-text`, glyphs are cached/uploaded (placeholder logic) to a Vulkan atlas, vertices are generated in world space, and text is drawn using a dedicated pipeline and dynamic vertex buffer managed by the `Renderer`. Known issues remain regarding text descriptor set binding and potential optimizations/refactoring.
 
 ## Task 1: Implement Event Bus and Convert Existing Functionality
 - **Goal**: Introduce an event bus to decouple components and convert current interactions (dragging, instancing) to use it.
@@ -72,7 +72,7 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
 
 ## Task 8: Text Handling - Layout and Rendering Foundation
 - **Goal**: Integrate `cosmic-text` for layout/shaping and implement a custom Vulkan bitmap glyph atlas renderer integrated with the existing Vulkan backend. Display static sample text represented as Bevy ECS entities.
-- **Status**: **Partially Complete** (Steps 1, 2, 4, 5 complete; Step 3 partially complete; Steps 6, 7, 8 not started)
+- **Status**: **Mostly Complete** (Steps 1, 2, 4, 5, 6, 7 complete; Step 3 partially complete; Step 8 ready but needs verification)
 - **Affected Components/Systems/Resources**:
     - New Component: `Text { content: String, size: f32, color: Color, alignment: TextAlignment, bounds: Option<Vec2> }` (`#[derive(Component, Reflect)]`) - **Implemented**
     - New Component: `TextLayoutOutput { glyphs: Vec<PositionedGlyph> }` (`#[derive(Component)]`) - **Implemented** (Not Reflectable)
@@ -82,34 +82,37 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
     - New Resource: `FontServerResource(Arc<Mutex<FontServer>>)` - **Implemented** (Manages `cosmic_text::FontSystem` and `fontdb::Database`)
     - New Resource: `SwashCacheResource(Mutex<SwashCache>)` - **Implemented**
     - New Systems: `text_layout_system` - **Implemented**
-    - New Systems: `text_rendering_system` - **Not Implemented**
-    - Modified Systems: `rendering_system` (queries updated, text integration pending), `create_*` systems in `core.rs` (added atlas, font server, swash cache init), `cleanup_trigger_system` (added atlas cleanup).
+    - Modified Systems: `rendering_system` (queries updated, **generates text vertices**, calls `Renderer::render` with text data), `create_*` systems in `core.rs` (added atlas, font server, swash cache init), `cleanup_trigger_system` (added atlas cleanup).
+    - Modified Renderer (`render_engine.rs`): Manages text pipeline, dynamic text vertex buffer, atlas descriptor set.
+    - Modified Command Buffers (`command_buffers.rs`): Records text draw calls.
 - **Steps**:
     1.  **Add Dependencies:** Add `cosmic-text`, `fontdb`, `swash`, `rectangle-pack`, `bevy_color` to `Cargo.toml`. - **Complete.**
     2.  **Define `Text` Component:** Create the `Text` component struct (`text_data.rs`) to hold text data. - **Complete.**
     3.  **Implement `GlyphAtlas` Logic:** Create a module/struct (`glyph_atlas.rs`) responsible for managing a Vulkan texture atlas. - **Partially Complete.**
         *   Initialize the Vulkan `Image`, `ImageView`, `Sampler`. - **Complete.**
         *   Manage state via `GlyphAtlasResource`. - **Complete.**
-        *   Use `rectangle-pack` to find space for new glyphs. - **Not Implemented** (Placeholder in `add_glyph`).
-        *   Use `swash` and `FontServer` resource to rasterize glyphs. - **Not Implemented** (Placeholder in `add_glyph`).
-        *   Upload glyph bitmaps to the Vulkan texture (using staging buffers). - **Not Implemented** (Placeholder in `add_glyph`).
-        *   Store glyph UV coordinates (`GlyphInfo`). - **Partially Complete** (Struct defined, calculation pending).
+        *   Use `rectangle-pack` to find space for new glyphs. - **Not Implemented** (Placeholder packing in `add_glyph`).
+        *   Use `swash` and `FontServer` resource to rasterize glyphs. - **Not Implemented** (Placeholder rasterization in `add_glyph`).
+        *   Upload glyph bitmaps to the Vulkan texture (using staging buffers). - **Implemented** (via `upload_glyph_bitmap`).
+        *   Store glyph UV coordinates (`GlyphInfo`). - **Implemented.**
     4.  **Implement `FontServer` Resource:** Create a resource (`font_server.rs`) to load and manage fonts using `cosmic_text::FontSystem` and `fontdb`. Load system fonts at startup. - **Complete.**
     5.  **Create `text_layout_system`:** - **Complete.**
         *   Queries for entities with `(Changed<Text>, &Transform, With<Visibility>)`.
         *   Uses `FontServerResource`, `GlyphAtlasResource`, `SwashCacheResource`.
         *   Uses `cosmic_text::Buffer` for layout/shaping.
-        *   Calls placeholder `GlyphAtlas::add_glyph`.
+        *   Calls `GlyphAtlas::add_glyph` (which now handles upload).
         *   Stores layout results (`PositionedGlyph`) in `TextLayoutOutput` component.
-    6.  **Create `text_rendering_system`:** - **Not Started.**
-        *   Needs to run after `text_layout_system`.
-        *   Query entities with `TextLayoutOutput`.
-        *   Generate Vulkan vertex data for glyph quads using `PositionedGlyph` and `Transform`.
-        *   Manage dynamic Vulkan vertex buffer(s) for text.
-        *   Integrate with the main `rendering_system` or `Renderer` to provide vertex data, atlas descriptor set, and potentially a text-specific pipeline for draw calls.
-    7.  **Integrate into App:** - **Partially Complete.** (`Text` component, `FontServerResource`, `GlyphAtlasResource`, `SwashCacheResource`, `text_layout_system` added. Text rendering pipeline/shaders/descriptors not added).
-    8.  **Test:** - **Not Started.** (Blocked by rendering implementation).
-- **Constraints**: Requires Task 7 (Plugin Refactor) completion. Initial focus on non-wrapping, static text. Rendering must use the custom Vulkan backend. Glyph rasterization/upload and rendering pipeline are the next major steps for this task.
+    6.  **Implement Text Rendering Pipeline:** - **Complete.** (Integrated into `rendering_system` and `Renderer`)
+        *   `rendering_system` queries `TextLayoutOutput`.
+        *   `rendering_system` generates world-space `TextVertex` data.
+        *   `Renderer` manages dynamic Vulkan vertex buffer for text (creation, resize, update).
+        *   `Renderer` manages Vulkan descriptor set for glyph atlas.
+        *   `Renderer` creates and manages text graphics pipeline.
+        *   `Renderer::render` calls `record_command_buffers` with text data.
+        *   `record_command_buffers` binds text pipeline, vertex buffer, descriptor sets, and issues draw calls.
+    7.  **Integrate into App:** - **Complete.** (`Text` component, `FontServerResource`, `GlyphAtlasResource`, `SwashCacheResource`, `text_layout_system`, text rendering logic in `rendering_system`/`Renderer`/`command_buffers`, text shaders, Vulkan layouts/pipeline all integrated).
+    8.  **Test:** - **Ready.** (Basic text should render, but needs verification and testing).
+- **Constraints**: Requires Task 7 (Plugin Refactor) completion. Initial focus on non-wrapping, static text. Rendering uses the custom Vulkan backend. **Known issues:** Glyph packing/rasterization logic in `GlyphAtlas` is placeholder. Text descriptor Set 0 binding uses an incorrect workaround. Text rendering resource management could be refactored for efficiency/encapsulation.
 
 ## Task 9: Text Handling - Editing & Interaction
 - **Goal**: Integrate `yrs` (`YText`) for collaborative data storage. Implement basic mouse/keyboard editing for text entities using Bevy Input and Systems.

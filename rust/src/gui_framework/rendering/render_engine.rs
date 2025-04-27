@@ -12,6 +12,7 @@ use crate::RenderCommandData; // from lib.rs
 use crate::{TextVertex, TextRenderCommandData}; // Added TextVertex and TextRenderCommandData
 use vk_mem::{Allocation, Alloc}; // Added for text vertex buffer allocation
 use crate::GlyphAtlasResource; // Added for render signature
+use crate::gui_framework::rendering::shader_utils;
 
 pub struct Renderer {
     buffer_manager: BufferManager,
@@ -25,6 +26,7 @@ pub struct Renderer {
     text_vertex_allocation: Option<Allocation>,
     text_vertex_buffer_capacity: u32, // Max number of TextVertex this buffer can hold
     glyph_atlas_descriptor_set: vk::DescriptorSet, // Single set pointing to the atlas texture/sampler
+    text_pipeline: vk::Pipeline, 
 }
 
 impl Renderer {
@@ -133,6 +135,7 @@ impl Renderer {
             text_vertex_allocation: None,
             text_vertex_buffer_capacity: 0, // Placeholder
             glyph_atlas_descriptor_set: vk::DescriptorSet::null(), // Placeholder
+            text_pipeline: vk::Pipeline::null(),
         };
 
         // --- Create Initial Dynamic Text Vertex Buffer ---
@@ -170,6 +173,113 @@ impl Renderer {
         // Let's allocate it here, assuming GlyphAtlasResource is available *before* RendererResource.
         // This implies create_glyph_atlas_system runs before create_renderer_system.
         // *** Correction: Renderer is created *after* Atlas. We need to get the resource from the world or pass it. ***
+
+        // --- Create Text Graphics Pipeline ---
+        let text_pipeline = unsafe {
+            let device = platform.device.as_ref().unwrap();
+            let render_pass = platform.render_pass.expect("Render pass missing for text pipeline creation");
+            let pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing for text pipeline creation");
+
+            // Load shaders
+            let vert_shader_module = shader_utils::load_shader(device, "text.vert.spv");
+            let frag_shader_module = shader_utils::load_shader(device, "text.frag.spv");
+
+            let shader_stages = [
+                vk::PipelineShaderStageCreateInfo {
+                    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+                    module: vert_shader_module,
+                    stage: vk::ShaderStageFlags::VERTEX,
+                    p_name: b"main\0".as_ptr() as _,
+                    ..Default::default()
+                },
+                vk::PipelineShaderStageCreateInfo {
+                    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+                    module: frag_shader_module,
+                    stage: vk::ShaderStageFlags::FRAGMENT,
+                    p_name: b"main\0".as_ptr() as _,
+                    ..Default::default()
+                },
+            ];
+
+            // Vertex input state for TextVertex
+            let vertex_attr_descs = [
+                // Position (vec2)
+                vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: 0 },
+                // UV (vec2)
+                vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: std::mem::size_of::<[f32; 2]>() as u32 },
+            ];
+            let vertex_binding_descs = [
+                vk::VertexInputBindingDescription { binding: 0, stride: std::mem::size_of::<TextVertex>() as u32, input_rate: vk::VertexInputRate::VERTEX }
+            ];
+            let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
+                s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+                vertex_binding_description_count: vertex_binding_descs.len() as u32,
+                p_vertex_binding_descriptions: vertex_binding_descs.as_ptr(),
+                vertex_attribute_description_count: vertex_attr_descs.len() as u32,
+                p_vertex_attribute_descriptions: vertex_attr_descs.as_ptr(),
+                ..Default::default()
+            };
+
+            // Standard pipeline states (similar to shapes, but enable blending)
+            let input_assembly = vk::PipelineInputAssemblyStateCreateInfo { s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() };
+            let viewport_state = vk::PipelineViewportStateCreateInfo { s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO, viewport_count: 1, scissor_count: 1, ..Default::default() }; // Dynamic
+            let rasterizer = vk::PipelineRasterizationStateCreateInfo { s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO, polygon_mode: vk::PolygonMode::FILL, line_width: 1.0, cull_mode: vk::CullModeFlags::NONE, front_face: vk::FrontFace::CLOCKWISE, ..Default::default() };
+            let multisampling = vk::PipelineMultisampleStateCreateInfo { s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, rasterization_samples: vk::SampleCountFlags::TYPE_1, ..Default::default() };
+
+            // Color Blending: Enable alpha blending for text
+            let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
+                blend_enable: vk::TRUE, // Enable blending
+                src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
+                dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                color_blend_op: vk::BlendOp::ADD,
+                src_alpha_blend_factor: vk::BlendFactor::ONE, // Often use ONE for source alpha factor
+                dst_alpha_blend_factor: vk::BlendFactor::ZERO, // Often use ZERO for dest alpha factor
+                alpha_blend_op: vk::BlendOp::ADD,
+                color_write_mask: vk::ColorComponentFlags::RGBA,
+            };
+            let color_blending = vk::PipelineColorBlendStateCreateInfo {
+                s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+                logic_op_enable: vk::FALSE,
+                attachment_count: 1,
+                p_attachments: &color_blend_attachment,
+                ..Default::default()
+            };
+
+            let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+            let dynamic_state_info = vk::PipelineDynamicStateCreateInfo { s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamic_state_count: dynamic_states.len() as u32, p_dynamic_states: dynamic_states.as_ptr(), ..Default::default() };
+
+            let pipeline_info = vk::GraphicsPipelineCreateInfo {
+                s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
+                stage_count: shader_stages.len() as u32,
+                p_stages: shader_stages.as_ptr(),
+                p_vertex_input_state: &vertex_input_info,
+                p_input_assembly_state: &input_assembly,
+                p_viewport_state: &viewport_state,
+                p_rasterization_state: &rasterizer,
+                p_multisample_state: &multisampling,
+                p_color_blend_state: &color_blending,
+                p_dynamic_state: &dynamic_state_info,
+                layout: pipeline_layout,
+                render_pass,
+                subpass: 0,
+                ..Default::default()
+            };
+
+            let pipeline = device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+                .map_err(|e| format!("Failed to create text graphics pipeline: {:?}", e))
+                .expect("Text pipeline creation failed") // Use expect for critical path
+                .remove(0);
+
+            // Cleanup shader modules now that pipeline is created
+            device.destroy_shader_module(vert_shader_module, None);
+            device.destroy_shader_module(frag_shader_module, None);
+
+            pipeline
+        };
+        info!("[Renderer::new] Text graphics pipeline created.");
+        renderer.text_pipeline = text_pipeline;
+
+
         // *** Simplification: Let's allocate it in the first `render` call if it's null. ***
 
         renderer // Return the modified renderer instance
@@ -386,12 +496,13 @@ impl Renderer {
 
         record_command_buffers(
             platform, // Pass mutable platform here again
-            &prepared_shape_draws, // Pass the prepared shape data
+            &prepared_shape_draws,
             // Pass text rendering info
             self.text_vertex_buffer,
             self.glyph_atlas_descriptor_set,
             text_command.as_ref(), // Pass Option<&TextRenderCommandData>
             platform.current_swap_extent,
+            self.text_pipeline,
         );
         // Mutable borrow for command buffer recording ends here.
 
@@ -502,6 +613,12 @@ impl Renderer {
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None); // Shape layout
             device.destroy_descriptor_set_layout(self.text_descriptor_set_layout, None); // Text layout
             info!("[Renderer::cleanup] Descriptor pool and set layouts destroyed");
+        }
+
+        // Cleanup text pipeline
+        if self.text_pipeline != vk::Pipeline::null() {
+            unsafe { device.destroy_pipeline(self.text_pipeline, None); }
+            info!("[Renderer::cleanup] Text pipeline destroyed.");
         }
 
         // Cleanup swapchain resources (Framebuffers, Views, Swapchain, RenderPass)

@@ -10,6 +10,7 @@ pub fn record_command_buffers(
     glyph_atlas_descriptor_set: vk::DescriptorSet,
     text_command: Option<&TextRenderCommandData>, // Pass optional text draw info
     extent: vk::Extent2D,
+    text_pipeline: vk::Pipeline,
 ) {
     let device = platform.device.as_ref().expect("Device not available for command buffer recording");
     let command_pool = platform.command_pool.expect("Command pool missing for recording");
@@ -133,6 +134,55 @@ pub fn record_command_buffers(
                     0,                         // firstVertex
                     0,                         // firstInstance
                 );
+            }
+        }
+
+        // --- Draw Text ---
+        if let Some(text_cmd) = text_command {
+            if text_cmd.vertex_count > 0 {
+                // Get text pipeline layout from context
+                let text_pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing");
+
+                // Bind the text pipeline (passed as argument)
+                device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, text_pipeline);
+
+                // Bind text descriptor sets
+                // Set 0: Global UBO (reuse shape descriptor set? Or need a dedicated one?)
+                //      Let's assume text vertex shader only uses binding 0 from set 0.
+                //      We need the *global* projection UBO descriptor set.
+                //      This is currently part of the per-shape descriptor sets.
+                //      Refactor needed: Separate global UBO descriptor set.
+                //      *** Temporary Workaround: Bind the *first* shape's descriptor set for Set 0 ***
+                //      *** This is INCORRECT but allows compilation. Needs fixing. ***
+                let set0_binding = if let Some(first_shape) = prepared_shape_draws.first() {
+                    first_shape.descriptor_set
+                } else {
+                    // Cannot bind Set 0 if no shapes exist. Text won't render correctly.
+                    bevy_log::warn!("[record_command_buffers] No shape descriptor set available to bind for text Set 0 (Projection UBO). Text rendering will likely fail.");
+                    vk::DescriptorSet::null() // Or skip text rendering entirely
+                };
+
+                if set0_binding != vk::DescriptorSet::null() {
+                    // Bind Set 0 (Projection UBO - using workaround) and Set 1 (Atlas Sampler)
+                    device.cmd_bind_descriptor_sets(
+                        command_buffer, vk::PipelineBindPoint::GRAPHICS, text_pipeline_layout,
+                        0, // firstSet
+                        &[set0_binding, glyph_atlas_descriptor_set], // Bind Set 0 and Set 1
+                        &[], // No dynamic offsets
+                    );
+
+                    // Bind text vertex buffer
+                    device.cmd_bind_vertex_buffers(command_buffer, 0, &[text_vertex_buffer], &[0]);
+
+                    // Draw text vertices
+                    device.cmd_draw(
+                        command_buffer,
+                        text_cmd.vertex_count,
+                        1, // instanceCount
+                        text_cmd.vertex_buffer_offset, // firstVertex
+                        0, // firstInstance
+                    );
+                }
             }
         }
 

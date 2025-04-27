@@ -7,7 +7,7 @@ use bevy_winit::WinitWindows;
 use bevy_transform::prelude::{GlobalTransform, Transform};
 use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
-use ash::{vk, prelude::VkResult};
+use ash::vk;
 use bevy_color::Color;
 use bevy_math::{Vec2, IVec2};
 use cosmic_text::{Attrs, BufferLine, FontSystem, Metrics, Shaping, SwashCache, Wrap, Color as CosmicColor};
@@ -213,14 +213,15 @@ fn create_swash_cache_system(mut commands: Commands) {
 
 fn text_layout_system(
     mut commands: Commands,
-    query: Query<(Entity, &Text, &Transform), (Changed<Text>, With<Visibility>)>, // Only process visible text
+    query: Query<(Entity, &Text, &Transform), (Changed<Text>, With<Visibility>)>,
     // Access resources needed for layout and glyph management
     font_server_res: Res<FontServerResource>,
     glyph_atlas_res: Res<GlyphAtlasResource>,
-    // We also need a SwashCache for cosmic-text rasterization/layout
-    // It's mutable, so needs its own resource or needs to be part of FontServer/GlyphAtlas
-    swash_cache_res: ResMut<SwashCacheResource>, // Use Local resource for cache state
+    swash_cache_res: Res<SwashCacheResource>, // Use Res, not ResMut if only reading cache state
+    // Need Vulkan context for add_glyph uploads
+    vk_context_res: Res<VulkanContextResource>,
 ) {
+    // Lock resources needed for the loop
     let Ok(mut font_server) = font_server_res.0.lock() else {
         error!("Failed to lock FontServerResource in text_layout_system");
         return;
@@ -229,19 +230,22 @@ fn text_layout_system(
         error!("Failed to lock GlyphAtlasResource in text_layout_system");
         return;
     };
-    let Ok(mut swash_cache) = swash_cache_res.0.lock() else { // <-- Lock the Mutex in the resource
+    let Ok(mut swash_cache) = swash_cache_res.0.lock() else {
         error!("Failed to lock SwashCacheResource in text_layout_system");
         return;
     };
-
-    // Get mutable access to FontSystem
-    let font_system = &mut font_server.font_system;
+    // Lock Vulkan context - immutable borrow should be sufficient for add_glyph
+    let Ok(vk_context) = vk_context_res.0.lock() else {
+        error!("Failed to lock VulkanContextResource in text_layout_system");
+        return;
+    };
 
     for (entity, text, transform) in query.iter() {
         // --- Prepare cosmic-text Buffer ---
         // TODO: Reuse buffers per entity? Maybe store BufferOwned in a component?
         let metrics = Metrics::new(text.size, text.size * 1.2); // font_size, line_height
-        let mut buffer = cosmic_text::Buffer::new(font_system, metrics);
+        // Pass mutable borrow directly
+        let mut buffer = cosmic_text::Buffer::new(&mut font_server.font_system, metrics);
 
         // Set text content
         // TODO: Handle different text attributes (color, style) if needed later
@@ -262,37 +266,56 @@ fn text_layout_system(
             }
         };
         let attrs = Attrs::new().color(cosmic_color);
-        buffer.set_text(font_system, &text.content, &attrs, Shaping::Advanced);
+        buffer.set_text(&mut font_server.font_system, &text.content, &attrs, Shaping::Advanced);
 
         // Set size/wrapping
         if let Some(bounds) = text.bounds {
-            buffer.set_size(font_system, Some(bounds.x), Some(bounds.y));
+            buffer.set_size(&mut font_server.font_system, Some(bounds.x), Some(bounds.y));
             // TODO: Set wrap mode based on component?
-            buffer.set_wrap(font_system, Wrap::Word);
+            buffer.set_wrap(&mut font_server.font_system, Wrap::Word);
         } else {
-             buffer.set_size(font_system, None, None); // No wrapping
-             buffer.set_wrap(font_system, Wrap::None);
+             buffer.set_size(&mut font_server.font_system, None, None);
+             buffer.set_wrap(&mut font_server.font_system, Wrap::None);
         }
 
         // --- Shape the buffer ---
-        buffer.shape_until_scroll(font_system, true); // Shape all lines
+        buffer.shape_until_scroll(&mut font_server.font_system, true);
 
         // --- Process Layout Glyphs ---
         let mut positioned_glyphs = Vec::new();
 
         for run in buffer.layout_runs() {
             for layout_glyph in run.glyphs.iter() {
-                // --- Request Glyph from Atlas ---
-                // Generate a unique key for this glyph variant (font, id, size, variations)
-                // For now, use a simple placeholder key (glyph_id) - THIS IS INSUFFICIENT for real use
-                // Use glyph_id from cache_key - STILL INSUFFICIENT for variations/fonts
-                let glyph_key = layout_glyph.glyph_id as u64;
-                // TODO: Get actual bitmap data using SwashCache
-                // Attempt to add/get glyph from atlas
-                // This currently errors out because add_glyph is not implemented
-                match glyph_atlas.add_glyph(/* glyph_key, ... bitmap data, width, height ... */) {
+                // --- Use CacheKey::new constructor ---
+                // TODO: Determine correct flags based on run.attrs if needed (e.g., bold, italic, variations)
+                let flags = cosmic_text::CacheKeyFlags::empty();
+                // CacheKey::new returns the key and integer pixel offsets (which we ignore for now)
+                let (cache_key, _x_int_offset, _y_int_offset) = cosmic_text::CacheKey::new(
+                    layout_glyph.font_id,
+                    layout_glyph.glyph_id,
+                    layout_glyph.font_size,
+                    (layout_glyph.x, layout_glyph.y), // Pass the subpixel position tuple
+                    flags,
+                );
+
+                // --- Get swash Image using the constructed key ---
+                let Some(swash_image) = swash_cache.get_image(&mut font_server.font_system, cache_key) else {
+                    warn!("Failed to get swash image for glyph key: {:?}", cache_key);
+                    continue; // Skip this glyph if rasterization fails
+                };
+
+                // --- Request Glyph from Atlas (pass key AND swash_image) ---
+                match glyph_atlas.add_glyph(
+                    &vk_context, // Pass immutable borrow of locked context
+                    cache_key,   // Pass the key generated by CacheKey::new
+                    &swash_image,// Pass the image data
+                ) {
                     Ok(glyph_info_ref) => {
-                        let glyph_info = *glyph_info_ref; // Deref the reference
+                        // Note: add_glyph now returns a reference directly from the cache HashMap.
+                        // We need to copy the data out if we want to release the atlas lock sooner,
+                        // or keep the lock for the duration of vertex calculation.
+                        // Let's copy it for simplicity here.
+                        let glyph_info = *glyph_info_ref;
 
                         // --- Calculate Quad Vertices (Relative to Entity Origin) ---
                         // Physical glyph info from cosmic-text
@@ -315,9 +338,10 @@ fn text_layout_system(
                     }
                     Err(e) => {
                         // Log error for now, skip rendering this glyph
+                        // Use cache_key obtained from swash_image earlier
                         warn!(
-                            "Failed to add/get glyph (key: {}) from atlas: {}. Skipping glyph.",
-                            glyph_key, e
+                            "Failed to add/get glyph (key: {:?}) from atlas: {}. Skipping glyph.",
+                            cache_key, e
                         );
                         // In a real scenario, might need fallback or error handling
                     }

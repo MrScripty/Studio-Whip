@@ -1,12 +1,14 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use crate::PreparedDrawData;
+use crate::{PreparedDrawData, TextRenderCommandData};
 use bevy_log::info; // Added for logging
 
 pub fn record_command_buffers(
     platform: &mut VulkanContext,
-    prepared_draws: &[PreparedDrawData], // Use PreparedDrawData
-    pipeline_layout: vk::PipelineLayout, // Still need layout for binding
+    prepared_shape_draws: &[PreparedDrawData],
+    text_vertex_buffer: vk::Buffer,
+    glyph_atlas_descriptor_set: vk::DescriptorSet,
+    text_command: Option<&TextRenderCommandData>, // Pass optional text draw info
     extent: vk::Extent2D,
 ) {
     let device = platform.device.as_ref().expect("Device not available for command buffer recording");
@@ -97,35 +99,41 @@ pub fn record_command_buffers(
         device.cmd_set_viewport(command_buffer, 0, &[viewport]);
         device.cmd_set_scissor(command_buffer, 0, &[scissor]);
 
-        // --- Draw Prepared Data ---
-        for draw_data in prepared_draws {
-            // Visibility check is now done in rendering_system before creating PreparedDrawData
+        // --- Draw Shapes ---
+        if !prepared_shape_draws.is_empty() { // Check if there are shapes to draw
+            // Get shape pipeline layout from context
+            let shape_pipeline_layout = platform.shape_pipeline_layout.expect("Shape pipeline layout missing");
+            let mut current_pipeline = vk::Pipeline::null(); // Track bound pipeline
 
-            // Bind the pipeline for this draw
-            device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, draw_data.pipeline);
+            for draw_data in prepared_shape_draws { // Iterate using the correct variable name
+                // Bind pipeline only if it changed
+                if draw_data.pipeline != current_pipeline {
+                    device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, draw_data.pipeline);
+                    current_pipeline = draw_data.pipeline;
+                }
 
-            // Bind the per-entity descriptor set (contains projection and offset UBOs)
-            device.cmd_bind_descriptor_sets(
-                command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline_layout, // Use the common pipeline layout
-                0, // firstSet index
-                &[draw_data.descriptor_set], // The specific set for this entity
-                &[], // No dynamic offsets
-            );
+                // Bind shape descriptor set (Set 0)
+                device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    shape_pipeline_layout, // Use the fetched layout
+                    0, // firstSet index
+                    &[draw_data.descriptor_set], // The specific set for this entity
+                    &[], // No dynamic offsets
+                );
 
-            // Bind the vertex buffer to binding point 0
-            device.cmd_bind_vertex_buffers(command_buffer, 0, &[draw_data.vertex_buffer], &[0]); // offset 0
+                // Bind the vertex buffer to binding point 0
+                device.cmd_bind_vertex_buffers(command_buffer, 0, &[draw_data.vertex_buffer], &[0]); // offset 0
 
-            // --- Draw Call (Non-instanced for now) ---
-            // TODO: Add instancing support later by checking PreparedDrawData
-            device.cmd_draw(
-                command_buffer,
-                draw_data.vertex_count,    // vertexCount
-                1,                         // instanceCount (Hardcoded to 1 for now)
-                0,                         // firstVertex
-                0,                         // firstInstance
-            );
+                // --- Draw Call (Non-instanced for now) ---
+                device.cmd_draw(
+                    command_buffer,
+                    draw_data.vertex_count,    // vertexCount
+                    1,                         // instanceCount (Hardcoded to 1 for now)
+                    0,                         // firstVertex
+                    0,                         // firstInstance
+                );
+            }
         }
 
         // End the render pass

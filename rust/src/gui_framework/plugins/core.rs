@@ -4,7 +4,7 @@ use bevy_ecs::schedule::{SystemSet, common_conditions::{not, on_event}};
 use bevy_log::{info, error, warn};
 use bevy_window::{PrimaryWindow, Window};
 use bevy_winit::WinitWindows;
-use bevy_transform::prelude::{GlobalTransform, Transform};
+use bevy_transform::prelude::{GlobalTransform, Transform}; // Added GlobalTransform
 use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
 use ash::vk;
@@ -13,7 +13,7 @@ use bevy_math::{Vec2, IVec2};
 use cosmic_text::{Attrs, BufferLine, FontSystem, Metrics, Shaping, SwashCache, Wrap, Color as CosmicColor};
 
 // Import types from the crate root (lib.rs)
-use crate::{Vertex, RenderCommandData};
+use crate::{Vertex, RenderCommandData, TextVertex, TextRenderCommandData}; // Added TextVertex, TextRenderCommandData
 
 // Import types/functions from the gui_framework
 use crate::gui_framework::{
@@ -67,8 +67,8 @@ impl Plugin for GuiFrameworkCorePlugin {
         app
             // == Startup Systems ==
             .configure_sets(Startup,(
-                CoreSet::SetupVulkan, 
-                CoreSet::CreateRenderer, 
+                CoreSet::SetupVulkan,
+                CoreSet::CreateRenderer,
                 CoreSet::CreateGlyphAtlas,
                 CoreSet::CreateFontServer,
                 CoreSet::CreateSwashCache,
@@ -325,10 +325,23 @@ fn text_layout_system(
                         let h = text.size; // Approximate height using font size? Or get from rasterizer?
 
                         // Define quad vertices (adjust based on desired origin - bottom-left?)
-                        let top_left = Vec2::new(x, y - h);
+                        // Y-axis is typically down in font coordinates, but our world is Y-up.
+                        // Let's calculate relative to the text entity's origin (bottom-left).
+                        // Cosmic-text's line_y is the baseline. layout_glyph.y is distance *below* baseline.
+                        // So, baseline_world_y = transform.translation.y + run.line_y
+                        // glyph_top_world_y = baseline_world_y - (font_size - ascent) ? Need ascent.
+                        // glyph_bottom_world_y = baseline_world_y + descent ? Need descent.
+                        // Let's use a simpler approach for now: place relative to bottom-left origin.
+                        // Assume run.line_y is distance from bottom. layout_glyph.y is distance from baseline.
+                        // This needs careful coordinate checking.
+                        // For now: Use layout_glyph x, w. Use run.line_y and layout_glyph.y for y.
+                        // This assumes Y-down relative to entity origin, which needs correction in rendering.
+                        // Let's stick to the previous calculation and fix in rendering system vertex generation.
+                        let top_left = Vec2::new(x, y - h); // Relative Y-down
                         let top_right = Vec2::new(x + w, y - h);
                         let bottom_right = Vec2::new(x + w, y);
                         let bottom_left = Vec2::new(x, y);
+
 
                         positioned_glyphs.push(PositionedGlyph {
                             glyph_info,
@@ -368,8 +381,9 @@ fn rendering_system(
     // Resources
     glyph_atlas_res: Option<Res<GlyphAtlasResource>>, // Need atlas for texture binding
 ) {
+    // Ensure all required resources are available
     if let (Some(renderer_res), Some(vk_context_res), Some(atlas_res)) =
-        (renderer_res_opt, vk_context_res_opt, glyph_atlas_res) // Check atlas exists
+        (renderer_res_opt, vk_context_res_opt, glyph_atlas_res)
     {
         // --- Collect Shape Render Data ---
         let changed_shape_entities: HashSet<Entity> = shape_change_query.iter().collect();
@@ -390,21 +404,51 @@ fn rendering_system(
         }
         shape_render_commands.sort_unstable_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
 
-        // --- Collect Text Render Data (Placeholder) ---
-        // TODO:
-        // 1. Iterate through `text_query`.
-        // 2. For each entity, iterate through `TextLayoutOutput.glyphs`.
-        // 3. Combine `PositionedGlyph.vertices` with `GlobalTransform`.
-        // 4. Collect all text vertices into one or more dynamic Vulkan vertex buffers.
-        // 5. Get the GlyphAtlas texture/sampler handles from `atlas_res`.
-        // 6. Create a separate `TextRenderCommand` struct containing vertex buffer info,
-        //    atlas texture/sampler handles, and potentially a text-specific pipeline.
-        let text_render_commands: Vec<()> = Vec::new(); // Placeholder
+        // --- Collect Text Render Data ---
+        let mut all_text_vertices: Vec<TextVertex> = Vec::new();
+        for (_entity, global_transform, text_layout, visibility) in text_query.iter() {
+            if visibility.is_visible() {
+                let transform_matrix = global_transform.compute_matrix();
+                for positioned_glyph in &text_layout.glyphs {
+                    // Combine relative glyph vertices with entity transform
+                    // Vertices order: top-left, top-right, bottom-right, bottom-left (relative Y-down)
+                    let world_pos = |rel_pos: Vec2| {
+                        // Apply transform. Note: rel_pos.y is negative for top vertices.
+                        transform_matrix.transform_point3(rel_pos.extend(0.0)).truncate()
+                    };
+
+                    let tl_world = world_pos(positioned_glyph.vertices[0]);
+                    let tr_world = world_pos(positioned_glyph.vertices[1]);
+                    let br_world = world_pos(positioned_glyph.vertices[2]);
+                    let bl_world = world_pos(positioned_glyph.vertices[3]);
+
+                    // Get UVs from GlyphInfo
+                    let uv_min = positioned_glyph.glyph_info.uv_min;
+                    let uv_max = positioned_glyph.glyph_info.uv_max;
+
+                    // Create vertices for two triangles (quad)
+                    // Triangle 1: top-left, bottom-left, bottom-right
+                    all_text_vertices.push(TextVertex { position: tl_world.into(), uv: [uv_min[0], uv_min[1]] }); // Top-left UV
+                    all_text_vertices.push(TextVertex { position: bl_world.into(), uv: [uv_min[0], uv_max[1]] }); // Bottom-left UV
+                    all_text_vertices.push(TextVertex { position: br_world.into(), uv: [uv_max[0], uv_max[1]] }); // Bottom-right UV
+
+                    // Triangle 2: top-left, bottom-right, top-right
+                    all_text_vertices.push(TextVertex { position: tl_world.into(), uv: [uv_min[0], uv_min[1]] }); // Top-left UV
+                    all_text_vertices.push(TextVertex { position: br_world.into(), uv: [uv_max[0], uv_max[1]] }); // Bottom-right UV
+                    all_text_vertices.push(TextVertex { position: tr_world.into(), uv: [uv_max[0], uv_min[1]] }); // Top-right UV
+                }
+            }
+        }
 
         // --- Call Custom Renderer ---
         if let (Ok(mut renderer_guard), Ok(mut vk_ctx_guard)) = (renderer_res.0.lock(), vk_context_res.0.lock()) {
-            // TODO: Modify Renderer::render to accept both shape and text commands
-            renderer_guard.render(&mut vk_ctx_guard, &shape_render_commands /*, &text_render_commands */);
+            // Pass shape commands, collected text vertices, and atlas resource
+            renderer_guard.render(
+                &mut vk_ctx_guard,
+                &shape_render_commands,
+                &all_text_vertices,
+                &atlas_res, // Pass the GlyphAtlasResource
+            );
         } else { warn!("Could not lock resources for rendering trigger (Core Plugin)."); }
     }
 }

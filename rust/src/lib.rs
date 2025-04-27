@@ -62,6 +62,15 @@ pub struct RenderCommandData {
     // Add instancing info later if needed
 }
 
+/// Holds the prepared Vulkan handles and data needed for drawing text.
+/// This might represent a batch of text from one or more entities.
+#[derive(Debug, Clone)]
+pub struct TextRenderCommandData {
+    pub vertex_buffer_offset: u32, // Starting index in the Renderer's dynamic text vertex buffer
+    pub vertex_count: u32,         // Number of vertices for this batch
+    // Pipeline and descriptor set are likely bound once per text rendering phase
+}
+
 
 // Specific exports might be needed later, but often importing
 // directly like `use rusty_whip::gui_framework::components::Visibility`

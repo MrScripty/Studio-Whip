@@ -9,6 +9,9 @@ use crate::gui_framework::rendering::resize_handler::ResizeHandler;
 use bevy_math::Mat4;
 use bevy_log::{info, warn, error};
 use crate::RenderCommandData; // from lib.rs
+use crate::{TextVertex, TextRenderCommandData}; // Added TextVertex and TextRenderCommandData
+use vk_mem::{Allocation, Alloc}; // Added for text vertex buffer allocation
+use crate::GlyphAtlasResource; // Added for render signature
 
 pub struct Renderer {
     buffer_manager: BufferManager,
@@ -16,6 +19,12 @@ pub struct Renderer {
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout, // For shapes
     text_descriptor_set_layout: vk::DescriptorSetLayout,
+
+    // --- Text Rendering Resources ---
+    text_vertex_buffer: vk::Buffer,
+    text_vertex_allocation: Option<Allocation>,
+    text_vertex_buffer_capacity: u32, // Max number of TextVertex this buffer can hold
+    glyph_atlas_descriptor_set: vk::DescriptorSet, // Single set pointing to the atlas texture/sampler
 }
 
 impl Renderer {
@@ -56,7 +65,7 @@ impl Renderer {
         let initial_logical_height = extent.height as f32;
         unsafe {
             let proj = Mat4::orthographic_rh(0.0, initial_logical_width, 0.0, initial_logical_height, -1.0, 1.0);
-            // We are flipping Y beacuse Bevy coord space uses +Y and Vulkan uses -Y 
+            // We are flipping Y beacuse Bevy coord space uses +Y and Vulkan uses -Y
             let flip_y = Mat4::from_scale(bevy_math::Vec3::new(1.0, -1.0, 1.0));
             let proj_matrix = flip_y * proj;
 
@@ -113,12 +122,57 @@ impl Renderer {
         info!("[Renderer::new] Sync objects created");
         info!("[Renderer::new] Finished");
 
-        Self {
+        let mut renderer = Self {
             buffer_manager: buffer_mgr,
             descriptor_pool, // Store for cleanup
             descriptor_set_layout, // Store shape layout for cleanup
             text_descriptor_set_layout, // Store text layout for cleanup
-        }
+
+            // --- Initialize Text Rendering Resources ---
+            text_vertex_buffer: vk::Buffer::null(), // Placeholder, will be created below
+            text_vertex_allocation: None,
+            text_vertex_buffer_capacity: 0, // Placeholder
+            glyph_atlas_descriptor_set: vk::DescriptorSet::null(), // Placeholder
+        };
+
+        // --- Create Initial Dynamic Text Vertex Buffer ---
+        // Start with a reasonable capacity, e.g., 1024 vertices
+        let initial_text_capacity = 1024 * 6; // Enough for ~1024 glyphs (6 vertices per quad)
+        let buffer_size = (std::mem::size_of::<TextVertex>() * initial_text_capacity as usize) as vk::DeviceSize;
+        let (buffer, allocation) = unsafe {
+            let buffer_info = vk::BufferCreateInfo {
+                s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                size: buffer_size,
+                usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+            let allocation_info = vk_mem::AllocationCreateInfo {
+                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED,
+                usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                ..Default::default()
+            };
+            let allocator = platform.allocator.as_ref().unwrap();
+            allocator.create_buffer(&buffer_info, &allocation_info)
+                     .expect("Failed to create initial text vertex buffer")
+        };
+        info!("[Renderer::new] Initial text vertex buffer created (Capacity: {} vertices, Size: {} bytes)", initial_text_capacity, buffer_size);
+        renderer.text_vertex_buffer = buffer;
+        renderer.text_vertex_allocation = Some(allocation);
+        renderer.text_vertex_buffer_capacity = initial_text_capacity;
+
+
+        // --- Allocate Glyph Atlas Descriptor Set ---
+        // This set points to the atlas texture/sampler. It's allocated once here.
+        // We need the GlyphAtlasResource to get the image view and sampler handles.
+        // This requires access to the resource system, which isn't ideal in Renderer::new.
+        // Alternative: Allocate it lazily in the first render call or pass GlyphAtlasResource here.
+        // Let's allocate it here, assuming GlyphAtlasResource is available *before* RendererResource.
+        // This implies create_glyph_atlas_system runs before create_renderer_system.
+        // *** Correction: Renderer is created *after* Atlas. We need to get the resource from the world or pass it. ***
+        // *** Simplification: Let's allocate it in the first `render` call if it's null. ***
+
+        renderer // Return the modified renderer instance
     }
 
     // Accept &mut VulkanContext
@@ -140,17 +194,18 @@ impl Renderer {
         // If swapchain image count changes, this needs more handling.
     }
 
-    // --- Modified render signature ---
-    // Accept &mut VulkanContext and render commands
-    pub fn render(&mut self, platform: &mut VulkanContext, render_commands: &[RenderCommandData]) {
+    // Accept &mut VulkanContext and both shape and text render commands
+    pub fn render(
+        &mut self,
+        platform: &mut VulkanContext,
+        shape_commands: &[RenderCommandData],
+        text_vertices: &[TextVertex], // Pass collected vertices directly
+        glyph_atlas_resource: &GlyphAtlasResource, // Pass resource to access atlas handles
+    ) {
         // --- Clone handles needed *after* the mutable borrow ---
         // Clone the ash::Device handle (cheap)
         let device = platform.device.as_ref().unwrap().clone();
         // Clone other handles (cheap) - Add check for queue
-        let Some(queue) = platform.queue else {
-            warn!("[Renderer::render] Queue is None, likely during cleanup. Skipping frame.");
-            return;
-        };
         let Some(queue) = platform.queue else {
             warn!("[Renderer::render] Queue is None, likely during cleanup. Skipping frame.");
             return;
@@ -187,14 +242,108 @@ impl Renderer {
         unsafe { device.reset_fences(&[fence]) }.unwrap();
 
 
-        // --- Prepare Buffers/Descriptors (Call BufferManager) ---
-        // Now it's safe to update descriptor sets as the GPU is done with the previous frame
-        // This call takes the mutable borrow of platform
-        let prepared_draw_data = self.buffer_manager.prepare_frame_resources(
+        // --- Prepare Shape Buffers/Descriptors (Call BufferManager) ---
+        let prepared_shape_draws = self.buffer_manager.prepare_frame_resources(
             platform, // Pass mutable platform here
-            render_commands, // Pass the commands from rendering_system
+            shape_commands, // Pass the shape commands
         );
         // Mutable borrow of platform for buffer manager ends here
+
+        // --- Prepare Text Vertex Buffer ---
+        let num_text_vertices = text_vertices.len() as u32;
+        if num_text_vertices > 0 {
+            // Check if buffer needs resizing
+            if num_text_vertices > self.text_vertex_buffer_capacity {
+                let new_capacity = (num_text_vertices * 2).max(self.text_vertex_buffer_capacity * 2); // Double capacity or more if needed
+                info!("[Renderer::render] Resizing text vertex buffer from {} to {} vertices", self.text_vertex_buffer_capacity, new_capacity);
+                let new_size = (std::mem::size_of::<TextVertex>() * new_capacity as usize) as vk::DeviceSize;
+                let allocator = platform.allocator.as_ref().unwrap();
+                // Destroy old buffer/allocation
+                // Take the allocation out of the Option before destroying
+                if let Some(mut alloc) = self.text_vertex_allocation.take() {
+                    unsafe { allocator.destroy_buffer(self.text_vertex_buffer, &mut alloc); }
+                }
+                // Create new buffer/allocation
+                let (new_buffer, new_alloc) = unsafe {
+                    let buffer_info = vk::BufferCreateInfo {
+                        s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                        size: new_size,
+                        usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+                        sharing_mode: vk::SharingMode::EXCLUSIVE,
+                        ..Default::default()
+                    };
+                    let allocation_info = vk_mem::AllocationCreateInfo {
+                        flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED,
+                        usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                        ..Default::default()
+                    };
+                    allocator.create_buffer(&buffer_info, &allocation_info)
+                             .expect("Failed to resize text vertex buffer")
+                };
+                self.text_vertex_buffer = new_buffer;
+                self.text_vertex_allocation = Some(new_alloc);
+                self.text_vertex_buffer_capacity = new_capacity;
+            }
+
+            // Copy data to text vertex buffer, ensuring allocation exists
+            if let Some(alloc) = &self.text_vertex_allocation {
+                unsafe {
+                    let allocator = platform.allocator.as_ref().unwrap();
+                    let info = allocator.get_allocation_info(alloc); // Use the allocation from Option
+                    if !info.mapped_data.is_null() {
+                        let data_ptr = info.mapped_data.cast::<TextVertex>();
+                        data_ptr.copy_from_nonoverlapping(text_vertices.as_ptr(), num_text_vertices as usize);
+                        // Optional flush if not HOST_COHERENT (safer to include)
+                        // allocator.flush_allocation(alloc, 0, vk::WHOLE_SIZE).expect("Failed to flush text vertex buffer");
+                    } else {
+                        error!("[Renderer::render] Text vertex buffer allocation not mapped during update!");
+                    }
+                }
+            } else {
+                 error!("[Renderer::render] Text vertex buffer allocation is None during update!");
+            }
+        }
+
+        // --- Ensure Glyph Atlas Descriptor Set Exists ---
+        if self.glyph_atlas_descriptor_set == vk::DescriptorSet::null() {
+            info!("[Renderer::render] Allocating glyph atlas descriptor set.");
+            let Ok(atlas_guard) = glyph_atlas_resource.0.lock() else {
+                error!("[Renderer::render] Failed to lock GlyphAtlasResource to get handles for descriptor set allocation.");
+                return; // Cannot proceed without atlas handles
+            };
+            let set_layouts = [self.text_descriptor_set_layout];
+            let alloc_info = vk::DescriptorSetAllocateInfo {
+                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+                descriptor_pool: self.descriptor_pool,
+                descriptor_set_count: 1,
+                p_set_layouts: set_layouts.as_ptr(),
+                ..Default::default()
+            };
+            self.glyph_atlas_descriptor_set = unsafe {
+                device.allocate_descriptor_sets(&alloc_info)
+                    .expect("Failed to allocate glyph atlas descriptor set")
+                    .remove(0)
+            };
+
+            // Update the descriptor set to point to the atlas image view and sampler
+            let image_info = vk::DescriptorImageInfo {
+                sampler: atlas_guard.sampler,
+                image_view: atlas_guard.image_view,
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // Layout should be this after upload
+            };
+            let write_set = vk::WriteDescriptorSet {
+                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
+                dst_set: self.glyph_atlas_descriptor_set,
+                dst_binding: 0, // Binding 0 in text_descriptor_set_layout
+                dst_array_element: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                p_image_info: &image_info,
+                ..Default::default()
+            };
+            unsafe { device.update_descriptor_sets(&[write_set], &[]); }
+            info!("[Renderer::render] Glyph atlas descriptor set allocated and updated.");
+        }
 
 
         // --- Acquire Swapchain Image ---
@@ -226,13 +375,22 @@ impl Renderer {
         // --- Re-Record Command Buffer for the acquired image index ---
         // This now happens *after* acquiring the image index and *after* waiting on the fence.
         // It also resets the command pool/buffer internally.
+        let text_command = if num_text_vertices > 0 {
+            Some(TextRenderCommandData {
+                vertex_buffer_offset: 0, // Start from the beginning of the buffer for now
+                vertex_count: num_text_vertices,
+            })
+        } else {
+            None
+        };
+
         record_command_buffers(
             platform, // Pass mutable platform here again
-            &prepared_draw_data, // Pass the prepared data from buffer manager
-            // Command buffers need the specific layout used for binding.
-            // Since record_command_buffers currently only handles shapes, use shape layout.
-            // This will need modification when text rendering is added to command_buffers.rs.
-            platform.shape_pipeline_layout.expect("Shape pipeline layout missing for command recording"),
+            &prepared_shape_draws, // Pass the prepared shape data
+            // Pass text rendering info
+            self.text_vertex_buffer,
+            self.glyph_atlas_descriptor_set,
+            text_command.as_ref(), // Pass Option<&TextRenderCommandData>
             platform.current_swap_extent,
         );
         // Mutable borrow for command buffer recording ends here.
@@ -316,6 +474,17 @@ impl Renderer {
             platform, // Pass &mut VulkanContext
         );
         info!("[Renderer::cleanup] BufferManager cleanup finished.");
+
+        // Cleanup text vertex buffer
+        if let Some(mut alloc) = self.text_vertex_allocation.take() { // Take from Option
+            if self.text_vertex_buffer != vk::Buffer::null() {
+                 unsafe {
+                    let allocator = platform.allocator.as_ref().expect("Allocator missing for text buffer cleanup");
+                    allocator.destroy_buffer(self.text_vertex_buffer, &mut alloc); // Pass the taken &mut alloc
+                    info!("[Renderer::cleanup] Text vertex buffer destroyed.");
+                 }
+            }
+        }
 
         // Cleanup layouts stored in Renderer/Platform
         unsafe {

@@ -92,9 +92,10 @@ impl BufferManager {
         let device = platform.device.as_ref().expect("Device missing in prepare_frame_resources");
         let allocator = platform.allocator.as_ref().expect("Allocator missing in prepare_frame_resources");
         let render_pass = platform.render_pass.expect("Render pass missing in prepare_frame_resources");
-        let pipeline_layout = platform.pipeline_layout.expect("Pipeline layout missing in prepare_frame_resources");
-    
-        let mut prepared_draws = Vec::with_capacity(render_commands.len());
+        // BufferManager only deals with shapes for now, so get the shape layout
+        let pipeline_layout = platform.shape_pipeline_layout.expect("Shape pipeline layout missing in prepare_frame_resources");
+
+        let mut prepared_draws: Vec<PreparedDrawData> = Vec::with_capacity(render_commands.len());
     
         // --- Pre-calculate Global Projection Info ---
         let proj_buffer_info_global = vk::DescriptorBufferInfo {

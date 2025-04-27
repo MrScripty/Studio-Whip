@@ -12,9 +12,10 @@ use crate::RenderCommandData; // from lib.rs
 
 pub struct Renderer {
     buffer_manager: BufferManager,
-    // Store pool and layout needed for cleanup/buffer manager
+    // Store pool and layouts needed for cleanup
     descriptor_pool: vk::DescriptorPool,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_set_layout: vk::DescriptorSetLayout, // For shapes
+    text_descriptor_set_layout: vk::DescriptorSetLayout,
 }
 
 impl Renderer {
@@ -27,22 +28,28 @@ impl Renderer {
         let pipeline_mgr = PipelineManager::new(platform);
         info!("[Renderer::new] PipelineManager created (temporarily)");
 
-        // Store layout in VulkanContext for BufferManager access
-        platform.pipeline_layout = Some(pipeline_mgr.pipeline_layout);
-        info!("[Renderer::new] PipelineLayout stored in VulkanContext");
+        // Store layouts in VulkanContext for BufferManager access
+        platform.shape_pipeline_layout = Some(pipeline_mgr.shape_pipeline_layout);
+        platform.text_pipeline_layout = Some(pipeline_mgr.text_pipeline_layout);
+        info!("[Renderer::new] Shape and Text PipelineLayouts stored in VulkanContext");
 
         let buffer_mgr = BufferManager::new(
             platform, // Pass &mut VulkanContext
-            pipeline_mgr.pipeline_layout,
-            pipeline_mgr.descriptor_set_layout,
+            // Pass the shape-specific layouts needed by BufferManager for shapes
+            pipeline_mgr.shape_pipeline_layout,
+            pipeline_mgr.shape_descriptor_set_layout,
             pipeline_mgr.descriptor_pool,
         );
         info!("[Renderer::new] BufferManager created");
 
         // Store pool and set_layout in Renderer for cleanup
         let descriptor_pool = pipeline_mgr.descriptor_pool;
-        let descriptor_set_layout = pipeline_mgr.descriptor_set_layout;
-        // pipeline_mgr goes out of scope here, its layout is moved to platform
+        // Store the shape layout, as BufferManager uses it
+        let descriptor_set_layout = pipeline_mgr.shape_descriptor_set_layout;
+        // Also store the text layout for potential future cleanup needs? Or let VulkanContext own it?
+        // Let's store both shape and text layouts in Renderer for cleanup for now.
+        let text_descriptor_set_layout = pipeline_mgr.text_descriptor_set_layout;
+        // pipeline_mgr goes out of scope here, its layouts are moved to platform/Renderer
 
         // Update global projection UBO (BufferManager owns the buffer/allocation)
         let initial_logical_width = extent.width as f32; // Use the extent passed to Renderer::new
@@ -109,7 +116,8 @@ impl Renderer {
         Self {
             buffer_manager: buffer_mgr,
             descriptor_pool, // Store for cleanup
-            descriptor_set_layout, // Store for cleanup
+            descriptor_set_layout, // Store shape layout for cleanup
+            text_descriptor_set_layout, // Store text layout for cleanup
         }
     }
 
@@ -221,7 +229,10 @@ impl Renderer {
         record_command_buffers(
             platform, // Pass mutable platform here again
             &prepared_draw_data, // Pass the prepared data from buffer manager
-            platform.pipeline_layout.expect("Pipeline layout missing for command recording"), // Get layout from platform
+            // Command buffers need the specific layout used for binding.
+            // Since record_command_buffers currently only handles shapes, use shape layout.
+            // This will need modification when text rendering is added to command_buffers.rs.
+            platform.shape_pipeline_layout.expect("Shape pipeline layout missing for command recording"),
             platform.current_swap_extent,
         );
         // Mutable borrow for command buffer recording ends here.
@@ -306,16 +317,22 @@ impl Renderer {
         );
         info!("[Renderer::cleanup] BufferManager cleanup finished.");
 
-        // Cleanup layout and pool stored in Renderer/Platform
+        // Cleanup layouts stored in Renderer/Platform
         unsafe {
-            if let Some(layout) = platform.pipeline_layout.take() {
+            // Destroy layouts stored in VulkanContext
+            if let Some(layout) = platform.shape_pipeline_layout.take() {
                  device.destroy_pipeline_layout(layout, None);
-                 info!("[Renderer::cleanup] Pipeline layout destroyed");
+                 info!("[Renderer::cleanup] Shape pipeline layout destroyed");
             }
-            // Use pool/set_layout stored in self
+             if let Some(layout) = platform.text_pipeline_layout.take() {
+                 device.destroy_pipeline_layout(layout, None);
+                 info!("[Renderer::cleanup] Text pipeline layout destroyed");
+            }
+            // Use pool/set_layouts stored in self
             device.destroy_descriptor_pool(self.descriptor_pool, None);
-            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            info!("[Renderer::cleanup] Descriptor pool and set layout destroyed");
+            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None); // Shape layout
+            device.destroy_descriptor_set_layout(self.text_descriptor_set_layout, None); // Text layout
+            info!("[Renderer::cleanup] Descriptor pool and set layouts destroyed");
         }
 
         // Cleanup swapchain resources (Framebuffers, Views, Swapchain, RenderPass)

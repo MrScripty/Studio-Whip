@@ -7,10 +7,8 @@ use std::sync::{Arc, Mutex};
 use vk_mem::{Alloc, AllocationCreateInfo, Allocation};
 use bevy_reflect::{Reflect, FromReflect};
 use cosmic_text::{CacheKey, FontSystem, SwashCache, Placement};
-use rectangle_pack::{
-    pack_rects, volume_heuristic, GroupedRectsToPlace, PackedLocation, RectToInsert, TargetBin,
-    RectanglePackError,
-};
+use rectangle_pack::{RectToInsert, GroupedRectsToPlace, TargetBin, pack_rects, volume_heuristic, contains_smallest_box, RectanglePackError, PackedLocation};
+use std::collections::BTreeMap;
 use swash::{
     scale::{Render, ScaleContext, Source, StrikeWith},
     zeno::Format,
@@ -33,16 +31,13 @@ pub struct GlyphInfo {
 // Manages the Vulkan texture atlas for glyphs
 pub struct GlyphAtlas {
     pub image: vk::Image,
-    pub allocation: Option<Allocation>, 
+    pub allocation: Option<Allocation>,
     pub image_view: vk::ImageView,
     pub sampler: vk::Sampler,
     pub extent: vk::Extent2D,
     pub format: vk::Format,
-    current_y: u32,
-    current_line_x: u32,
-    current_line_max_h: u32, // Max height encountered on the current line
     padding: u32, // Padding between glyphs
-    glyph_cache: HashMap<CacheKey, GlyphInfo>, // Maps glyph key (e.g., cosmic_text GlyphId) to its info
+    glyph_cache: HashMap<CacheKey, GlyphInfo>, // Maps glyph key to its info
     scale_context: ScaleContext,
 }
 
@@ -131,14 +126,9 @@ impl GlyphAtlas {
         }.map_err(|e| format!("Failed to create glyph atlas sampler: {:?}", e))?;
         info!("[GlyphAtlas::new] Vulkan sampler created.");
 
-        // Initialize manual packing state
-        let current_y = 0;
-        let current_line_x = 0;
-        let current_line_max_h = 0;
-        let padding = 1; // Add 1 pixel padding
-
         // Initialize swash scale context
         let scale_context = ScaleContext::new();
+        let padding = 1; // Define padding value needed for struct init
 
         Ok(Self {
             image,
@@ -147,10 +137,7 @@ impl GlyphAtlas {
             sampler,
             extent: initial_extent,
             format,
-            current_y,
-            current_line_x,
-            current_line_max_h,
-            padding,
+            padding: padding,
             glyph_cache: HashMap::new(),
             scale_context,
         })
@@ -193,78 +180,84 @@ impl GlyphAtlas {
         }
 
         let bitmap_data = &swash_image.data; // Get data from swash_image
+        
+        // --- 3. Attempt to Pack using rectangle-pack ---
+        // RectToInsert takes dimensions (w, h, depth=1 for 2D)
+        let rect_data = RectToInsert::new(width, height, 1);
+        let mut rects_to_place: GroupedRectsToPlace<CacheKey, u32> = GroupedRectsToPlace::new();
+        // Associate the CacheKey ID when pushing the rect data
+        rects_to_place.push_rect(cache_key, Some(vec![0]), rect_data);
 
-        // --- 3. Attempt to Pack (Manual Line Packing) ---
-        let mut pixel_x: u32;
-        let mut pixel_y: u32;
+        // Define the target bin (our single atlas texture) using BTreeMap
+        let mut target_bins = BTreeMap::new();
+        // TargetBin::new takes u32 dimensions
+        target_bins.insert(0, TargetBin::new(self.extent.width, self.extent.height, 1)); // Bin ID 0, depth 1
 
-        // Check if glyph fits on the current line
-        if self.current_line_x + width + self.padding <= self.extent.width {
-            // Fits on current line
-            pixel_x = self.current_line_x + self.padding;
-            pixel_y = self.current_y;
-            self.current_line_x += width + self.padding;
-            self.current_line_max_h = self.current_line_max_h.max(height);
-        } else {
-            // Move to the next line
-            self.current_y += self.current_line_max_h + self.padding;
-            self.current_line_x = 0;
-            self.current_line_max_h = 0;
+        // Call pack_rects - requires BTreeMap, heuristic, and custom data (&() is fine if unused)
+        match pack_rects(&rects_to_place, &mut target_bins, &volume_heuristic, &contains_smallest_box) { // Use contains_smallest_box
+            Ok(pack_result) => {
+                // packed_locations maps RectId (CacheKey) -> (BinId, PackedLocation)
+                if let Some((_bin_id, packed_location)) = pack_result.packed_locations().get(&cache_key) {
+                    // Successfully packed! Get coordinates from the PackedLocation struct.
+                    // Successfully packed! Get coordinates directly from PackedLocation methods.
+                    let pixel_x = packed_location.x() as u32;
+                    let pixel_y = packed_location.y() as u32;
 
-            // Check if glyph fits on the new line (horizontally and vertically)
-            if self.current_line_x + width + self.padding <= self.extent.width &&
-               self.current_y + height <= self.extent.height {
-                // Fits on new line
-                pixel_x = self.current_line_x + self.padding;
-                pixel_y = self.current_y;
-                self.current_line_x += width + self.padding;
-                self.current_line_max_h = self.current_line_max_h.max(height);
-            } else {
-                // Doesn't fit even on a new line -> Atlas full
+                    // --- 4. Upload Bitmap ---
+                    self.upload_glyph_bitmap(
+                        vk_context,
+                        pixel_x,
+                        pixel_y,
+                        width,
+                        height,
+                        &bitmap_data,
+                    )?; // Propagate upload errors
+
+                    // --- 5. Calculate UVs ---
+                    let atlas_width = self.extent.width as f32;
+                    let atlas_height = self.extent.height as f32;
+                    let uv_min = [
+                        pixel_x as f32 / atlas_width,
+                        pixel_y as f32 / atlas_height,
+                    ];
+                    let uv_max = [
+                        (pixel_x + width) as f32 / atlas_width,
+                        (pixel_y + height) as f32 / atlas_height,
+                    ];
+
+                    // --- 6. Store GlyphInfo in Cache ---
+                    let glyph_info = GlyphInfo {
+                        pixel_x,
+                        pixel_y,
+                        pixel_width: width,
+                        pixel_height: height,
+                        uv_min,
+                        uv_max,
+                    };
+
+                    // Use entry API to insert and return reference
+                    let inserted_info = self.glyph_cache.entry(cache_key).or_insert(glyph_info);
+                    Ok(inserted_info) // Return the reference to the newly inserted info
+
+                } else {
+                    // This case *shouldn't* happen if pack_rects returned Ok, but handle defensively.
+                    error!("[GlyphAtlas::add_glyph] Packing reported success, but location not found for key: {:?}", cache_key);
+                    Err("Internal packing error: location not found after successful pack.".to_string())
+                }
+            }
+            Err(RectanglePackError::NotEnoughBinSpace) => {
+                // Atlas is full
                 error!("[GlyphAtlas::add_glyph] Atlas full! Cannot pack glyph ({}x{}). Key: {:?}", width, height, cache_key);
-                return Err("Glyph atlas is full".to_string());
+                Err("Glyph atlas is full".to_string())
                 // TODO: Implement atlas resizing or eviction strategy
             }
+            Err(e) => {
+                 // Other packing error
+                error!("[GlyphAtlas::add_glyph] Failed to pack glyph ({}x{}). Key: {:?}. Error: {:?}", width, height, cache_key, e);
+                Err(format!("Glyph packing failed: {:?}", e))
+            }
         }
-
-        // --- 4. Upload Bitmap ---
-        self.upload_glyph_bitmap(
-            vk_context,
-            pixel_x,
-            pixel_y,
-            width,
-            height,
-            &bitmap_data,
-        )?; // Propagate upload errors
-
-        // --- 5. Calculate UVs ---
-        let atlas_width = self.extent.width as f32;
-        let atlas_height = self.extent.height as f32;
-        let uv_min = [
-            pixel_x as f32 / atlas_width,
-            pixel_y as f32 / atlas_height,
-        ];
-        let uv_max = [
-            (pixel_x + width) as f32 / atlas_width,
-            (pixel_y + height) as f32 / atlas_height,
-        ];
-
-        // --- 6. Store GlyphInfo in Cache ---
-        let glyph_info = GlyphInfo {
-            pixel_x,
-            pixel_y,
-            pixel_width: width,
-            pixel_height: height,
-            uv_min,
-            uv_max,
-        };
-
-        // Use entry API to insert and return reference
-        let inserted_info = self.glyph_cache.entry(cache_key).or_insert(glyph_info);
-        // We know it was just inserted, so unwrap is safe - THIS IS THE SUCCESS RETURN
-        Ok(inserted_info)
     }
-
 
     // Helper function to upload glyph data using a staging buffer
     fn upload_glyph_bitmap(

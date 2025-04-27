@@ -12,6 +12,14 @@ pub struct Vertex {
     pub position: [f32; 2],
 }
 
+// Vertex format specifically for text rendering
+#[repr(C)]
+#[derive(Debug, Clone, Copy)] // No need for Reflect for now
+pub struct TextVertex {
+    pub position: [f32; 2],
+    pub uv: [f32; 2],
+}
+
 // --- Resources needed across framework/app ---
 // Resource holding the Arc<Mutex<VulkanContext>>
 #[derive(bevy_ecs::prelude::Resource, Clone)]

@@ -133,7 +133,7 @@ impl GlyphAtlas {
         let mut target_bins = BTreeMap::new();
         target_bins.insert(0, TargetBin::new(initial_extent.width, initial_extent.height, 1)); // Bin ID 0
         
-        let padding = 3; // Define padding value needed for struct init
+        let padding = 1; // Define padding value needed for struct init
 
         Ok(Self {
             image,

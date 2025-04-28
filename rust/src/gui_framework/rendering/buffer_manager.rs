@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use bevy_ecs::prelude::Entity;
 use crate::Vertex;
 use crate::PreparedDrawData;
+use crate::GlobalProjectionUboResource;
 
 struct EntityRenderResources {
     vertex_buffer: vk::Buffer,
@@ -27,8 +28,6 @@ type ShaderCacheKey = String;
 
 
 pub struct BufferManager {
-    pub uniform_buffer: vk::Buffer,
-    pub uniform_allocation: vk_mem::Allocation,
     entity_cache: HashMap<Entity, EntityRenderResources>,
     pipeline_cache: HashMap<PipelineCacheKey, vk::Pipeline>,
     shader_cache: HashMap<ShaderCacheKey, vk::ShaderModule>,
@@ -39,47 +38,26 @@ pub struct BufferManager {
 impl BufferManager {
     pub fn new(
         platform: &mut VulkanContext,
-        _pipeline_layout: vk::PipelineLayout,
-        descriptor_set_layout: vk::DescriptorSetLayout,
-        descriptor_pool: vk::DescriptorPool,
+        descriptor_set_layout: vk::DescriptorSetLayout, // Layout for per-entity sets
+        descriptor_pool: vk::DescriptorPool, // Pool for allocating per-entity sets
     ) -> Self {
-        let allocator = platform.allocator.as_ref().unwrap();
-        // --- Uniform Buffer Setup ---
-        let (uniform_buffer, uniform_allocation) = {
-            let buffer_info = vk::BufferCreateInfo {
-                s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                size: std::mem::size_of::<Mat4>() as u64,
-                usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-            let allocation_info = vk_mem::AllocationCreateInfo {
-                usage: vk_mem::MemoryUsage::AutoPreferDevice,
-                flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
-                ..Default::default()
-            };
-            // Initial write is now done in Renderer::new after this BufferManager is created
-            unsafe {
-                allocator.create_buffer(&buffer_info, &allocation_info)
-                    .expect("Uniform buffer creation failed")
-            }
-        };
-        info!("[BufferManager::new] Initial uniform buffer created (data written in Renderer::new)");
-
         // --- Initialize Caches ---
         let entity_cache = HashMap::new();
         let pipeline_cache = HashMap::new();
         let shader_cache = HashMap::new();
         info!("[BufferManager::new] Caches initialized (entity, pipeline, shader)");
 
+        // Note: GlobalProjectionUboResource is created and managed elsewhere (e.g., core plugin startup)
+        // BufferManager will expect it to exist when prepare_frame_resources is called.
+
         Self {
-            uniform_buffer,
-            uniform_allocation,
+            // Removed: uniform_buffer,
+            // Removed: uniform_allocation,
             entity_cache,
             pipeline_cache,
             shader_cache,
-            descriptor_set_layout,
-            descriptor_pool,
+            descriptor_set_layout, // Store layout for per-entity sets
+            descriptor_pool,       // Store pool for per-entity sets
         }
     }
 
@@ -88,6 +66,7 @@ impl BufferManager {
         &mut self,
         platform: &mut VulkanContext,
         render_commands: &[crate::RenderCommandData], // Includes vertices_changed flag
+        global_ubo_res: &GlobalProjectionUboResource,
     ) -> Vec<PreparedDrawData> {
         let device = platform.device.as_ref().expect("Device missing in prepare_frame_resources");
         let allocator = platform.allocator.as_ref().expect("Allocator missing in prepare_frame_resources");
@@ -96,13 +75,6 @@ impl BufferManager {
         let pipeline_layout = platform.shape_pipeline_layout.expect("Shape pipeline layout missing in prepare_frame_resources");
 
         let mut prepared_draws: Vec<PreparedDrawData> = Vec::with_capacity(render_commands.len());
-    
-        // --- Pre-calculate Global Projection Info ---
-        let proj_buffer_info_global = vk::DescriptorBufferInfo {
-            buffer: self.uniform_buffer,
-            offset: 0,
-            range: std::mem::size_of::<Mat4>() as u64,
-        };
     
         for command in render_commands {
             let entity_id = command.entity_id;
@@ -308,15 +280,19 @@ impl BufferManager {
                 range: std::mem::size_of::<Mat4>() as u64,
             };
             let writes_single = [
-                // Binding 0: Global Projection
+                // Binding 0: Global Projection (Get buffer info from the resource)
                 vk::WriteDescriptorSet {
                     s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
                     dst_set: resources.descriptor_set,
                     dst_binding: 0,
                     descriptor_count: 1,
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                    p_buffer_info: &proj_buffer_info_global,
-                    ..Default::default() // Handles p_next, array_element, image_info, texel_view, _marker
+                    p_buffer_info: &vk::DescriptorBufferInfo {
+                        buffer: global_ubo_res.buffer,
+                        offset: 0,
+                        range: std::mem::size_of::<Mat4>() as u64,
+                    },
+                    ..Default::default()
                 },
                 // Binding 1: Per-Object Offset
                 vk::WriteDescriptorSet {
@@ -414,13 +390,7 @@ impl BufferManager {
                 device.destroy_shader_module(shader_module, None);
            }
 
-            // Cleanup uniform buffer
-            info!(
-                "[BufferManager::cleanup] Destroying Global Uniform Buffer: {:?}, Allocation: {:?}",
-                self.uniform_buffer, self.uniform_allocation
-            );
-            allocator.destroy_buffer(self.uniform_buffer, &mut self.uniform_allocation);
-            info!("[BufferManager::cleanup] Uniform buffer destroyed");
+            // Global uniform buffer cleanup handled where GlobalProjectionUboResource is managed
 
         }
         info!("[BufferManager::cleanup] Finished");

@@ -9,7 +9,7 @@ use crate::gui_framework::rendering::resize_handler::ResizeHandler;
 use bevy_math::Mat4;
 use bevy_log::{info, warn, error};
 use crate::RenderCommandData; // from lib.rs
-use crate::{TextVertex, TextRenderCommandData}; // Added TextVertex and TextRenderCommandData
+use crate::{TextVertex, PreparedTextDrawData, GlobalProjectionUboResource}; // Added TextVertex and TextRenderCommandData
 use vk_mem::{Allocation, Alloc}; // Added for text vertex buffer allocation
 use crate::GlyphAtlasResource; // Added for render signature
 use crate::gui_framework::rendering::shader_utils;
@@ -17,16 +17,9 @@ use crate::gui_framework::rendering::shader_utils;
 pub struct Renderer {
     buffer_manager: BufferManager,
     // Store pool and layouts needed for cleanup
-    descriptor_pool: vk::DescriptorPool,
-    descriptor_set_layout: vk::DescriptorSetLayout, // For shapes
-    text_descriptor_set_layout: vk::DescriptorSetLayout,
-
-    // --- Text Rendering Resources ---
-    text_vertex_buffer: vk::Buffer,
-    text_vertex_allocation: Option<Allocation>,
-    text_vertex_buffer_capacity: u32, // Max number of TextVertex this buffer can hold
-    glyph_atlas_descriptor_set: vk::DescriptorSet, // Single set pointing to the atlas texture/sampler
-    text_pipeline: vk::Pipeline, 
+    pub descriptor_pool: vk::DescriptorPool,
+    pub descriptor_set_layout: vk::DescriptorSetLayout, // For shapes
+    pub text_descriptor_set_layout: vk::DescriptorSetLayout,
 }
 
 impl Renderer {
@@ -39,17 +32,16 @@ impl Renderer {
         let pipeline_mgr = PipelineManager::new(platform);
         info!("[Renderer::new] PipelineManager created (temporarily)");
 
-        // Store layouts in VulkanContext for BufferManager access
+        // Store layouts in VulkanContext for BufferManager access and text resource creation
         platform.shape_pipeline_layout = Some(pipeline_mgr.shape_pipeline_layout);
         platform.text_pipeline_layout = Some(pipeline_mgr.text_pipeline_layout);
         info!("[Renderer::new] Shape and Text PipelineLayouts stored in VulkanContext");
 
+        // Create BufferManager - Pass only needed layout/pool
         let buffer_mgr = BufferManager::new(
             platform, // Pass &mut VulkanContext
-            // Pass the shape-specific layouts needed by BufferManager for shapes
-            pipeline_mgr.shape_pipeline_layout,
-            pipeline_mgr.shape_descriptor_set_layout,
-            pipeline_mgr.descriptor_pool,
+            pipeline_mgr.shape_descriptor_set_layout, // Pass only shape layout
+            pipeline_mgr.descriptor_pool,             // Pass pool
         );
         info!("[Renderer::new] BufferManager created");
 
@@ -61,31 +53,6 @@ impl Renderer {
         // Let's store both shape and text layouts in Renderer for cleanup for now.
         let text_descriptor_set_layout = pipeline_mgr.text_descriptor_set_layout;
         // pipeline_mgr goes out of scope here, its layouts are moved to platform/Renderer
-
-        // Update global projection UBO (BufferManager owns the buffer/allocation)
-        let initial_logical_width = extent.width as f32; // Use the extent passed to Renderer::new
-        let initial_logical_height = extent.height as f32;
-        unsafe {
-            let proj = Mat4::orthographic_rh(0.0, initial_logical_width, 0.0, initial_logical_height, -1.0, 1.0);
-            // We are flipping Y beacuse Bevy coord space uses +Y and Vulkan uses -Y
-            let flip_y = Mat4::from_scale(bevy_math::Vec3::new(1.0, -1.0, 1.0));
-            let proj_matrix = flip_y * proj;
-
-            let allocator = platform.allocator.as_ref().unwrap();
-            let info = allocator.get_allocation_info(&buffer_mgr.uniform_allocation);
-            bevy_log::info!("Renderer::new: Writing initial projection for logical extent {}x{}, Matrix:\n{:?}", initial_logical_width, initial_logical_height, proj_matrix);
-            // Use get_allocation_info for persistently mapped buffer
-            if !info.mapped_data.is_null() {
-                let data_ptr = info.mapped_data.cast::<f32>();
-                data_ptr.copy_from_nonoverlapping(proj_matrix.to_cols_array().as_ptr(), 16);
-                // No need to unmap
-            } else {
-                error!("[Renderer::new] Failed to get mapped pointer for initial uniform buffer update.");
-                // Attempt map/unmap as fallback? Or panic?
-                // For now, log error.
-            }
-        }
-        info!("[Renderer::new] Global projection UBO buffer updated (Descriptor set update deferred to BufferManager)");
 
         // --- Create Command Pool (Once) ---
         // Command buffers will be allocated later in record_command_buffers if needed
@@ -124,169 +91,24 @@ impl Renderer {
         info!("[Renderer::new] Sync objects created");
         info!("[Renderer::new] Finished");
 
-        let mut renderer = Self {
+        // Initialize Renderer struct
+        Self {
             buffer_manager: buffer_mgr,
             descriptor_pool, // Store for cleanup
             descriptor_set_layout, // Store shape layout for cleanup
             text_descriptor_set_layout, // Store text layout for cleanup
-
-            // --- Initialize Text Rendering Resources ---
-            text_vertex_buffer: vk::Buffer::null(), // Placeholder, will be created below
-            text_vertex_allocation: None,
-            text_vertex_buffer_capacity: 0, // Placeholder
-            glyph_atlas_descriptor_set: vk::DescriptorSet::null(), // Placeholder
-            text_pipeline: vk::Pipeline::null(),
-        };
-
-        // --- Create Initial Dynamic Text Vertex Buffer ---
-        // Start with a reasonable capacity, e.g., 1024 vertices
-        let initial_text_capacity = 1024 * 6; // Enough for ~1024 glyphs (6 vertices per quad)
-        let buffer_size = (std::mem::size_of::<TextVertex>() * initial_text_capacity as usize) as vk::DeviceSize;
-        let (buffer, allocation) = unsafe {
-            let buffer_info = vk::BufferCreateInfo {
-                s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                size: buffer_size,
-                usage: vk::BufferUsageFlags::VERTEX_BUFFER,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                ..Default::default()
-            };
-            let allocation_info = vk_mem::AllocationCreateInfo {
-                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED,
-                usage: vk_mem::MemoryUsage::AutoPreferDevice,
-                ..Default::default()
-            };
-            let allocator = platform.allocator.as_ref().unwrap();
-            allocator.create_buffer(&buffer_info, &allocation_info)
-                     .expect("Failed to create initial text vertex buffer")
-        };
-        info!("[Renderer::new] Initial text vertex buffer created (Capacity: {} vertices, Size: {} bytes)", initial_text_capacity, buffer_size);
-        renderer.text_vertex_buffer = buffer;
-        renderer.text_vertex_allocation = Some(allocation);
-        renderer.text_vertex_buffer_capacity = initial_text_capacity;
-
-
-        // --- Allocate Glyph Atlas Descriptor Set ---
-        // This set points to the atlas texture/sampler. It's allocated once here.
-        // We need the GlyphAtlasResource to get the image view and sampler handles.
-        // This requires access to the resource system, which isn't ideal in Renderer::new.
-        // Alternative: Allocate it lazily in the first render call or pass GlyphAtlasResource here.
-        // Let's allocate it here, assuming GlyphAtlasResource is available *before* RendererResource.
-        // This implies create_glyph_atlas_system runs before create_renderer_system.
-        // *** Correction: Renderer is created *after* Atlas. We need to get the resource from the world or pass it. ***
-
-        // --- Create Text Graphics Pipeline ---
-        let text_pipeline = unsafe {
-            let device = platform.device.as_ref().unwrap();
-            let render_pass = platform.render_pass.expect("Render pass missing for text pipeline creation");
-            let pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing for text pipeline creation");
-
-            // Load shaders
-            let vert_shader_module = shader_utils::load_shader(device, "text.vert.spv");
-            let frag_shader_module = shader_utils::load_shader(device, "text.frag.spv");
-
-            let shader_stages = [
-                vk::PipelineShaderStageCreateInfo {
-                    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                    module: vert_shader_module,
-                    stage: vk::ShaderStageFlags::VERTEX,
-                    p_name: b"main\0".as_ptr() as _,
-                    ..Default::default()
-                },
-                vk::PipelineShaderStageCreateInfo {
-                    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                    module: frag_shader_module,
-                    stage: vk::ShaderStageFlags::FRAGMENT,
-                    p_name: b"main\0".as_ptr() as _,
-                    ..Default::default()
-                },
-            ];
-
-            // Vertex input state for TextVertex
-            let vertex_attr_descs = [
-                // Position (vec2)
-                vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: 0 },
-                // UV (vec2)
-                vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: std::mem::size_of::<[f32; 2]>() as u32 },
-            ];
-            let vertex_binding_descs = [
-                vk::VertexInputBindingDescription { binding: 0, stride: std::mem::size_of::<TextVertex>() as u32, input_rate: vk::VertexInputRate::VERTEX }
-            ];
-            let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
-                s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-                vertex_binding_description_count: vertex_binding_descs.len() as u32,
-                p_vertex_binding_descriptions: vertex_binding_descs.as_ptr(),
-                vertex_attribute_description_count: vertex_attr_descs.len() as u32,
-                p_vertex_attribute_descriptions: vertex_attr_descs.as_ptr(),
-                ..Default::default()
-            };
-
-            // Standard pipeline states (similar to shapes, but enable blending)
-            let input_assembly = vk::PipelineInputAssemblyStateCreateInfo { s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() };
-            let viewport_state = vk::PipelineViewportStateCreateInfo { s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO, viewport_count: 1, scissor_count: 1, ..Default::default() }; // Dynamic
-            let rasterizer = vk::PipelineRasterizationStateCreateInfo { s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO, polygon_mode: vk::PolygonMode::FILL, line_width: 1.0, cull_mode: vk::CullModeFlags::NONE, front_face: vk::FrontFace::CLOCKWISE, ..Default::default() };
-            let multisampling = vk::PipelineMultisampleStateCreateInfo { s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, rasterization_samples: vk::SampleCountFlags::TYPE_1, ..Default::default() };
-
-            // Color Blending: Enable alpha blending for text
-            let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
-                blend_enable: vk::TRUE, // Enable blending
-                src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
-                dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
-                color_blend_op: vk::BlendOp::ADD,
-                src_alpha_blend_factor: vk::BlendFactor::ONE, // Often use ONE for source alpha factor
-                dst_alpha_blend_factor: vk::BlendFactor::ZERO, // Often use ZERO for dest alpha factor
-                alpha_blend_op: vk::BlendOp::ADD,
-                color_write_mask: vk::ColorComponentFlags::RGBA,
-            };
-            let color_blending = vk::PipelineColorBlendStateCreateInfo {
-                s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-                logic_op_enable: vk::FALSE,
-                attachment_count: 1,
-                p_attachments: &color_blend_attachment,
-                ..Default::default()
-            };
-
-            let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-            let dynamic_state_info = vk::PipelineDynamicStateCreateInfo { s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamic_state_count: dynamic_states.len() as u32, p_dynamic_states: dynamic_states.as_ptr(), ..Default::default() };
-
-            let pipeline_info = vk::GraphicsPipelineCreateInfo {
-                s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
-                stage_count: shader_stages.len() as u32,
-                p_stages: shader_stages.as_ptr(),
-                p_vertex_input_state: &vertex_input_info,
-                p_input_assembly_state: &input_assembly,
-                p_viewport_state: &viewport_state,
-                p_rasterization_state: &rasterizer,
-                p_multisample_state: &multisampling,
-                p_color_blend_state: &color_blending,
-                p_dynamic_state: &dynamic_state_info,
-                layout: pipeline_layout,
-                render_pass,
-                subpass: 0,
-                ..Default::default()
-            };
-
-            let pipeline = device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-                .map_err(|e| format!("Failed to create text graphics pipeline: {:?}", e))
-                .expect("Text pipeline creation failed") // Use expect for critical path
-                .remove(0);
-
-            // Cleanup shader modules now that pipeline is created
-            device.destroy_shader_module(vert_shader_module, None);
-            device.destroy_shader_module(frag_shader_module, None);
-
-            pipeline
-        };
-        info!("[Renderer::new] Text graphics pipeline created.");
-        renderer.text_pipeline = text_pipeline;
-
-
-        // *** Simplification: Let's allocate it in the first `render` call if it's null. ***
-
-        renderer // Return the modified renderer instance
+            // Removed text-specific fields
+        }
     }
 
-    // Accept &mut VulkanContext
-    pub fn resize_renderer(&mut self, vulkan_context: &mut VulkanContext, width: u32, height: u32) {
+    // Accept &mut VulkanContext and GlobalProjectionUboResource
+    pub fn resize_renderer(
+        &mut self,
+        vulkan_context: &mut VulkanContext,
+        width: u32,
+        height: u32,
+        global_ubo_res: &GlobalProjectionUboResource, // Pass global UBO resource
+    ) {
         info!("[Renderer::resize_renderer] Called with width: {}, height: {}", width, height);
         // Prevent resizing to 0x0 which causes Vulkan errors
         if width == 0 || height == 0 {
@@ -294,23 +116,21 @@ impl Renderer {
             return;
         }
         let logical_extent = vk::Extent2D { width, height };
+        // ResizeHandler no longer needs the allocation directly, it's handled by handle_resize_system
         ResizeHandler::resize(
             vulkan_context,
             logical_extent,
-            &mut self.buffer_manager.uniform_allocation, // Pass the allocation for the UBO update
+            // Removed allocation parameter
         );
-        // Note: Command buffers will be re-allocated inside record_command_buffers
-        // if the framebuffer count changed, which it shouldn't during typical resize.
-        // If swapchain image count changes, this needs more handling.
     }
 
-    // Accept &mut VulkanContext and both shape and text render commands
+    // Accept prepared shape and text draw data, and the global UBO resource
     pub fn render(
         &mut self,
         platform: &mut VulkanContext,
         shape_commands: &[RenderCommandData],
-        text_vertices: &[TextVertex], // Pass collected vertices directly
-        glyph_atlas_resource: &GlyphAtlasResource, // Pass resource to access atlas handles
+        prepared_text_draws: &[PreparedTextDrawData], // Pass prepared text data
+        global_ubo_res: &GlobalProjectionUboResource, // Pass global UBO resource
     ) {
         // --- Clone handles needed *after* the mutable borrow ---
         // Clone the ash::Device handle (cheap)
@@ -353,108 +173,13 @@ impl Renderer {
 
 
         // --- Prepare Shape Buffers/Descriptors (Call BufferManager) ---
+        // Pass the global UBO resource to BufferManager
         let prepared_shape_draws = self.buffer_manager.prepare_frame_resources(
             platform, // Pass mutable platform here
             shape_commands, // Pass the shape commands
+            global_ubo_res, // Pass the global UBO resource
         );
         // Mutable borrow of platform for buffer manager ends here
-
-        // --- Prepare Text Vertex Buffer ---
-        let num_text_vertices = text_vertices.len() as u32;
-        if num_text_vertices > 0 {
-            // Check if buffer needs resizing
-            if num_text_vertices > self.text_vertex_buffer_capacity {
-                let new_capacity = (num_text_vertices * 2).max(self.text_vertex_buffer_capacity * 2); // Double capacity or more if needed
-                info!("[Renderer::render] Resizing text vertex buffer from {} to {} vertices", self.text_vertex_buffer_capacity, new_capacity);
-                let new_size = (std::mem::size_of::<TextVertex>() * new_capacity as usize) as vk::DeviceSize;
-                let allocator = platform.allocator.as_ref().unwrap();
-                // Destroy old buffer/allocation
-                // Take the allocation out of the Option before destroying
-                if let Some(mut alloc) = self.text_vertex_allocation.take() {
-                    unsafe { allocator.destroy_buffer(self.text_vertex_buffer, &mut alloc); }
-                }
-                // Create new buffer/allocation
-                let (new_buffer, new_alloc) = unsafe {
-                    let buffer_info = vk::BufferCreateInfo {
-                        s_type: vk::StructureType::BUFFER_CREATE_INFO,
-                        size: new_size,
-                        usage: vk::BufferUsageFlags::VERTEX_BUFFER,
-                        sharing_mode: vk::SharingMode::EXCLUSIVE,
-                        ..Default::default()
-                    };
-                    let allocation_info = vk_mem::AllocationCreateInfo {
-                        flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED,
-                        usage: vk_mem::MemoryUsage::AutoPreferDevice,
-                        ..Default::default()
-                    };
-                    allocator.create_buffer(&buffer_info, &allocation_info)
-                             .expect("Failed to resize text vertex buffer")
-                };
-                self.text_vertex_buffer = new_buffer;
-                self.text_vertex_allocation = Some(new_alloc);
-                self.text_vertex_buffer_capacity = new_capacity;
-            }
-
-            // Copy data to text vertex buffer, ensuring allocation exists
-            if let Some(alloc) = &self.text_vertex_allocation {
-                unsafe {
-                    let allocator = platform.allocator.as_ref().unwrap();
-                    let info = allocator.get_allocation_info(alloc); // Use the allocation from Option
-                    if !info.mapped_data.is_null() {
-                        let data_ptr = info.mapped_data.cast::<TextVertex>();
-                        data_ptr.copy_from_nonoverlapping(text_vertices.as_ptr(), num_text_vertices as usize);
-                        // Optional flush if not HOST_COHERENT (safer to include)
-                        // allocator.flush_allocation(alloc, 0, vk::WHOLE_SIZE).expect("Failed to flush text vertex buffer");
-                    } else {
-                        error!("[Renderer::render] Text vertex buffer allocation not mapped during update!");
-                    }
-                }
-            } else {
-                 error!("[Renderer::render] Text vertex buffer allocation is None during update!");
-            }
-        }
-
-        // --- Ensure Glyph Atlas Descriptor Set Exists ---
-        if self.glyph_atlas_descriptor_set == vk::DescriptorSet::null() {
-            info!("[Renderer::render] Allocating glyph atlas descriptor set.");
-            let Ok(atlas_guard) = glyph_atlas_resource.0.lock() else {
-                error!("[Renderer::render] Failed to lock GlyphAtlasResource to get handles for descriptor set allocation.");
-                return; // Cannot proceed without atlas handles
-            };
-            let set_layouts = [self.text_descriptor_set_layout];
-            let alloc_info = vk::DescriptorSetAllocateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-                descriptor_pool: self.descriptor_pool,
-                descriptor_set_count: 1,
-                p_set_layouts: set_layouts.as_ptr(),
-                ..Default::default()
-            };
-            self.glyph_atlas_descriptor_set = unsafe {
-                device.allocate_descriptor_sets(&alloc_info)
-                    .expect("Failed to allocate glyph atlas descriptor set")
-                    .remove(0)
-            };
-
-            // Update the descriptor set to point to the atlas image view and sampler
-            let image_info = vk::DescriptorImageInfo {
-                sampler: atlas_guard.sampler,
-                image_view: atlas_guard.image_view,
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // Layout should be this after upload
-            };
-            let write_set = vk::WriteDescriptorSet {
-                s_type: vk::StructureType::WRITE_DESCRIPTOR_SET,
-                dst_set: self.glyph_atlas_descriptor_set,
-                dst_binding: 0, // Binding 0 in text_descriptor_set_layout
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                p_image_info: &image_info,
-                ..Default::default()
-            };
-            unsafe { device.update_descriptor_sets(&[write_set], &[]); }
-            info!("[Renderer::render] Glyph atlas descriptor set allocated and updated.");
-        }
-
 
         // --- Acquire Swapchain Image ---
         let acquire_result = unsafe {
@@ -472,7 +197,7 @@ impl Renderer {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 warn!("[Renderer::render] Swapchain out of date during acquire. Triggering resize.");
                 // Trigger resize explicitly
-                self.resize_renderer(platform, platform.current_swap_extent.width, platform.current_swap_extent.height);
+                self.resize_renderer(platform, platform.current_swap_extent.width, platform.current_swap_extent.height, global_ubo_res);
                 return; // Skip rest of the frame, resize will handle recreation
             }
             Err(e) => panic!("Failed to acquire swapchain image: {:?}", e),
@@ -483,26 +208,12 @@ impl Renderer {
 
 
         // --- Re-Record Command Buffer for the acquired image index ---
-        // This now happens *after* acquiring the image index and *after* waiting on the fence.
-        // It also resets the command pool/buffer internally.
-        let text_command = if num_text_vertices > 0 {
-            Some(TextRenderCommandData {
-                vertex_buffer_offset: 0, // Start from the beginning of the buffer for now
-                vertex_count: num_text_vertices,
-            })
-        } else {
-            None
-        };
-
         record_command_buffers(
             platform, // Pass mutable platform here again
             &prepared_shape_draws,
-            // Pass text rendering info
-            self.text_vertex_buffer,
-            self.glyph_atlas_descriptor_set,
-            text_command.as_ref(), // Pass Option<&TextRenderCommandData>
+            prepared_text_draws, // Pass the prepared text draw data slice
             platform.current_swap_extent,
-            self.text_pipeline,
+            // Removed text_vertex_buffer, glyph_atlas_descriptor_set, text_pipeline
         );
         // Mutable borrow for command buffer recording ends here.
 
@@ -558,13 +269,13 @@ impl Renderer {
                 if suboptimal {
                     warn!("[Renderer::render] Swapchain suboptimal during present.");
                     // Trigger resize explicitly
-                    self.resize_renderer(platform, platform.current_swap_extent.width, platform.current_swap_extent.height);
+                    self.resize_renderer(platform, platform.current_swap_extent.width, platform.current_swap_extent.height, global_ubo_res);
                 }
             }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 warn!("[Renderer::render] Swapchain out of date during present. Triggering resize.");
                 // Trigger resize explicitly
-                self.resize_renderer(platform, platform.current_swap_extent.width, platform.current_swap_extent.height);
+                self.resize_renderer(platform, platform.current_swap_extent.width, platform.current_swap_extent.height, global_ubo_res);
             }
             Err(e) => panic!("Failed to present swapchain image: {:?}", e),
         }
@@ -586,16 +297,7 @@ impl Renderer {
         );
         info!("[Renderer::cleanup] BufferManager cleanup finished.");
 
-        // Cleanup text vertex buffer
-        if let Some(mut alloc) = self.text_vertex_allocation.take() { // Take from Option
-            if self.text_vertex_buffer != vk::Buffer::null() {
-                 unsafe {
-                    let allocator = platform.allocator.as_ref().expect("Allocator missing for text buffer cleanup");
-                    allocator.destroy_buffer(self.text_vertex_buffer, &mut alloc); // Pass the taken &mut alloc
-                    info!("[Renderer::cleanup] Text vertex buffer destroyed.");
-                 }
-            }
-        }
+        // Ceanup of text vertex buffer handled by cleanup_trigger_system
 
         // Cleanup layouts stored in Renderer/Platform
         unsafe {
@@ -615,11 +317,7 @@ impl Renderer {
             info!("[Renderer::cleanup] Descriptor pool and set layouts destroyed");
         }
 
-        // Cleanup text pipeline
-        if self.text_pipeline != vk::Pipeline::null() {
-            unsafe { device.destroy_pipeline(self.text_pipeline, None); }
-            info!("[Renderer::cleanup] Text pipeline destroyed.");
-        }
+        // Cleanup of text pipeline handled by cleanup_trigger_system
 
         // Cleanup swapchain resources (Framebuffers, Views, Swapchain, RenderPass)
         // Use the dedicated cleanup function

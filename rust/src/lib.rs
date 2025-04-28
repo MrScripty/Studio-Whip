@@ -20,6 +20,40 @@ pub struct TextVertex {
     pub uv: [f32; 2],
 }
 
+/// Holds the prepared Vulkan handles and metadata needed for drawing a batch of text.
+#[derive(Debug, Clone)]
+pub struct PreparedTextDrawData {
+    pub pipeline: vk::Pipeline,
+    pub vertex_buffer: vk::Buffer,         // Handle to the *shared* text vertex buffer
+    pub vertex_buffer_offset: u32,     // Starting index in the vertex buffer
+    pub vertex_count: u32,             // Number of vertices for this batch
+    pub projection_descriptor_set: vk::DescriptorSet, // Set 0: Global Projection UBO
+    pub atlas_descriptor_set: vk::DescriptorSet,    // Set 1: Glyph Atlas Sampler
+}
+
+// --- Resources needed across framework/app ---
+
+// Resource holding the global projection uniform buffer, its allocation, and descriptor set.
+// Managed by BufferManager, used by shapes and text rendering prep.
+#[derive(bevy_ecs::prelude::Resource)]
+pub struct GlobalProjectionUboResource {
+    pub buffer: vk::Buffer,
+    pub allocation: vk_mem::Allocation,
+    pub descriptor_set: vk::DescriptorSet,
+}
+
+// Resource holding Vulkan resources specifically for text rendering.
+// Managed by a dedicated system in core plugin.
+#[derive(bevy_ecs::prelude::Resource)]
+pub struct TextRenderingResources {
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_allocation: vk_mem::Allocation,
+    pub vertex_buffer_capacity: u32, // Max number of TextVertex this buffer can hold
+    pub pipeline: vk::Pipeline,
+    pub atlas_descriptor_set: vk::DescriptorSet, // Single set pointing to the atlas texture/sampler
+    // Add descriptor pool/layout if managed here? Or use global ones? Let's use global for now.
+}
+
 // --- Resources needed across framework/app ---
 // Resource holding the Arc<Mutex<VulkanContext>>
 #[derive(bevy_ecs::prelude::Resource, Clone)]
@@ -61,16 +95,6 @@ pub struct RenderCommandData {
     pub vertices_changed: bool, // For background quad resizing
     // Add instancing info later if needed
 }
-
-/// Holds the prepared Vulkan handles and data needed for drawing text.
-/// This might represent a batch of text from one or more entities.
-#[derive(Debug, Clone)]
-pub struct TextRenderCommandData {
-    pub vertex_buffer_offset: u32, // Starting index in the Renderer's dynamic text vertex buffer
-    pub vertex_count: u32,         // Number of vertices for this batch
-    // Pipeline and descriptor set are likely bound once per text rendering phase
-}
-
 
 // Specific exports might be needed later, but often importing
 // directly like `use rusty_whip::gui_framework::components::Visibility`

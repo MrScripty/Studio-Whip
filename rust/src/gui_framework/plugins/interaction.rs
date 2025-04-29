@@ -20,6 +20,7 @@ use crate::gui_framework::{
 // Import resources used/managed by this plugin's systems
 // HotkeyResource is defined in main.rs for now, but inserted by this plugin
 use crate::HotkeyResource; // Assuming HotkeyResource is defined in main.rs or lib.rs
+use super::core::CoreSet;
 
 // --- System Sets ---
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -35,7 +36,6 @@ pub struct GuiFrameworkInteractionPlugin;
 
 impl Plugin for GuiFrameworkInteractionPlugin {
     fn build(&self, app: &mut App) {
-        info!("Building GuiFrameworkInteractionPlugin...");
 
         // --- Type Registration ---
         app.register_type::<Interaction>()
@@ -54,6 +54,8 @@ impl Plugin for GuiFrameworkInteractionPlugin {
 
         // --- System Setup ---
         app
+            // Ensure hotkeys load after basic Vulkan setup is established by the core plugin
+            .configure_sets(Startup, InteractionSet::LoadHotkeys.after(CoreSet::SetupVulkan))
             .add_systems(Startup, load_hotkeys_system.in_set(InteractionSet::LoadHotkeys))
             .add_systems(Update,
                 (
@@ -61,8 +63,6 @@ impl Plugin for GuiFrameworkInteractionPlugin {
                     handle_close_request.in_set(InteractionSet::WindowClose),
                 )
             );
-
-        info!("GuiFrameworkInteractionPlugin built.");
     }
 }
 
@@ -70,7 +70,6 @@ impl Plugin for GuiFrameworkInteractionPlugin {
 
 /// Startup system: Loads hotkey configuration from file and inserts it as a resource.
 fn load_hotkeys_system(mut commands: Commands) {
-    info!("Running load_hotkeys_system (Interaction Plugin)...");
     let mut hotkey_path: Option<PathBuf> = None;
     let mut config_load_error: Option<String> = None;
 
@@ -79,7 +78,6 @@ fn load_hotkeys_system(mut commands: Commands) {
         Ok(mut exe_path) => {
             if exe_path.pop() { // Go up one level from executable file
                 let path = exe_path.join("user").join("hotkeys.toml");
-                info!("[HotkeyLoader] Looking for hotkeys file at: {:?}", path);
                 hotkey_path = Some(path);
             } else {
                 config_load_error = Some("Could not get executable directory.".to_string());
@@ -148,6 +146,7 @@ fn interaction_system(
                 let delta = cursor_pos - last_pos;
                 // Send drag event only if mouse moved significantly
                 if delta.length_squared() > 0.0 {
+                    info!("[InteractionSystem] Sending EntityDragged: Entity={:?}, Delta={:?}", dragged_entity, delta);
                     entity_dragged_evw.send(EntityDragged { entity: dragged_entity, delta });
                     // Update last position for next frame's delta calculation
                     *drag_state = Some((dragged_entity, cursor_pos));

@@ -61,8 +61,6 @@ pub struct GuiFrameworkCorePlugin;
 
 impl Plugin for GuiFrameworkCorePlugin {
     fn build(&self, app: &mut App) {
-        info!("Building GuiFrameworkCorePlugin...");
-
         // --- Type Registration ---
         app.register_type::<ShapeData>();
         app.register_type::<Visibility>();
@@ -83,35 +81,43 @@ impl Plugin for GuiFrameworkCorePlugin {
             // == Startup Systems ==
             .configure_sets(Startup,(
                 CoreSet::SetupVulkan,
-                // Create global UBO after Vulkan setup
-                CoreSet::CreateGlobalUbo.after(CoreSet::SetupVulkan),
-                // Create Renderer after Vulkan setup
-                CoreSet::CreateRenderer.after(CoreSet::SetupVulkan),
-                // Create text-related resources after Vulkan setup and Renderer (needs layouts)
-                CoreSet::CreateGlyphAtlas.after(CoreSet::SetupVulkan),
-                CoreSet::CreateFontServer.after(CoreSet::SetupVulkan), // Doesn't depend on Vulkan
-                CoreSet::CreateSwashCache.after(CoreSet::SetupVulkan), // Doesn't depend on Vulkan
-                // Create TextRenderingResources after Renderer (needs layouts) and Atlas (for descriptor set)
-                CoreSet::CreateTextResources.after(CoreSet::CreateRenderer).after(CoreSet::CreateGlyphAtlas),
-            ).chain() // Keep chain for ordering guarantees
-        )
+                CoreSet::CreateRenderer,        // Depends on SetupVulkan
+                CoreSet::CreateGlyphAtlas,      // Depends on SetupVulkan
+                CoreSet::CreateFontServer,      
+                CoreSet::CreateSwashCache,      
+            ).chain())
+
+            // Configure sets that have specific dependencies *after* the chain is defined
+            .configure_sets(Startup, (
+                // CreateGlobalUbo must run after CreateRenderer because it needs RendererResource
+                CoreSet::CreateGlobalUbo.after(CoreSet::CreateRenderer),
+                // CreateTextResources must run after CreateRenderer (needs layouts/pool)
+                // and after CreateGlyphAtlas (needs atlas resource for descriptor set)
+                CoreSet::CreateTextResources
+                    .after(CoreSet::CreateRenderer)
+                    .after(CoreSet::CreateGlyphAtlas),
+        ))
+            // Add the systems to the Startup schedule and assign them to their respective sets.
+            // Rely on the configure_sets calls above to establish the execution order.
             .add_systems(Startup, (
                 setup_vulkan_system.in_set(CoreSet::SetupVulkan),
-                create_global_ubo_system.in_set(CoreSet::CreateGlobalUbo),
                 create_renderer_system.in_set(CoreSet::CreateRenderer),
                 create_glyph_atlas_system.in_set(CoreSet::CreateGlyphAtlas),
                 create_font_server_system.in_set(CoreSet::CreateFontServer),
                 create_swash_cache_system.in_set(CoreSet::CreateSwashCache),
+                create_global_ubo_system.in_set(CoreSet::CreateGlobalUbo),
                 create_text_rendering_resources_system.in_set(CoreSet::CreateTextResources),
-        ))
+            )) 
+            // Initialize the PreparedTextDrawsResource
+            .init_resource::<crate::PreparedTextDrawsResource>()
+
             // == Update Systems ==
+            // Define the desired execution order for Update systems
             .configure_sets(Update, (
-                CoreSet::HandleResize,
-                // Text layout runs after resize
-                CoreSet::TextLayout.after(CoreSet::HandleResize),
-                // Prepare text rendering data after layout is complete
-                CoreSet::PrepareTextRendering.after(CoreSet::TextLayout),
-        ))
+                CoreSet::TextLayout, // Run text layout first
+                CoreSet::PrepareTextRendering.after(CoreSet::TextLayout), // Then prepare text rendering
+                CoreSet::HandleResize.after(CoreSet::PrepareTextRendering), // Finally, handle resize *after* text prep
+        ).chain()) // Chain these sets to enforce the order
             .add_systems(Update, (
                 handle_resize_system.in_set(CoreSet::HandleResize),
                 text_layout_system.in_set(CoreSet::TextLayout),
@@ -127,7 +133,6 @@ impl Plugin for GuiFrameworkCorePlugin {
                 rendering_system.run_if(not(on_event::<AppExit>)).in_set(CoreSet::Render),
                 cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup).after(CoreSet::Render),
         ));
-        info!("GuiFrameworkCorePlugin built.");
     }
 }
 
@@ -140,7 +145,6 @@ fn setup_vulkan_system(
     primary_window_q: Query<Entity, With<PrimaryWindow>>,
     winit_windows: NonSend<WinitWindows>,
 ) {
-    info!("Running setup_vulkan_system (Core Plugin)...");
     let primary_entity = primary_window_q.get_single()
         .expect("Failed to get primary window entity");
     let winit_window = winit_windows.get_window(primary_entity)
@@ -149,7 +153,6 @@ fn setup_vulkan_system(
     let mut vk_ctx_guard = vk_context_res.0.lock().expect("Failed to lock VulkanContext mutex for setup");
 
     setup_vulkan(&mut vk_ctx_guard, winit_window);
-    info!("Vulkan setup complete (Core Plugin).");
 }
 
 // Startup system (piped): Creates the Renderer instance resource.
@@ -158,26 +161,22 @@ fn create_renderer_system(
     vk_context_res: Res<VulkanContextResource>,
     primary_window_q: Query<&Window, With<PrimaryWindow>>,
 ) {
-    info!("Running create_renderer_system (Core Plugin)...");
-
     let primary_window = primary_window_q.get_single().expect("Primary window not found");
     let extent = vk::Extent2D { width: primary_window.physical_width(), height: primary_window.physical_height() };
 
     let mut vk_ctx_guard = vk_context_res.0.lock().expect("Failed to lock VulkanContext for renderer creation");
 
     let renderer_instance = Renderer::new(&mut vk_ctx_guard, extent);
-    info!("Actual Renderer instance created (Core Plugin).");
 
     let renderer_arc = Arc::new(Mutex::new(renderer_instance));
     commands.insert_resource(RendererResource(renderer_arc.clone()));
-
-    info!("Renderer resource created and inserted (Core Plugin).");
 }
 
 fn create_global_ubo_system(
     mut commands: Commands,
     vk_context_res: Res<VulkanContextResource>,
     renderer_res: Res<RendererResource>, // Need renderer for descriptor pool access
+    primary_window_q: Query<&Window, With<PrimaryWindow>>, // Add window query parameter
 ) {
     info!("Running create_global_ubo_system (Core Plugin)...");
     let Ok(mut vk_ctx_guard) = vk_context_res.0.lock() else {
@@ -197,7 +196,6 @@ fn create_global_ubo_system(
     // Use the 'primary_window' variable obtained from the query
     let initial_logical_width = primary_window.width();
     let initial_logical_height = primary_window.height();
-    info!("[create_global_ubo_system] Using initial window dimensions: {}x{}", initial_logical_width, initial_logical_height);
     let device = vk_ctx_guard.device.as_ref().expect("Device missing");
     let allocator = vk_ctx_guard.allocator.as_ref().expect("Allocator missing");
 
@@ -219,7 +217,6 @@ fn create_global_ubo_system(
         allocator.create_buffer(&buffer_info, &allocation_info)
                  .expect("Global UBO buffer creation failed")
     };
-    info!("[create_global_ubo_system] Global UBO buffer created.");
 
     // 2. Allocate Descriptor Set
     let set_layouts = [renderer_guard.descriptor_set_layout]; // Shape layout
@@ -235,7 +232,6 @@ fn create_global_ubo_system(
             .expect("Failed to allocate global UBO descriptor set")
             .remove(0)
     };
-    info!("[create_global_ubo_system] Global UBO descriptor set allocated.");
 
     // 3. Update Descriptor Set (Initial Binding)
     let buffer_info = vk::DescriptorBufferInfo {
@@ -254,26 +250,13 @@ fn create_global_ubo_system(
         ..Default::default()
     };
     unsafe { device.update_descriptor_sets(&[write_set], &[]); }
-    info!("[create_global_ubo_system] Global UBO descriptor set updated.");
 
-    // 4. Insert Resource
-    commands.insert_resource(GlobalProjectionUboResource {
-        buffer,
-        allocation,
-        descriptor_set,
-    });
-    info!("GlobalProjectionUboResource inserted (Core Plugin).");
-
-    // 5. Initial Write
-    // Get window extent for initial projection matrix
-    // This requires Querying the window, which isn't ideal in this system.
-    // Alternative: Update it in handle_resize_system initially?
-    // Let's do an initial update here assuming default window size is okay for frame 0.
-    // A better approach might be needed if exact size on frame 0 is critical before first resize event.
-    let proj = Mat4::orthographic_rh(0.0, initial_logical_width, 0.0, initial_logical_height, -1.0, 1.0);
+    // 4. Initial Write (Perform *before* inserting the resource)
+    let proj = Mat4::orthographic_rh(0.0, initial_logical_width, 0.0, initial_logical_height, 1024.0, 0.0);
     let flip_y = Mat4::from_scale(bevy_math::Vec3::new(1.0, -1.0, 1.0));
     let proj_matrix = flip_y * proj;
     unsafe {
+        // Use the 'allocation' variable directly here, before it's moved
         let info = allocator.get_allocation_info(&allocation);
         if !info.mapped_data.is_null() {
             let data_ptr = info.mapped_data.cast::<f32>();
@@ -282,14 +265,19 @@ fn create_global_ubo_system(
             error!("[create_global_ubo_system] Failed to get mapped pointer for initial uniform buffer write.");
         }
     }
-    info!("[create_global_ubo_system] Initial projection matrix written to global UBO.");
+
+    // 5. Insert Resource (Now move buffer, allocation, descriptor_set)
+    commands.insert_resource(GlobalProjectionUboResource {
+        buffer,
+        allocation, // 'allocation' is moved here
+        descriptor_set,
+    });
 }
 
 fn create_glyph_atlas_system(
     mut commands: Commands,
     vk_context_res: Res<VulkanContextResource>,
 ) {
-    info!("Running create_glyph_atlas_system (Core Plugin)...");
     let mut vk_ctx_guard = vk_context_res.0.lock().expect("Failed to lock VulkanContext for glyph atlas creation");
 
     // Choose an initial size for the atlas
@@ -299,7 +287,6 @@ fn create_glyph_atlas_system(
         Ok(atlas) => {
             let atlas_arc = Arc::new(Mutex::new(atlas));
             commands.insert_resource(GlyphAtlasResource(atlas_arc));
-            info!("GlyphAtlas resource created and inserted (Core Plugin).");
         }
         Err(e) => {
             // Use expect here because atlas is critical for text rendering
@@ -309,13 +296,11 @@ fn create_glyph_atlas_system(
 }
 
 fn create_font_server_system(mut commands: Commands) {
-    info!("Running create_font_server_system (Core Plugin)...");
     // FontServer::new() can take some time if loading many system fonts.
     // Consider running this asynchronously or loading fewer fonts if startup time is critical.
     let font_server = FontServer::new();
     let font_server_arc = Arc::new(Mutex::new(font_server));
     commands.insert_resource(FontServerResource(font_server_arc));
-    info!("FontServer resource created and inserted (Core Plugin).");
 }
 
 fn create_text_rendering_resources_system(
@@ -324,7 +309,6 @@ fn create_text_rendering_resources_system(
     renderer_res: Res<RendererResource>, // Need renderer for layouts/pool
     glyph_atlas_res: Res<GlyphAtlasResource>, // Need atlas for initial descriptor set update
 ) {
-    info!("Running create_text_rendering_resources_system (Core Plugin)...");
     let Ok(mut vk_ctx_guard) = vk_context_res.0.lock() else {
         error!("Failed to lock VulkanContext in create_text_rendering_resources_system");
         return;
@@ -359,7 +343,6 @@ fn create_text_rendering_resources_system(
         allocator.create_buffer(&buffer_info, &allocation_info)
                  .expect("Failed to create initial text vertex buffer")
     };
-    info!("[create_text_rendering_resources_system] Initial text vertex buffer created (Capacity: {} vertices, Size: {} bytes)", initial_text_capacity, buffer_size);
 
     // 2. Create Text Graphics Pipeline
     let text_pipeline = unsafe {
@@ -379,17 +362,96 @@ fn create_text_rendering_resources_system(
             vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: 0 },
             vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: std::mem::size_of::<[f32; 2]>() as u32 },
         ];
-        let vertex_binding_descs = [ vk::VertexInputBindingDescription { binding: 0, stride: std::mem::size_of::<TextVertex>() as u32, input_rate: vk::VertexInputRate::VERTEX } ];
-        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo { s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, vertex_binding_description_count: vertex_binding_descs.len() as u32, p_vertex_binding_descriptions: vertex_binding_descs.as_ptr(), vertex_attribute_description_count: vertex_attr_descs.len() as u32, p_vertex_attribute_descriptions: vertex_attr_descs.as_ptr(), ..Default::default() };
-        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo { s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() };
-        let viewport_state = vk::PipelineViewportStateCreateInfo { s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO, viewport_count: 1, scissor_count: 1, ..Default::default() };
-        let rasterizer = vk::PipelineRasterizationStateCreateInfo { s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO, polygon_mode: vk::PolygonMode::FILL, line_width: 1.0, cull_mode: vk::CullModeFlags::NONE, front_face: vk::FrontFace::CLOCKWISE, ..Default::default() };
-        let multisampling = vk::PipelineMultisampleStateCreateInfo { s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, rasterization_samples: vk::SampleCountFlags::TYPE_1, ..Default::default() };
-        let color_blend_attachment = vk::PipelineColorBlendAttachmentState { blend_enable: vk::TRUE, src_color_blend_factor: vk::BlendFactor::SRC_ALPHA, dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA, color_blend_op: vk::BlendOp::ADD, src_alpha_blend_factor: vk::BlendFactor::ONE, dst_alpha_blend_factor: vk::BlendFactor::ZERO, alpha_blend_op: vk::BlendOp::ADD, color_write_mask: vk::ColorComponentFlags::RGBA };
-        let color_blending = vk::PipelineColorBlendStateCreateInfo { s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, logic_op_enable: vk::FALSE, attachment_count: 1, p_attachments: &color_blend_attachment, ..Default::default() };
+        let vertex_binding_descs = [
+            vk::VertexInputBindingDescription { binding: 0, stride: std::mem::size_of::<TextVertex>() as u32, input_rate: vk::VertexInputRate::VERTEX }
+        ];
+        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
+            s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+            vertex_binding_description_count: vertex_binding_descs.len() as u32,
+            p_vertex_binding_descriptions: vertex_binding_descs.as_ptr(),
+            vertex_attribute_description_count: vertex_attr_descs.len() as u32,
+            p_vertex_attribute_descriptions: vertex_attr_descs.as_ptr(),
+            ..Default::default()
+        };
+
+        // --- Define Other Pipeline States ---
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
+            s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+            ..Default::default()
+        };
+        let viewport_state = vk::PipelineViewportStateCreateInfo {
+            s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            viewport_count: 1, // Dynamic state
+            scissor_count: 1,  // Dynamic state
+            ..Default::default()
+        };
+        let rasterizer = vk::PipelineRasterizationStateCreateInfo {
+            s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            polygon_mode: vk::PolygonMode::FILL,
+            line_width: 1.0,
+            cull_mode: vk::CullModeFlags::NONE, // No culling for 2D text quads
+            front_face: vk::FrontFace::CLOCKWISE, // Match vertex order
+            ..Default::default()
+        };
+        let multisampling = vk::PipelineMultisampleStateCreateInfo {
+            s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            rasterization_samples: vk::SampleCountFlags::TYPE_1, // No MSAA
+            ..Default::default()
+        };
+        // Define depth state for text (test/write disabled, but state struct needed)
+        let text_depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
+            s_type: vk::StructureType::PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            depth_test_enable: vk::FALSE,
+            depth_write_enable: vk::FALSE,
+            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL, // Doesn't matter if test disabled
+            ..Default::default()
+        };
+        // Define color blending for transparency
+        let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
+            blend_enable: vk::TRUE,
+            src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
+            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            color_blend_op: vk::BlendOp::ADD,
+            src_alpha_blend_factor: vk::BlendFactor::ONE, // Use source alpha directly
+            dst_alpha_blend_factor: vk::BlendFactor::ZERO, // Don't blend alpha with destination
+            alpha_blend_op: vk::BlendOp::ADD,
+            color_write_mask: vk::ColorComponentFlags::RGBA,
+        };
+        let color_blending = vk::PipelineColorBlendStateCreateInfo {
+            s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            logic_op_enable: vk::FALSE,
+            attachment_count: 1,
+            p_attachments: &color_blend_attachment,
+            ..Default::default()
+        };
+        // Define dynamic states
         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_state_info = vk::PipelineDynamicStateCreateInfo { s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamic_state_count: dynamic_states.len() as u32, p_dynamic_states: dynamic_states.as_ptr(), ..Default::default() };
-        let pipeline_info = vk::GraphicsPipelineCreateInfo { s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO, stage_count: shader_stages.len() as u32, p_stages: shader_stages.as_ptr(), p_vertex_input_state: &vertex_input_info, p_input_assembly_state: &input_assembly, p_viewport_state: &viewport_state, p_rasterization_state: &rasterizer, p_multisample_state: &multisampling, p_color_blend_state: &color_blending, p_dynamic_state: &dynamic_state_info, layout: pipeline_layout, render_pass, subpass: 0, ..Default::default() };
+        let dynamic_state_info = vk::PipelineDynamicStateCreateInfo {
+            s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            dynamic_state_count: dynamic_states.len() as u32,
+            p_dynamic_states: dynamic_states.as_ptr(),
+            ..Default::default()
+        };
+
+        // --- Assemble Graphics Pipeline Create Info ---
+        let pipeline_info = vk::GraphicsPipelineCreateInfo {
+            s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
+            stage_count: shader_stages.len() as u32,
+            p_stages: shader_stages.as_ptr(),
+            p_vertex_input_state: &vertex_input_info,
+            p_input_assembly_state: &input_assembly,
+            p_viewport_state: &viewport_state,
+            p_rasterization_state: &rasterizer,
+            p_multisample_state: &multisampling,
+            p_depth_stencil_state: &text_depth_stencil_state, // Assign depth state
+            p_color_blend_state: &color_blending,
+            p_dynamic_state: &dynamic_state_info,
+            layout: pipeline_layout,
+            render_pass,
+            subpass: 0,
+            ..Default::default()
+        };
         let pipeline = device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
             .expect("Failed to create text graphics pipeline")
             .remove(0);
@@ -397,7 +459,6 @@ fn create_text_rendering_resources_system(
         device.destroy_shader_module(frag_shader_module, None);
         pipeline
     };
-    info!("[create_text_rendering_resources_system] Text graphics pipeline created.");
 
     // 3. Allocate Glyph Atlas Descriptor Set
     // Use the *text* descriptor set layout (binding 0 is atlas sampler)
@@ -414,7 +475,6 @@ fn create_text_rendering_resources_system(
             .expect("Failed to allocate glyph atlas descriptor set")
             .remove(0)
     };
-    info!("[create_text_rendering_resources_system] Glyph atlas descriptor set allocated.");
 
     // 4. Update Glyph Atlas Descriptor Set (Initial Binding)
     let image_info = vk::DescriptorImageInfo {
@@ -433,7 +493,6 @@ fn create_text_rendering_resources_system(
         ..Default::default()
     };
     unsafe { device.update_descriptor_sets(&[write_set], &[]); }
-    info!("[create_text_rendering_resources_system] Glyph atlas descriptor set updated.");
 
     // 5. Insert Resource
     commands.insert_resource(TextRenderingResources {
@@ -443,36 +502,33 @@ fn create_text_rendering_resources_system(
         pipeline: text_pipeline,
         atlas_descriptor_set,
     });
-    info!("TextRenderingResources inserted (Core Plugin).");
 }
 
 // Update system: Handles window resize events, updates global UBO, and calls Renderer resize.
 fn handle_resize_system(
     mut resize_reader: EventReader<bevy_window::WindowResized>,
     renderer_res_opt: Option<ResMut<RendererResource>>,
-    vk_context_res_opt: Option<Res<VulkanContextResource>>,
+    // vk_context_res_opt: Option<Res<VulkanContextResource>>, // Removed Option<>
     global_ubo_res_opt: Option<Res<GlobalProjectionUboResource>>,
+    vk_context_res: Res<VulkanContextResource>, // Get the resource directly
 ) {
-    // Check if all necessary resources are available
-    let (Some(renderer_res), Some(vk_context_res), Some(global_ubo_res)) =
-        (renderer_res_opt, vk_context_res_opt, global_ubo_res_opt) else { return; };
+    // Check if necessary resources are available (Renderer and Global UBO)
+    let (Some(renderer_res), Some(global_ubo_res)) =
+        (renderer_res_opt, global_ubo_res_opt) else { return; };
 
     for event in resize_reader.read() {
-        info!("WindowResized event (Core Plugin): {:?}", event);
         if event.width > 0.0 && event.height > 0.0 {
             // --- Update Global Projection UBO ---
             let logical_width = event.width;
             let logical_height = event.height;
-            // Get allocator via VulkanContext
-            let Ok(vk_ctx_guard) = vk_context_res.0.lock() else {
-                warn!("Could not lock VulkanContext for allocator access in handle_resize_system.");
-                continue; // Skip this event if context is locked
-            };
-            let Some(allocator) = vk_ctx_guard.allocator.as_ref() else {
-                 warn!("Allocator not found in VulkanContext during handle_resize_system.");
+            // Get allocator via VulkanContext (Need to lock briefly just for this)
+            // Use the vk_context_res passed directly into the system
+            let allocator_opt = vk_context_res.0.lock().ok().and_then(|ctx| ctx.allocator.clone()); // Lock, get Arc, drop lock
+            let Some(allocator) = allocator_opt else {
+                 warn!("Could not get allocator from VulkanContext during handle_resize_system.");
                  continue; // Skip this event if allocator isn't ready
             };
-            let proj = Mat4::orthographic_rh(0.0, logical_width, 0.0, logical_height, -1.0, 1.0);
+            let proj = Mat4::orthographic_rh(0.0, logical_width, 0.0, logical_height, 1024.0, 0.0);
             let flip_y = Mat4::from_scale(bevy_math::Vec3::new(1.0, -1.0, 1.0));
             let proj_matrix = flip_y * proj;
 
@@ -490,19 +546,21 @@ fn handle_resize_system(
                     error!("[handle_resize_system] Failed to get mapped pointer for global UBO update.");
                 }
             }
-            info!("[handle_resize_system] Global projection UBO updated for {}x{}", logical_width, logical_height);
 
             // --- Call Renderer Resize ---
-            // Lock resources needed for renderer resize
-            if let (Ok(mut renderer_guard), Ok(mut vk_ctx_guard)) = (
-                renderer_res.0.lock(),
-                vk_context_res.0.lock(),
-            ) {
-                info!("Calling renderer resize logic (Core Plugin).");
-                // Pass the global UBO resource's allocation for ResizeHandler to use
-                renderer_guard.resize_renderer(&mut vk_ctx_guard, event.width as u32, event.height as u32, &global_ubo_res);
+            // We no longer lock VulkanContext here. Renderer::resize_renderer will handle it.
+            // We still need to lock the RendererResource to call the method.
+            if let Ok(mut renderer_guard) = renderer_res.0.lock() {
+                // Pass VulkanContextResource directly (using the system parameter vk_context_res)
+                renderer_guard.resize_renderer(
+                    &vk_context_res, // Pass the resource itself
+                    event.width as u32,
+                    event.height as u32,
+                    &global_ubo_res
+                );
+                // Renderer lock released when guard goes out of scope here
             } else {
-                warn!("Could not lock resources for renderer resize handling (Core Plugin).");
+                warn!("Could not lock RendererResource for renderer resize handling (Core Plugin).");
             }
         }
     }
@@ -512,19 +570,23 @@ fn handle_resize_system(
 fn prepare_text_rendering_system(
     mut commands: Commands,
     // Query for text entities whose layout has changed
-    query: Query<(Entity, &GlobalTransform, &TextLayoutOutput, &Visibility), Changed<TextLayoutOutput>>,
+    query: Query<(Entity, &GlobalTransform, &TextLayoutOutput, &Visibility)>,
     // Access the text rendering Vulkan resources
     mut text_res_opt: Option<ResMut<TextRenderingResources>>,
     // Access the global projection UBO resource
     global_ubo_res_opt: Option<Res<GlobalProjectionUboResource>>,
     // Access Vulkan Context to get allocator
     vk_context_res_opt: Option<Res<VulkanContextResource>>,
-    // Store prepared draw data for the rendering system
-    mut prepared_text_draws: Local<Vec<PreparedTextDrawData>>,
+    // Get the resource to store prepared draw data
+    mut prepared_text_draws_res: ResMut<crate::PreparedTextDrawsResource>,
 ) {
     // Get resources, including allocator via vk_context
-    let Some(mut text_res) = text_res_opt else { return; };
-    let Some(global_ubo_res) = global_ubo_res_opt else { return; };
+    let Some(mut text_res) = text_res_opt else {
+        warn!("[prepare_text] TextRenderingResources not found."); return;
+    };
+    let Some(global_ubo_res) = global_ubo_res_opt else {
+         warn!("[prepare_text] GlobalProjectionUboResource not found."); return;
+    };
     let Some(vk_context_res) = vk_context_res_opt else { return; };
 
     let Ok(vk_ctx_guard) = vk_context_res.0.lock() else {
@@ -540,8 +602,8 @@ fn prepare_text_rendering_system(
     // let allocator = allocator.clone(); // Clone Arc if guard needs to be dropped
     // drop(vk_ctx_guard);
 
-    // Clear previous frame's prepared data
-    prepared_text_draws.clear();
+    // Clear previous frame's prepared data from the resource
+    prepared_text_draws_res.0.clear();
 
     // --- Collect Vertices for Changed Text ---
     // This is the simplified approach: collect all vertices if *any* text changed.
@@ -549,7 +611,7 @@ fn prepare_text_rendering_system(
     let mut all_text_vertices: Vec<TextVertex> = Vec::new();
     let mut needs_buffer_update = false;
 
-    for (_entity, global_transform, text_layout, visibility) in query.iter() {
+    for (entity, global_transform, text_layout, visibility) in query.iter() { // Added entity to log
         if visibility.is_visible() {
             needs_buffer_update = true; // Mark that an update is needed
             let transform_matrix = global_transform.compute_matrix();
@@ -583,7 +645,6 @@ fn prepare_text_rendering_system(
             // Check if buffer needs resizing
             if num_text_vertices > text_res.vertex_buffer_capacity {
                 let new_capacity = (num_text_vertices * 2).max(text_res.vertex_buffer_capacity * 2);
-                info!("[prepare_text_rendering_system] Resizing text vertex buffer from {} to {} vertices", text_res.vertex_buffer_capacity, new_capacity);
                 let new_size = (std::mem::size_of::<TextVertex>() * new_capacity as usize) as vk::DeviceSize;
                 // Destroy old buffer/allocation
                 unsafe { allocator.destroy_buffer(text_res.vertex_buffer, &mut text_res.vertex_allocation); }
@@ -611,9 +672,9 @@ fn prepare_text_rendering_system(
                 }
             }
 
-            // --- Create PreparedTextDrawData ---
+            // --- Create PreparedTextDrawData and add it to the resource ---
             // For now, create one draw command for all updated text
-            prepared_text_draws.push(PreparedTextDrawData {
+            prepared_text_draws_res.0.push(PreparedTextDrawData { // Add to resource's Vec
                 pipeline: text_res.pipeline,
                 vertex_buffer: text_res.vertex_buffer,
                 vertex_buffer_offset: 0, // Start from beginning
@@ -621,7 +682,8 @@ fn prepare_text_rendering_system(
                 projection_descriptor_set: global_ubo_res.descriptor_set, // Use global UBO set
                 atlas_descriptor_set: text_res.atlas_descriptor_set, // Use text resource's atlas set
             });
-
+        } else {
+             info!("[prepare_text] No text vertices generated, skipping buffer update and draw data creation.");
         }
     }
     // Store the prepared draws in Commands as a NonSend resource for the rendering system?
@@ -630,10 +692,8 @@ fn prepare_text_rendering_system(
 }
 
 fn create_swash_cache_system(mut commands: Commands) {
-    info!("Running create_swash_cache_system (Core Plugin)...");
     let swash_cache = SwashCache::new(); // SwashCache::new() is available
     commands.insert_resource(SwashCacheResource(Mutex::new(swash_cache)));
-    info!("SwashCache resource created and inserted (Core Plugin).");
 }
 
 fn text_layout_system(
@@ -711,7 +771,9 @@ fn text_layout_system(
                     continue;
                 };
 
-                match glyph_atlas.add_glyph(&vk_context, cache_key, &swash_image) {
+                let add_result = glyph_atlas.add_glyph(&vk_context, cache_key, &swash_image);
+
+                match add_result {
                     Ok(glyph_info_ref) => {
                         let glyph_info = *glyph_info_ref;
                         let placement = swash_image.placement;
@@ -764,12 +826,6 @@ fn text_layout_system(
 
                         let relative_vertices = [top_left, top_right, bottom_right, bottom_left];
 
-                        // Debug logging to verify positioning
-                        info!(
-                            "Glyph {:?}: baseline_y={:.2}, placement_top={:.2}, top_y={:.2}, bottom_y={:.2}, ascent={:.2}, descent={:.2}",
-                            layout_glyph.glyph_id, baseline_y, placement.top as f32, relative_top_y, relative_bottom_y, ascent, descent
-                        );
-
                         positioned_glyphs.push(PositionedGlyph {
                             glyph_info,
                             layout_glyph: layout_glyph.clone(),
@@ -800,8 +856,8 @@ fn rendering_system(
     // Query for shapes
     shape_query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility), Without<TextLayoutOutput>>,
     shape_change_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
-    // Access the prepared text draw data from the local state of prepare_text_rendering_system
-    prepared_text_draws: Local<Vec<PreparedTextDrawData>>,
+    // Access the prepared text draw data via the resource
+    prepared_text_draws_res: Res<crate::PreparedTextDrawsResource>,
 ) {
     // Ensure all required resources are available
     if let (Some(renderer_res), Some(vk_context_res), Some(global_ubo_res)) =
@@ -827,29 +883,31 @@ fn rendering_system(
         shape_render_commands.sort_unstable_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
 
         // --- Call Custom Renderer ---
-        if let (Ok(mut renderer_guard), Ok(mut vk_ctx_guard)) = (renderer_res.0.lock(), vk_context_res.0.lock()) {
-            // Pass shape commands and prepared text draw data
+        // Lock only the Renderer resource here. Renderer::render will handle VulkanContext locking.
+        if let Ok(mut renderer_guard) = renderer_res.0.lock() {
+            // Pass the VulkanContextResource directly
             renderer_guard.render(
-                &mut vk_ctx_guard,
+                &vk_context_res, // <-- Pass the resource
                 &shape_render_commands,
-                &prepared_text_draws, // Pass the prepared text data
-                &global_ubo_res, // Pass the global UBO resource
+                &prepared_text_draws_res.0,
+                &global_ubo_res,
             );
-        } else { warn!("Could not lock resources for rendering trigger (Core Plugin)."); }
+        } else {
+            warn!("Could not lock RendererResource for rendering trigger (Core Plugin).");
+        }
     }
 }
 
 
 // System running on AppExit in Last schedule: Takes ownership of Vulkan/Renderer resources via World access and cleans them up immediately.
 fn cleanup_trigger_system(world: &mut World) {
-    info!("ENTERED cleanup_trigger_system (Core Plugin on AppExit)");
-
     // Take ownership of resources by removing them from the world
     let renderer_res_opt: Option<RendererResource> = world.remove_resource::<RendererResource>();
     let vk_context_res_opt: Option<VulkanContextResource> = world.remove_resource::<VulkanContextResource>();
     let glyph_atlas_res_opt: Option<GlyphAtlasResource> = world.remove_resource::<GlyphAtlasResource>();
     let text_rendering_res_opt: Option<TextRenderingResources> = world.remove_resource::<TextRenderingResources>();
     let global_ubo_res_opt: Option<GlobalProjectionUboResource> = world.remove_resource::<GlobalProjectionUboResource>();
+    let _prepared_text_draws_res_opt: Option<crate::PreparedTextDrawsResource> = world.remove_resource::<crate::PreparedTextDrawsResource>(); // Remove text draw resource
     // FontServer and SwashCache don't need Vulkan cleanup
 
     if let Some(vk_context_res) = vk_context_res_opt {
@@ -881,15 +939,12 @@ fn cleanup_trigger_system(world: &mut World) {
 
                     // 2. Cleanup TextRenderingResources (Buffer, Pipeline)
                     if let Some(mut text_res) = text_rendering_res_opt {
-                        info!("TextRenderingResources taken (Core Plugin).");
                         unsafe {
                             if text_res.pipeline != vk::Pipeline::null() {
                                 device.destroy_pipeline(text_res.pipeline, None);
-                                info!("[Cleanup] Text pipeline destroyed.");
                             }
                             if text_res.vertex_buffer != vk::Buffer::null() {
                                 allocator.destroy_buffer(text_res.vertex_buffer, &mut text_res.vertex_allocation);
-                                info!("[Cleanup] Text vertex buffer destroyed.");
                             }
                             // Descriptor set freed by Renderer pool cleanup
                         }
@@ -897,11 +952,9 @@ fn cleanup_trigger_system(world: &mut World) {
 
                     // 3. Cleanup GlobalProjectionUboResource (Buffer)
                     if let Some(mut global_ubo_res) = global_ubo_res_opt {
-                        info!("GlobalProjectionUboResource taken (Core Plugin).");
                          unsafe {
                             if global_ubo_res.buffer != vk::Buffer::null() {
                                 allocator.destroy_buffer(global_ubo_res.buffer, &mut global_ubo_res.allocation);
-                                info!("[Cleanup] Global UBO buffer destroyed.");
                             }
                             // Descriptor set freed by Renderer pool cleanup
                         }
@@ -909,10 +962,8 @@ fn cleanup_trigger_system(world: &mut World) {
 
                     // 4. Cleanup Glyph Atlas (Image, View, Sampler)
                     if let Some(atlas_res) = glyph_atlas_res_opt {
-                        info!("GlyphAtlasResource taken (Core Plugin).");
                          match atlas_res.0.lock() {
                             Ok(mut atlas_guard) => {
-                                info!("Successfully locked GlyphAtlas Mutex (Core Plugin).");
                                 // Pass immutable vk_ctx_guard (or device/allocator directly if needed)
                                 atlas_guard.cleanup(&vk_ctx_guard);
                             }
@@ -924,13 +975,9 @@ fn cleanup_trigger_system(world: &mut World) {
                      error!("[Cleanup] Device or Allocator became None after Renderer cleanup!");
                 }
 
-
                 // 5. Cleanup Vulkan Context (Device, Instance, etc. - Must be last)
                 // This is called on the vk_ctx_guard which is still valid.
-                info!("Calling cleanup_vulkan (Core Plugin)...");
                 cleanup_vulkan(&mut vk_ctx_guard);
-                info!("cleanup_vulkan finished (Core Plugin).");
-
             }
             Err(poisoned) => {
                 error!("VulkanContext Mutex was poisoned before cleanup (Core Plugin): {:?}", poisoned);
@@ -939,6 +986,4 @@ fn cleanup_trigger_system(world: &mut World) {
     } else {
         warn!("VulkanContext resource not found or already removed during cleanup trigger (Core Plugin).");
     }
-
-    info!("Cleanup trigger system finished (Core Plugin), taken resources going out of scope.");
 }

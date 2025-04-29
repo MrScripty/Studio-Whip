@@ -1,16 +1,15 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use crate::{PreparedDrawData, TextRenderCommandData};
+use crate::{PreparedDrawData, PreparedTextDrawData};
 use bevy_log::info; // Added for logging
+use bevy_log::warn;
 
 pub fn record_command_buffers(
     platform: &mut VulkanContext,
     prepared_shape_draws: &[PreparedDrawData],
-    text_vertex_buffer: vk::Buffer,
-    glyph_atlas_descriptor_set: vk::DescriptorSet,
-    text_command: Option<&TextRenderCommandData>, // Pass optional text draw info
+    prepared_text_draws: &[PreparedTextDrawData], // Use new prepared text data
     extent: vk::Extent2D,
-    text_pipeline: vk::Pipeline,
+    // Removed text_vertex_buffer, glyph_atlas_descriptor_set, text_command, text_pipeline
 ) {
     let device = platform.device.as_ref().expect("Device not available for command buffer recording");
     let command_pool = platform.command_pool.expect("Command pool missing for recording");
@@ -44,7 +43,6 @@ pub fn record_command_buffers(
             };
             unsafe { device.allocate_command_buffers(&alloc_info) }.expect("Failed to allocate command buffers")
         };
-        info!("[record_command_buffers] Allocated {} command buffers.", platform.command_buffers.len());
     }
 
 
@@ -60,10 +58,14 @@ pub fn record_command_buffers(
         flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
         ..Default::default()
     };
-    let clear_values = [vk::ClearValue {
-        // Use opaque black background
-        color: vk::ClearColorValue { float32: [1.0, 0.0, 1.0, 1.0] },
-    }];
+    // Define clear values for color and depth
+    let clear_values = [
+        // Clear Color (Attachment 0) - Use a less jarring color like dark grey
+        vk::ClearValue { color: vk::ClearColorValue { float32: [0.1, 0.1, 0.1, 1.0] } },
+        // Clear Depth (Attachment 1)
+        vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
+    ];
+
 
     let framebuffer = platform.framebuffers[platform.current_image]; // Use current image index
 
@@ -106,86 +108,76 @@ pub fn record_command_buffers(
             let shape_pipeline_layout = platform.shape_pipeline_layout.expect("Shape pipeline layout missing");
             let mut current_pipeline = vk::Pipeline::null(); // Track bound pipeline
 
-            for draw_data in prepared_shape_draws { // Iterate using the correct variable name
-                // Bind pipeline only if it changed
-                if draw_data.pipeline != current_pipeline {
-                    device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, draw_data.pipeline);
-                    current_pipeline = draw_data.pipeline;
-                }
+                for draw_data in prepared_shape_draws { // Iterate using the correct variable name
+                    // Bind pipeline only if it changed
+                    if draw_data.pipeline != current_pipeline {
+                        device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, draw_data.pipeline);
+                        current_pipeline = draw_data.pipeline;
+                    }
 
-                // Bind shape descriptor set (Set 0)
-                device.cmd_bind_descriptor_sets(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    shape_pipeline_layout, // Use the fetched layout
-                    0, // firstSet index
-                    &[draw_data.descriptor_set], // The specific set for this entity
-                    &[], // No dynamic offsets
-                );
-
-                // Bind the vertex buffer to binding point 0
-                device.cmd_bind_vertex_buffers(command_buffer, 0, &[draw_data.vertex_buffer], &[0]); // offset 0
-
-                // --- Draw Call (Non-instanced for now) ---
-                device.cmd_draw(
-                    command_buffer,
-                    draw_data.vertex_count,    // vertexCount
-                    1,                         // instanceCount (Hardcoded to 1 for now)
-                    0,                         // firstVertex
-                    0,                         // firstInstance
-                );
-            }
-        }
-
-        // --- Draw Text ---
-        if let Some(text_cmd) = text_command {
-            if text_cmd.vertex_count > 0 {
-                // Get text pipeline layout from context
-                let text_pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing");
-
-                // Bind the text pipeline (passed as argument)
-                device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, text_pipeline);
-
-                // Bind text descriptor sets
-                // Set 0: Global UBO (reuse shape descriptor set? Or need a dedicated one?)
-                //      Let's assume text vertex shader only uses binding 0 from set 0.
-                //      We need the *global* projection UBO descriptor set.
-                //      This is currently part of the per-shape descriptor sets.
-                //      Refactor needed: Separate global UBO descriptor set.
-                //      *** Temporary Workaround: Bind the *first* shape's descriptor set for Set 0 ***
-                //      *** This is INCORRECT but allows compilation. Needs fixing. ***
-                let set0_binding = if let Some(first_shape) = prepared_shape_draws.first() {
-                    first_shape.descriptor_set
-                } else {
-                    // Cannot bind Set 0 if no shapes exist. Text won't render correctly.
-                    bevy_log::warn!("[record_command_buffers] No shape descriptor set available to bind for text Set 0 (Projection UBO). Text rendering will likely fail.");
-                    vk::DescriptorSet::null() // Or skip text rendering entirely
-                };
-
-                if set0_binding != vk::DescriptorSet::null() {
-                    // Bind Set 0 (Projection UBO - using workaround) and Set 1 (Atlas Sampler)
+                    // Bind shape descriptor set (Set 0)
                     device.cmd_bind_descriptor_sets(
-                        command_buffer, vk::PipelineBindPoint::GRAPHICS, text_pipeline_layout,
-                        0, // firstSet
-                        &[set0_binding, glyph_atlas_descriptor_set], // Bind Set 0 and Set 1
+                        command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        shape_pipeline_layout, // Use the fetched layout
+                        0, // firstSet index
+                        &[draw_data.descriptor_set], // The specific set for this entity
                         &[], // No dynamic offsets
                     );
 
-                    // Bind text vertex buffer
-                    device.cmd_bind_vertex_buffers(command_buffer, 0, &[text_vertex_buffer], &[0]);
+                    // Bind the vertex buffer to binding point 0
+                    device.cmd_bind_vertex_buffers(command_buffer, 0, &[draw_data.vertex_buffer], &[0]); // offset 0
 
-                    // Draw text vertices
+                    // --- Draw Call (Non-instanced for now) ---
                     device.cmd_draw(
                         command_buffer,
-                        text_cmd.vertex_count,
+                        draw_data.vertex_count,    // vertexCount
+                        1,                         // instanceCount
+                        0,                         // firstVertex
+                        0,                         // firstInstance
+                    );
+                } // End of shape draw loop
+            }
+
+        // --- Draw Text ---
+        if !prepared_text_draws.is_empty() {
+            // Get text pipeline layout from context (needed for binding descriptor sets)
+            let text_pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing");
+            let mut current_text_pipeline = vk::Pipeline::null();
+
+            for text_draw in prepared_text_draws {
+                if text_draw.vertex_count > 0 {
+                    // Bind text pipeline if changed
+                    if text_draw.pipeline != current_text_pipeline {
+                        device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, text_draw.pipeline);
+                        current_text_pipeline = text_draw.pipeline;
+                    }
+
+                    // Bind text descriptor sets using handles from PreparedTextDrawData
+                    // Set 0: Global Projection UBO (Correctly uses the dedicated set)
+                    // Set 1: Glyph Atlas Sampler
+                    device.cmd_bind_descriptor_sets(
+                        command_buffer, vk::PipelineBindPoint::GRAPHICS, text_pipeline_layout,
+                        0, // firstSet
+                        &[text_draw.projection_descriptor_set, text_draw.atlas_descriptor_set], // Bind Set 0 and Set 1
+                        &[], // No dynamic offsets
+                    );
+
+                    // Bind the shared text vertex buffer with the correct offset for this draw
+                    let offsets = [text_draw.vertex_buffer_offset as vk::DeviceSize * std::mem::size_of::<crate::TextVertex>() as vk::DeviceSize];
+                    device.cmd_bind_vertex_buffers(command_buffer, 0, &[text_draw.vertex_buffer], &offsets);
+
+                    // Draw text vertices for this batch
+                    device.cmd_draw(
+                        command_buffer,
+                        text_draw.vertex_count,
                         1, // instanceCount
-                        text_cmd.vertex_buffer_offset, // firstVertex
+                        0, // firstVertex (offset is handled by cmd_bind_vertex_buffers)
                         0, // firstInstance
                     );
                 }
             }
         }
-
         // End the render pass
         device.cmd_end_render_pass(command_buffer);
 

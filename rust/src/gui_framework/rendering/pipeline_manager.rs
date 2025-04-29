@@ -18,7 +18,6 @@ pub struct PipelineManager {
 
 impl PipelineManager {
     pub fn new(platform: &mut VulkanContext) -> Self {
-        info!("[PipelineManager::new] Called (ECS Migration)"); // Use info!
         let device = platform.device.as_ref().unwrap();
 
         // --- Shape Descriptor Set Layout (Set 0: Global UBO, Object UBO) ---
@@ -48,7 +47,6 @@ impl PipelineManager {
                 ..Default::default()
             }, None).expect("Failed to create shape descriptor set layout")
         };
-        info!("[PipelineManager::new] Shape descriptor set layout created.");
 
         // --- Text Descriptor Set Layout (Set 1: Sampler) ---
         let text_descriptor_set_layout = unsafe {
@@ -69,8 +67,6 @@ impl PipelineManager {
                 ..Default::default()
             }, None).expect("Failed to create text descriptor set layout")
         };
-        info!("[PipelineManager::new] Text descriptor set layout created.");
-
 
         // --- Shared Descriptor Pool (Increased size estimate) ---
         let descriptor_pool = unsafe {
@@ -100,7 +96,6 @@ impl PipelineManager {
                 ..Default::default()
             }, None).expect("Failed to create descriptor pool") // Use expect directly
         };
-        info!("[PipelineManager::new] Descriptor set layout and pool created. Per-entity sets will be allocated by BufferManager.");
 
         // --- Shape Pipeline Layout (Uses Set 0) ---
         let shape_pipeline_layout = unsafe {
@@ -111,7 +106,6 @@ impl PipelineManager {
                 ..Default::default()
             }, None).expect("Failed to create shape pipeline layout")
         };
-        info!("[PipelineManager::new] Shape pipeline layout created.");
 
         // --- Text Pipeline Layout (Uses Set 0 AND Set 1) ---
         // Text shaders need access to global projection (Set 0, Binding 0)
@@ -126,8 +120,6 @@ impl PipelineManager {
                 ..Default::default()
             }, None).expect("Failed to create text pipeline layout")
         };
-        info!("[PipelineManager::new] Text pipeline layout created.");
-
 
         Self {
             shape_pipeline_layout,

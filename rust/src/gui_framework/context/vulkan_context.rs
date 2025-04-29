@@ -1,6 +1,7 @@
 use ash::vk;
 use ash::{Entry, Instance};
 use ash::khr::{surface, swapchain};
+use ash::ext::debug_utils;
 use std::sync::Arc;
 use vk_mem::Allocator;
 
@@ -20,6 +21,12 @@ pub struct VulkanContext {
     pub current_swap_extent: vk::Extent2D,
     pub images: Vec<vk::Image>,
     pub image_views: Vec<vk::ImageView>,
+    // --- Depth Buffer Resources ---
+    pub depth_image: Option<vk::Image>,
+    pub depth_image_allocation: Option<vk_mem::Allocation>,
+    pub depth_image_view: Option<vk::ImageView>,
+    pub depth_format: Option<vk::Format>,
+    // --- End Depth Buffer ---
     pub vertex_buffer: Option<vk::Buffer>,
     pub vertex_allocation: Option<vk_mem::Allocation>,
     pub render_pass: Option<vk::RenderPass>,
@@ -32,6 +39,9 @@ pub struct VulkanContext {
     pub render_finished_semaphore: Option<vk::Semaphore>,
     pub fence: Option<vk::Fence>,
     pub current_image: usize,
+    // --- Debug Messenger Fields ---
+    pub debug_utils_loader: Option<debug_utils::Instance>,
+    pub debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
 
 impl VulkanContext {
@@ -51,6 +61,12 @@ impl VulkanContext {
             current_swap_extent: vk::Extent2D { width: 0, height: 0 },
             images: Vec::new(),
             image_views: Vec::new(),
+            // --- Depth Buffer Resources ---
+            depth_image: None,
+            depth_image_allocation: None,
+            depth_image_view: None,
+            depth_format: None,
+            // --- End Depth Buffer ---
             vertex_buffer: None,
             vertex_allocation: None,
             render_pass: None,
@@ -63,6 +79,9 @@ impl VulkanContext {
             render_finished_semaphore: None,
             fence: None,
             current_image: 0,
+            // --- Debug Messenger Fields ---
+            debug_utils_loader: None,
+            debug_messenger: None,
         }
     }
 }

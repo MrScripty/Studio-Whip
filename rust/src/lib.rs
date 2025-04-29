@@ -54,6 +54,11 @@ pub struct TextRenderingResources {
     // Add descriptor pool/layout if managed here? Or use global ones? Let's use global for now.
 }
 
+// Resource to hold the prepared text draw commands for the current frame
+#[derive(bevy_ecs::prelude::Resource, Default, Debug)]
+pub struct PreparedTextDrawsResource(pub Vec<PreparedTextDrawData>);
+
+
 // --- Resources needed across framework/app ---
 // Resource holding the Arc<Mutex<VulkanContext>>
 #[derive(bevy_ecs::prelude::Resource, Clone)]

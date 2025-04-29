@@ -44,7 +44,6 @@ pub struct GlyphAtlas {
 
 impl GlyphAtlas {
     pub fn new(vk_context: &mut VulkanContext, initial_extent: vk::Extent2D) -> Result<Self, String> {
-        info!("[GlyphAtlas::new] Creating glyph atlas with extent: {:?}", initial_extent);
         let device = vk_context.device.as_ref().ok_or("Device not available")?.clone();
         let allocator = vk_context.allocator.as_ref().ok_or("Allocator not available")?.clone();
 
@@ -80,7 +79,6 @@ impl GlyphAtlas {
         let (image, allocation) = unsafe {
             allocator.create_image(&image_create_info, &allocation_create_info)
         }.map_err(|e| format!("Failed to create glyph atlas image: {:?}", e))?;
-        info!("[GlyphAtlas::new] Vulkan image created.");
 
         // --- Create Image View ---
         let image_view_create_info = vk::ImageViewCreateInfo {
@@ -100,7 +98,6 @@ impl GlyphAtlas {
         let image_view = unsafe {
             device.create_image_view(&image_view_create_info, None)
         }.map_err(|e| format!("Failed to create glyph atlas image view: {:?}", e))?;
-        info!("[GlyphAtlas::new] Vulkan image view created.");
 
         // --- Create Sampler ---
         let sampler_create_info = vk::SamplerCreateInfo {
@@ -125,7 +122,6 @@ impl GlyphAtlas {
         let sampler = unsafe {
             device.create_sampler(&sampler_create_info, None)
         }.map_err(|e| format!("Failed to create glyph atlas sampler: {:?}", e))?;
-        info!("[GlyphAtlas::new] Vulkan sampler created.");
 
         // Initialize swash scale context
         let scale_context = ScaleContext::new();
@@ -163,8 +159,6 @@ impl GlyphAtlas {
             // Key exists, so we can safely get and return the immutable reference now.
             // The unwrap is safe because we just checked contains_key.
             let existing_info = self.glyph_cache.get(&cache_key).unwrap();
-            // Log cache hit
-            info!("[add_glyph] Cache HIT for key {:?}: {:?}", cache_key, existing_info); // Log existing info on cache hit
             return Ok(existing_info);
         }
         // --- Key not found, proceed with rasterization, packing, and insertion ---
@@ -197,16 +191,15 @@ impl GlyphAtlas {
         // Associate the CacheKey ID when pushing the rect data
         rects_to_place.push_rect(cache_key, Some(vec![0]), rect_data);
 
-        // Call pack_rects - requires BTreeMap, heuristic, and custom data (&() is fine if unused)
-        match pack_rects(&rects_to_place, &mut self.target_bins, &volume_heuristic, &contains_smallest_box) {
-            Ok(pack_result) => {
-                // packed_locations maps RectId (CacheKey) -> (BinId, PackedLocation)
-                if let Some((_bin_id, packed_location)) = pack_result.packed_locations().get(&cache_key) {
+       // Call pack_rects - requires BTreeMap, heuristic, and custom data (&() is fine if unused)
+       match pack_rects(&rects_to_place, &mut self.target_bins, &volume_heuristic, &contains_smallest_box) {
+           Ok(pack_result) => {
+               // packed_locations maps RectId (CacheKey) -> (BinId, PackedLocation)
+               if let Some((_bin_id, packed_location)) = pack_result.packed_locations().get(&cache_key) {
                     // Successfully packed! Get coordinates directly from PackedLocation methods.
                     let packed_x_i32 = packed_location.x();
                     let packed_y_i32 = packed_location.y();
                     // Log the raw coordinates returned by the packer
-                    info!("[add_glyph] Packed location for key {:?}: ({}, {})", cache_key, packed_x_i32, packed_y_i32);
                     let pixel_x = packed_location.x() as u32;
                     let pixel_y = packed_location.y() as u32;
 
@@ -244,7 +237,6 @@ impl GlyphAtlas {
 
                     // Use entry API to insert and return reference
                     let inserted_info = self.glyph_cache.entry(cache_key).or_insert(glyph_info);
-                    info!("[add_glyph] Returning NEW info for key {:?}: {:?}", cache_key, inserted_info);
                     Ok(inserted_info)
 
                 } else {
@@ -329,7 +321,6 @@ impl GlyphAtlas {
             unsafe { allocator.destroy_buffer(staging_buffer, &mut staging_allocation); }
             return Err("Failed to get mapped pointer for staging buffer".to_string());
         }
-
 
         // --- Record and Submit Command Buffer ---
         let cmd_buffer = unsafe {
@@ -460,13 +451,11 @@ impl GlyphAtlas {
             device.free_command_buffers(command_pool, &[cmd_buffer]);
             allocator.destroy_buffer(staging_buffer, &mut staging_allocation);
         }
-
         Ok(())
     }
 
     // Cleanup Vulkan resources
     pub fn cleanup(&mut self, vk_context: &VulkanContext) {
-        info!("[GlyphAtlas::cleanup] Cleaning up glyph atlas resources...");
         let Some(device) = vk_context.device.as_ref() else {
             error!("[GlyphAtlas::cleanup] Device not available for cleanup.");
             return;
@@ -489,7 +478,6 @@ impl GlyphAtlas {
                 // device.destroy_image(self.image, None); // Potentially unsafe without allocator
             }
         }
-        info!("[GlyphAtlas::cleanup] Finished.");
     }
 }
 

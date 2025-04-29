@@ -1,11 +1,57 @@
 use ash::vk;
 use ash::Entry;
+use ash::ext::debug_utils;
 use ash_window;
-use std::ffi::CStr;
+use std::ffi::{c_void, CStr};
+use std::marker::PhantomData;
 use std::sync::Arc;
 use vk_mem::Allocator;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use crate::gui_framework::context::vulkan_context::VulkanContext;
+use bevy_log::{error, warn, info}; // Use bevy logging for callback
+
+// --- Debug Callback Function ---
+unsafe extern "system" fn vulkan_debug_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _p_user_data: *mut c_void,
+) -> vk::Bool32 {
+    let callback_data = *p_callback_data;
+    let message_id_number = callback_data.message_id_number;
+    let message_id_name = if callback_data.p_message_id_name.is_null() {
+        std::borrow::Cow::from("?")
+    } else {
+        CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy()
+    };
+    let message = if callback_data.p_message.is_null() {
+        std::borrow::Cow::from("?")
+    } else {
+        CStr::from_ptr(callback_data.p_message).to_string_lossy()
+    };
+
+    let log_prefix = "[Vulkan Validation]";
+
+    match message_severity {
+        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => {
+            // info!("{} VERBOSE [{}({})]:\n{}", log_prefix, message_id_name, message_id_number, message); // Too noisy usually
+        }
+        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => {
+            info!("{} INFO [{}({})]:\n{}", log_prefix, message_id_name, message_id_number, message);
+        }
+        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => {
+            warn!("{} WARNING [{}({})]:\n{}", log_prefix, message_id_name, message_id_number, message);
+        }
+        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => {
+            error!("{} ERROR [{}({})]:\n{}", log_prefix, message_id_name, message_id_number, message);
+        }
+        _ => { // Treat unknown flags as errors
+             error!("{} UNKNOWN SEVERITY [{}({})]:\n{}", log_prefix, message_id_name, message_id_number, message);
+        }
+    }
+
+    vk::FALSE // Should return false unless testing the layers themselves
+}
 
 pub fn setup_vulkan(app: &mut VulkanContext, window: &winit::window::Window) {
     // Get handles directly from the window reference
@@ -22,8 +68,16 @@ pub fn setup_vulkan(app: &mut VulkanContext, window: &winit::window::Window) {
     println!("[setup_vulkan] Vulkan entry loaded.");
 
     println!("[setup_vulkan] Enumerating required surface extensions...");
-    let surface_extensions = ash_window::enumerate_required_extensions(display_handle)
-    .expect("Failed to enumerate required surface extensions");
+    let mut surface_extensions = ash_window::enumerate_required_extensions(display_handle)
+        .expect("Failed to enumerate required surface extensions")
+        .to_vec(); // Convert to Vec to add more extensions
+
+    // Add Debug Utils extension if validation layers are enabled
+    #[cfg(debug_assertions)]
+    {
+        surface_extensions.push(debug_utils::NAME.as_ptr());
+        println!("[setup_vulkan] Added Debug Utils extension.");
+    }
     println!("[setup_vulkan] Required surface extensions enumerated.");
 
     // TODO: Add validation layer setup here if desired
@@ -52,6 +106,28 @@ pub fn setup_vulkan(app: &mut VulkanContext, window: &winit::window::Window) {
         .expect("Failed to create Vulkan instance");
     app.instance = Some(instance.clone());
     println!("[setup_vulkan] Vulkan instance created.");
+
+    // --- Create Debug Messenger (after instance, before device) ---
+    #[cfg(debug_assertions)]
+    {
+        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT {
+            s_type: vk::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+            p_next: std::ptr::null(),
+            flags: vk::DebugUtilsMessengerCreateFlagsEXT::empty(),
+            message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                // | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
+                // | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+                ,
+            message_type: vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+            pfn_user_callback: Some(vulkan_debug_callback),
+            p_user_data: std::ptr::null_mut(), // No user data needed for this callback
+            _marker: PhantomData, // Add the marker field
+        };
+    }
+
 
     println!("[setup_vulkan] Creating surface loader...");
     let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
@@ -198,6 +274,17 @@ pub fn cleanup_vulkan(app: &mut VulkanContext) {
     } else {
          println!("[cleanup_vulkan] Instance, surface loader, or surface not available for surface destruction.");
     }
+
+    // Destroy Debug Messenger *before* instance
+    #[cfg(debug_assertions)]
+    if let (Some(loader), Some(messenger)) = (app.debug_utils_loader.take(), app.debug_messenger.take()) {
+        println!("[cleanup_vulkan] Destroying debug messenger...");
+        unsafe { loader.destroy_debug_utils_messenger(messenger, None); }
+        println!("[cleanup_vulkan] Debug messenger destroyed.");
+    } else {
+         println!("[cleanup_vulkan] Debug messenger loader or handle not available for destruction.");
+    }
+
 
     // Destroy the instance
     if let Some(instance) = app.instance.take() {

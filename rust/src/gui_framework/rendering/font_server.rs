@@ -14,15 +14,12 @@ pub struct FontServer {
 
 impl FontServer {
     pub fn new() -> Self {
-        info!("[FontServer::new] Initializing FontServer...");
-
         // --- Load Fonts using fontdb ---
         let mut db = fontdb::Database::new();
         // Load system fonts. This can take a moment.
         // Consider loading specific fonts for faster startup or embedding fonts.
         db.load_system_fonts();
         let face_count = db.faces().count();
-        info!("[FontServer::new] System fonts loaded into fontdb (Count: {}).", face_count);
 
         if face_count == 0 {
             warn!("[FontServer::new] No system fonts found or loaded! Text rendering might fail.");
@@ -34,7 +31,6 @@ impl FontServer {
         // Pass the fontdb Database to FontSystem.
         // FontSystem uses this database to find appropriate fonts for characters.
         let font_system = FontSystem::new_with_locale_and_db("en-US".into(), db.clone());
-        info!("[FontServer::new] Cosmic-text FontSystem created.");
 
         Self {
             font_system,

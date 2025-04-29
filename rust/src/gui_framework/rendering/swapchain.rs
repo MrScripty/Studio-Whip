@@ -1,6 +1,25 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use bevy_log::{info, error}; // Add logging
+use bevy_log::{info, error, warn};
+use vk_mem::{Alloc, AllocationCreateInfo}; // For depth image allocation
+
+// Helper to find supported depth format
+fn find_supported_format(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    candidates: &[vk::Format],
+    tiling: vk::ImageTiling,
+    features: vk::FormatFeatureFlags,
+) -> Option<vk::Format> {
+    candidates.iter().cloned().find(|format| {
+        let props = unsafe { instance.get_physical_device_format_properties(physical_device, *format) };
+        match tiling {
+            vk::ImageTiling::LINEAR => props.linear_tiling_features.contains(features),
+            vk::ImageTiling::OPTIMAL => props.optimal_tiling_features.contains(features),
+            _ => false,
+        }
+    })
+}
 
 // Only return format, store chosen extent in platform
 pub fn create_swapchain(platform: &mut VulkanContext, extent: vk::Extent2D) -> vk::SurfaceFormatKHR {
@@ -48,9 +67,6 @@ pub fn create_swapchain(platform: &mut VulkanContext, extent: vk::Extent2D) -> v
         height: extent.height.clamp(surface_caps.min_image_extent.height, surface_caps.max_image_extent.height),
     };
 
-    info!("[create_swapchain] Surface Caps: min_extent={:?}, max_extent={:?}, current_extent={:?}",
-    surface_caps.min_image_extent, surface_caps.max_image_extent, surface_caps.current_extent);
-    info!("[create_swapchain] Requested extent: {:?}, Chosen swap_extent: {:?}", extent, swap_extent);
     // Store the chosen extent in the context
     platform.current_swap_extent = swap_extent;
 
@@ -112,52 +128,134 @@ pub fn create_swapchain(platform: &mut VulkanContext, extent: vk::Extent2D) -> v
         unsafe { device.create_image_view(&view_info, None) }.expect("Failed to create image view")
     }).collect();
 
+    // --- Create Depth Resources ---
+    let depth_format = find_supported_format(
+        instance,
+        physical_device,
+        &[
+            vk::Format::D32_SFLOAT,
+            vk::Format::D32_SFLOAT_S8_UINT,
+            vk::Format::D24_UNORM_S8_UINT,
+        ],
+        vk::ImageTiling::OPTIMAL,
+        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+    ).expect("Failed to find suitable depth format");
+    platform.depth_format = Some(depth_format);
+
+    let (depth_image, depth_image_allocation) = {
+        let image_info = vk::ImageCreateInfo {
+            s_type: vk::StructureType::IMAGE_CREATE_INFO,
+            image_type: vk::ImageType::TYPE_2D,
+            format: depth_format,
+            extent: vk::Extent3D { width: swap_extent.width, height: swap_extent.height, depth: 1 },
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SampleCountFlags::TYPE_1,
+            tiling: vk::ImageTiling::OPTIMAL,
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            ..Default::default()
+        };
+        let alloc_info = AllocationCreateInfo {
+            usage: vk_mem::MemoryUsage::AutoPreferDevice,
+            ..Default::default()
+        };
+        unsafe {
+             platform.allocator.as_ref().unwrap().create_image(&image_info, &alloc_info)
+        }.expect("Failed to create depth image")
+    };
+    platform.depth_image = Some(depth_image);
+    platform.depth_image_allocation = Some(depth_image_allocation);
+
+    let depth_image_view = unsafe {
+        let view_info = vk::ImageViewCreateInfo {
+            s_type: vk::StructureType::IMAGE_VIEW_CREATE_INFO,
+            image: depth_image,
+            view_type: vk::ImageViewType::TYPE_2D,
+            format: depth_format,
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::DEPTH, // Use DEPTH aspect
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+            ..Default::default()
+        };
+        device.create_image_view(&view_info, None)
+    }.expect("Failed to create depth image view");
+    platform.depth_image_view = Some(depth_image_view);
+    // --- End Depth Resources ---
     surface_format
 }
 
 
 // Uses the extent stored in platform
 pub fn create_framebuffers(platform: &mut VulkanContext, surface_format: vk::SurfaceFormatKHR) {
-    info!("[create_framebuffers] Called with platform.current_swap_extent: {:?}, image_view count: {}", platform.current_swap_extent, platform.image_views.len());
     let device = platform.device.as_ref().expect("Device not available for framebuffer creation");
 
-    // Create Render Pass (if it doesn't exist)
+    // Create Render Pass (if it doesn't exist). Includes depth
     if platform.render_pass.is_none() {
         let color_attachment = vk::AttachmentDescription {
-            format: surface_format.format,
+            format: surface_format.format, // From swapchain
             samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::CLEAR,
-            store_op: vk::AttachmentStoreOp::STORE,
+            load_op: vk::AttachmentLoadOp::CLEAR, // Clear color buffer
+            store_op: vk::AttachmentStoreOp::STORE, // Store results
             stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
             stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
             initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::PRESENT_SRC_KHR, // Image layout for presentation
+            final_layout: vk::ImageLayout::PRESENT_SRC_KHR, // Ready for presentation
             ..Default::default()
         };
+
+        let depth_attachment = vk::AttachmentDescription {
+            format: platform.depth_format.expect("Depth format not set"), // From context
+            samples: vk::SampleCountFlags::TYPE_1,
+            load_op: vk::AttachmentLoadOp::CLEAR, // Clear depth buffer
+            store_op: vk::AttachmentStoreOp::DONT_CARE, // Don't need depth after frame
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, // Ready for depth test
+            ..Default::default()
+        };
+
         let color_attachment_ref = vk::AttachmentReference {
-            attachment: 0,
+            attachment: 0, // Index 0
             layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         };
+
+        let depth_attachment_ref = vk::AttachmentReference {
+            attachment: 1, // Index 1
+            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        };
+
         let subpass = vk::SubpassDescription {
             pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
             color_attachment_count: 1,
             p_color_attachments: &color_attachment_ref,
+            p_depth_stencil_attachment: &depth_attachment_ref, // Point to depth attachment
             ..Default::default()
         };
+
         // Add dependency to ensure render pass waits for image to be available
+        // and transitions layouts correctly. Wait for color attachment output stage.
         let dependency = vk::SubpassDependency {
             src_subpass: vk::SUBPASS_EXTERNAL,
             dst_subpass: 0,
-            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            src_access_mask: vk::AccessFlags::empty(), // Or COLOR_ATTACHMENT_WRITE if layout transition happens before
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            src_access_mask: vk::AccessFlags::empty(),
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
             ..Default::default()
         };
+
+        let attachments = [color_attachment, depth_attachment];
         let render_pass_info = vk::RenderPassCreateInfo {
             s_type: vk::StructureType::RENDER_PASS_CREATE_INFO,
-            attachment_count: 1,
-            p_attachments: &color_attachment,
+            attachment_count: attachments.len() as u32,
+            p_attachments: attachments.as_ptr(),
             subpass_count: 1,
             p_subpasses: &subpass,
             dependency_count: 1,
@@ -168,9 +266,10 @@ pub fn create_framebuffers(platform: &mut VulkanContext, surface_format: vk::Sur
             .expect("Failed to create render pass"));
     }
 
-    // Create Framebuffers
-    platform.framebuffers = platform.image_views.iter().map(|&view| {
-        let attachments = [view];
+    // Create Framebuffers - Includes depth view
+    let depth_view = platform.depth_image_view.expect("Depth image view missing for framebuffer creation");
+    platform.framebuffers = platform.image_views.iter().map(|&color_view| {
+        let attachments = [color_view, depth_view]; // Color attachment 0, Depth attachment 1
         let framebuffer_info = vk::FramebufferCreateInfo {
             s_type: vk::StructureType::FRAMEBUFFER_CREATE_INFO,
             render_pass: platform.render_pass.unwrap(),
@@ -204,34 +303,41 @@ pub fn cleanup_swapchain_resources(platform: &mut VulkanContext) {
          }
     };
 
-    info!("[cleanup_swapchain_resources] Cleaning up framebuffers, image views, render pass, and swapchain...");
     unsafe {
         // Destroy Framebuffers
         for fb in platform.framebuffers.drain(..) {
             device.destroy_framebuffer(fb, None);
         }
-        info!("[cleanup_swapchain_resources] Framebuffers destroyed.");
 
         // Destroy Image Views
         for view in platform.image_views.drain(..) {
             device.destroy_image_view(view, None);
         }
-        info!("[cleanup_swapchain_resources] Image views destroyed.");
         platform.images.clear(); // Explicitly clear the image handles vector
+
+        // Destroy Depth Buffer Resources (View, Image, Allocation)
+        if let Some(view) = platform.depth_image_view.take() {
+            device.destroy_image_view(view, None);
+        }
+        if let (Some(image), Some(mut alloc)) = (platform.depth_image.take(), platform.depth_image_allocation.take()) {
+             if let Some(allocator) = platform.allocator.as_ref() {
+                 allocator.destroy_image(image, &mut alloc);
+             } else {
+                  error!("[cleanup_swapchain_resources] Allocator not available to destroy depth image!");
+             }
+        }
+        platform.depth_format = None;
 
         // Destroy Render Pass (Only if it exists)
         // Render pass might be shared, only destroy if owned uniquely by swapchain setup?
         // For now, assume it's recreated on resize if needed.
         if let Some(rp) = platform.render_pass.take() {
             device.destroy_render_pass(rp, None);
-            info!("[cleanup_swapchain_resources] Render pass destroyed.");
         }
 
         // Destroy Swapchain (Only if it exists)
         if let Some(sc) = platform.swapchain.take() {
             swapchain_loader.destroy_swapchain(sc, None);
-            info!("[cleanup_swapchain_resources] Swapchain destroyed.");
         }
     }
-    info!("[cleanup_swapchain_resources] Cleanup complete.");
 }

@@ -22,6 +22,7 @@ use rusty_whip::gui_framework::{
     // Import plugin SystemSets for ordering
     plugins::core::CoreSet,
     plugins::interaction::GuiFrameworkInteractionPlugin,
+    plugins::interaction::InteractionSet,
     plugins::movement::GuiFrameworkDefaultMovementPlugin,
     plugins::bindings::GuiFrameworkDefaultBindingsPlugin,
 };
@@ -69,10 +70,10 @@ fn main() {
 
         // == Startup Systems ==
         .add_systems(Startup,
-            // Ensure app scene setup runs after core renderer and hotkey loading are done
+            // Ensure app scene setup runs after all core resources are created
             setup_scene_ecs
-                .after(CoreSet::CreateRenderer) // From core plugin
-                // .after(InteractionSet::LoadHotkeys) // Optional: If setup needs hotkeys loaded
+                .after(CoreSet::CreateTextResources) // Depends on the last core resource creation set
+                .after(InteractionSet::LoadHotkeys) // Also ensure hotkeys are loaded if needed by scene setup
         )
         // == Update Systems ==
         .add_systems(Update,
@@ -137,7 +138,7 @@ fn setup_scene_ecs(
             vertex_shader_path: "triangle.vert.spv".to_string(),
             fragment_shader_path: "triangle.frag.spv".to_string(),
         },
-        Transform::from_xyz(300.0, 150.0, 1.0),
+        Transform::from_xyz(300.0, 150.0, -1.0),
         Visibility(true),
         Interaction { clickable: true, draggable: true },
         Name::new("Triangle"),
@@ -158,7 +159,7 @@ fn setup_scene_ecs(
             vertex_shader_path: "square.vert.spv".to_string(),
             fragment_shader_path: "square.frag.spv".to_string(),
         },
-        Transform::from_xyz(125.0, 75.0, 2.0),
+        Transform::from_xyz(125.0, 75.0, -2.0),
         Visibility(true),
         Interaction { clickable: true, draggable: true },
         Name::new("Square"),
@@ -180,8 +181,6 @@ fn setup_scene_ecs(
 
 
     // TODO: Add instancing later using ECS patterns
-
-    info!("Initial ECS entities spawned.");
 }
 
 // System to update background vertices on resize (App specific)
@@ -196,7 +195,6 @@ fn background_resize_system(
         if event.width > 0.0 && event.height > 0.0 {
             let logical_width = event.width;
             let logical_height = event.height;
-            info!("Window resized to logical: {}x{}. Updating background vertices.", logical_width, logical_height);
 
             // Try to get the background entity's ShapeData
             if let Ok(mut shape_data) = background_query.get_single_mut() {

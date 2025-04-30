@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 // Import framework components, events, resources, and the new plugin
 use rusty_whip::gui_framework::{
     VulkanContext,
-    components::{ShapeData, Visibility, Interaction, Text, TextAlignment},
+    components::{ShapeData, Visibility, Interaction, Text, TextAlignment, EditableText},
     plugins::core::GuiFrameworkCorePlugin,
     // Import plugin SystemSets for ordering
     plugins::core::CoreSet,
@@ -197,6 +197,7 @@ fn setup_scene_ecs(
         Transform::from_xyz(50.0, 250.0, -2.0), // Position the text (ensure Z > shapes if needed)
         Visibility(true),
         Name::new("SampleText"),
+        EditableText,
     )).id(); // Get the entity ID after spawning
 
     // 3. Update the YrsDocResource map using the system parameter

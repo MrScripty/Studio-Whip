@@ -116,32 +116,31 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
 
 ## Task 9: Text Handling - Editing & Interaction
 - **Goal**: Integrate `yrs` (`YText`) for collaborative data storage. Implement basic mouse/keyboard editing for text entities using Bevy Input and Systems.
-- **Status**: Not started
+- **Status**: **In Progress**
 - **Affected Components/Systems/Resources**:
-    - Modified Component: `Text` (integration with Yrs data).
+    - Modified Component: `Text` (removed `content` field).
     - New Component: `EditableText` (marker), `Focus` (marker).
-    - New Resource: `YrsDocResource { doc: yrs::Doc, text_map: HashMap<Entity, yrs::Text> }` (example structure).
-    - New Systems: `text_editing_system`, `yrs_observer_system`.
-    - Modified Systems: `interaction_system`, `text_layout_system`, `text_rendering_system`.
-    - New Events: `TextFocusChanged { entity: Option<Entity> }`.
+    - New Resource: `YrsDocResource { doc: Arc<yrs::Doc>, text_map: Arc<Mutex<HashMap<Entity, TextRef>>> }`.
+    - New Systems: `text_editing_system` (Not Started).
+    - Modified Systems: `interaction_system` (focus management added), `text_layout_system` (reads from Yrs, event-driven).
+    - New Events: `TextFocusChanged { entity: Option<Entity> }`, `YrsTextChanged { entity: Entity }`.
 - **Steps**:
-    1.  **Add Dependency:** Add `yrs` to `Cargo.toml`.
-    2.  **Integrate `YrsDocResource`:** Set up a central Yrs document and a way to map Bevy `Entity` IDs to shared `yrs::Text` types within the document resource.
-    3.  **Modify `Text` Component:** Adapt `Text` component to potentially reference its corresponding `yrs::Text` or have its `content` be driven by it.
-    4.  **Modify `interaction_system`:** Query entities with `EditableText`. On click, determine the focused entity, add the `Focus` marker component to it (removing from others), and potentially send `TextFocusChanged` event. Calculate click position within text for cursor placement.
-    5.  **Create `text_editing_system`:**
+    1.  **Add Dependency:** Add `yrs` to `Cargo.toml`. - **Complete.**
+    2.  **Integrate `YrsDocResource`:** Set up a central Yrs document and map Bevy `Entity` IDs to shared `yrs::TextRef` types within the document resource. Initialize and populate in `main.rs`. - **Complete.**
+    3.  **Modify `Text` Component:** Remove `content: String`. Modify `text_layout_system` to fetch content from `YrsDocResource`. - **Complete.**
+    4.  **Modify `interaction_system`:** Query entities with `EditableText`. On click, determine the focused entity using line-based hit testing, add/remove the `Focus` marker component, and send `TextFocusChanged` event. - **Partially Complete** (Focus switching implemented; calculating precise click position within text for cursor placement is deferred).
+    5.  **Create `text_editing_system`:** (Not Started)
         *   Queries for the entity with the `Focus` component.
-        *   Reads `Res<Input<KeyCode>>`, `EventReader<ReceivedCharacter>` (from `bevy_input`).
-        *   Calculates cursor position based on clicks/input.
-        *   Generates `yrs::Text` transaction operations (inserts, deletes) on the `YrsDocResource` based on keyboard input for the focused entity.
+        *   Reads `Res<ButtonInput<KeyCode>>`, `EventReader<ReceivedCharacter>` (from `bevy_input`).
+        *   Calculates cursor position based on clicks/input (Requires Step 4 completion).
+        *   Generates `yrs::TextRef` transaction operations (inserts, deletes) on the `YrsDocResource` based on keyboard input for the focused entity.
+        *   Sends `YrsTextChanged` event after successful transaction.
         *   Store cursor position state (perhaps in a component on the focused entity or the `Focus` component itself).
-    6.  **Create `yrs_observer_system`:**
-        *   Observes changes to the `yrs::Text` types within the `YrsDocResource` (using Yrs observers/subscriptions).
-        *   When a `yrs::Text` changes, find the corresponding Bevy `Entity`.
-        *   Update the `String` content within the entity's `Text` component to match the Yrs state. This `Changed<Text>` will trigger the `text_layout_system`.
-    7.  **Cursor Rendering:** Modify `text_rendering_system` to query for the entity with `Focus` and cursor position data. Render a visual cursor (e.g., a simple quad) using the custom Vulkan renderer.
-    8.  **Test:** Spawn an entity with `Text` and `EditableText`. Click to focus. Type characters, press backspace/delete. Verify the text updates visually and the cursor moves appropriately. Check underlying Yrs data if possible.
-- **Constraints**: Requires Task 8. Focus on basic local editing. P2P synchronization deferred.
+    6.  **Implement Yrs Change Observation:** (Alternative Implemented)
+        *   Instead of a dedicated observer system, `text_layout_system` is now triggered by the `YrsTextChanged` event (sent by the future `text_editing_system` or network sync systems) or `Added<Text>`. This ensures layout only runs when the underlying data changes.
+    7.  **Cursor Rendering:** (Not Started) Modify `rendering_system` (or create a new system) to query for the entity with `Focus` and cursor position data. Render a visual cursor (e.g., a simple quad) using the custom Vulkan renderer.
+    8.  **Test:** (Partially Testable) Spawn an entity with `Text` and `EditableText`. Click to focus/unfocus, verify `Focus` component and `TextFocusChanged` event. Full editing test requires Step 5.
+- **Constraints**: Requires Task 8. Focus on basic local editing. P2P synchronization deferred. Precise cursor positioning within text deferred.
 
 ## Task 10: Implement Radial Pie Context Menu
 - **Goal**: Implement a popup pie-style context menu triggered by a hotkey, using Bevy ECS entities for UI elements and Bevy events/resources for state management.

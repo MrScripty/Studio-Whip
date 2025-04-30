@@ -29,3 +29,10 @@ pub struct HotkeyActionTriggered {
 pub struct YrsTextChanged {
     pub entity: Entity,
 }
+
+/// Event sent when the text input focus changes.
+#[derive(Event, Debug, Clone, Copy, Reflect)]
+pub struct TextFocusChanged {
+    /// The entity that gained focus, or None if focus was lost.
+    pub entity: Option<Entity>,
+}

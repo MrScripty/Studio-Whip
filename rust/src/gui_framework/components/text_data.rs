@@ -40,3 +40,13 @@ impl Default for Text {
         }
     }
 }
+
+/// Marker component indicating that a Text entity can be edited.
+#[derive(Component, Debug, Clone, Copy, Default, Reflect)]
+#[reflect(Component)]
+pub struct EditableText;
+
+/// Marker component indicating that a Text entity currently has input focus.
+#[derive(Component, Debug, Clone, Copy, Default, Reflect)]
+#[reflect(Component)]
+pub struct Focus;

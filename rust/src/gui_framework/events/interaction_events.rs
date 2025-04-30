@@ -23,3 +23,9 @@ pub struct HotkeyActionTriggered {
     /// The action string associated with the hotkey in the config file.
     pub action: String,
 }
+
+/// Event sent when the underlying Yrs data for a text entity has changed.
+#[derive(Event, Debug, Clone, Copy, Reflect)]
+pub struct YrsTextChanged {
+    pub entity: Entity,
+}

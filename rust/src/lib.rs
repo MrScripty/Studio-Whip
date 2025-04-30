@@ -1,7 +1,9 @@
-use bevy_ecs::prelude::Entity;
-use std::sync::Arc;
+use bevy_ecs::prelude::{Entity, Resource};
+use std::sync::{Arc, Mutex};
 use ash::vk;
 use bevy_reflect::Reflect;
+use std::collections::HashMap;
+use yrs::TextRef;
 
 pub mod gui_framework;
 
@@ -22,8 +24,8 @@ pub struct TextVertex {
 
 #[derive(bevy_ecs::prelude::Resource)]
 pub struct YrsDocResource {
-    pub doc: yrs::Doc, // The shared Yrs document
-    pub text_map: std::collections::HashMap<Entity, yrs::TextRef>,
+    pub doc: Arc<yrs::Doc>,
+    pub text_map: Arc<Mutex<HashMap<Entity, TextRef>>>,
 }
 
 /// Holds the prepared Vulkan handles and metadata needed for drawing a batch of text.

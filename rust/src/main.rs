@@ -67,8 +67,8 @@ fn main() {
         // == Resources ==
         .insert_resource(VulkanContextResource(vulkan_context))
         .insert_resource(YrsDocResource {
-            doc: Doc::new(),
-            text_map: std::collections::HashMap::new(),
+            doc: Arc::new(Doc::new()), // Wrap Doc in Arc
+            text_map: Arc::new(Mutex::new(std::collections::HashMap::new())), // Wrap HashMap in Mutex and Arc
         })
         // == Add Framework Plugins ==
         .add_plugins(GuiFrameworkCorePlugin)
@@ -200,8 +200,7 @@ fn setup_scene_ecs(
     )).id(); // Get the entity ID after spawning
 
     // 3. Update the YrsDocResource map using the system parameter
-    // No need for Option<> here, ResMut will panic if resource doesn't exist
-    yrs_res.text_map.insert(text_entity, text_handle);
+    yrs_res.text_map.lock().expect("Failed to lock text_map mutex in setup").insert(text_entity, text_handle);
     info!("Mapped Entity {:?} to YrsText 'sample_text'", text_entity);
 
 

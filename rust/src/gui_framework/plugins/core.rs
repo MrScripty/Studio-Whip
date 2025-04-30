@@ -6,14 +6,14 @@ use bevy_window::{PrimaryWindow, Window};
 use bevy_winit::WinitWindows;
 use bevy_transform::prelude::{GlobalTransform, Transform};
 use std::sync::{Arc, Mutex};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use ash::vk;
 use bevy_color::Color;
 use bevy_math::{Vec2, IVec2, Mat4};
-use cosmic_text::{Attrs, Metrics, Shaping, SwashCache, Wrap, Color as CosmicColor, Font};
+use cosmic_text::{Attrs, Shaping, SwashCache, Wrap, Color as CosmicColor, Font, Buffer, Metrics};
 use swash::FontRef;
 use vk_mem::Alloc;
-use yrs::{Transact, GetString};
+use yrs::{Transact, GetString, TextRef};
 
 // Import types from the crate root (lib.rs)
 use crate::{
@@ -25,6 +25,7 @@ use crate::{
 };
 
 // Import types/functions from the gui_framework
+use crate::gui_framework::events::YrsTextChanged;
 use crate::gui_framework::{
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
     rendering::render_engine::Renderer,
@@ -689,7 +690,10 @@ fn create_swash_cache_system(mut commands: Commands) {
 
 fn text_layout_system(
     mut commands: Commands,
+    mut event_reader: EventReader<YrsTextChanged>,
     query: Query<(Entity, &Text, &Transform), (Or<(Changed<Text>, Added<Text>)>, With<Visibility>)>,
+    text_component_query: Query<(&Text, &Transform, &Visibility)>,
+    new_text_component_query: Query<Entity, Added<Text>>,
     yrs_doc_res: Res<YrsDocResource>,
     font_server_res: Res<FontServerResource>,
     glyph_atlas_res: Res<GlyphAtlasResource>,
@@ -714,44 +718,69 @@ fn text_layout_system(
         return;
     };
 
-    // --- Loop through Entities with Text ---
-    for (entity, text, transform) in query.iter() {
-        // --- Create Cosmic Text Buffer PER ENTITY ---
-        let metrics = Metrics::new(text.size, text.size * 1.2);
-        let mut buffer = cosmic_text::Buffer::new(&mut font_server.font_system, metrics);
+    // --- Determine which entities need processing ---
+    let mut entities_to_process: HashSet<Entity> = HashSet::new();
 
-        // --- Set Text Content and Attributes (Using robust color conversion) ---
-        let cosmic_color = match text.color {
-            bevy_color::Color::Srgba(srgba) => CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8),
-            bevy_color::Color::LinearRgba(linear) => CosmicColor::rgba((linear.red * 255.0) as u8, (linear.green * 255.0) as u8, (linear.blue * 255.0) as u8, (linear.alpha * 255.0) as u8),
-            bevy_color::Color::Hsla(hsla) => { let srgba: bevy_color::Srgba = hsla.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
-            bevy_color::Color::Hsva(hsva) => { let srgba: bevy_color::Srgba = hsva.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
-            bevy_color::Color::Hwba(hwba) => { let srgba: bevy_color::Srgba = hwba.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
-            bevy_color::Color::Laba(laba) => { let srgba: bevy_color::Srgba = laba.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
-            bevy_color::Color::Lcha(lcha) => { let srgba: bevy_color::Srgba = lcha.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
-            bevy_color::Color::Oklaba(oklaba) => { let srgba: bevy_color::Srgba = oklaba.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
-            bevy_color::Color::Oklcha(oklcha) => { let srgba: bevy_color::Srgba = oklcha.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
-            bevy_color::Color::Xyza(xyza) => { let srgba: bevy_color::Srgba = xyza.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
-            // Add fallbacks or other specific color types if needed
-            // _ => { warn!("Unhandled Bevy color type: {:?}", text.color); CosmicColor::WHITE } // Example fallback
+    // Add entities from events
+    for event in event_reader.read() {
+        entities_to_process.insert(event.entity);
+    }
+
+    // Add newly added entities
+    for entity in new_text_component_query.iter() { // <-- Use renamed parameter
+        entities_to_process.insert(entity);
+    }
+
+    if entities_to_process.is_empty() {
+        return; // Nothing to do
+    }
+
+    // --- Loop through Entities with Text that has been updated ---
+    for entity in entities_to_process {
+        // Get the components for the specific entity
+        let Ok((text, transform, visibility)) = text_component_query.get(entity) else { // <-- Use renamed parameter
+            warn!("[text_layout_system] Could not find components for entity {:?} signaled for update.", entity);
+            continue;
         };
-        let attrs = Attrs::new().color(cosmic_color);
 
-        // --- Get Text Content from YrsDocResource ---
-        let text_content = match yrs_doc_res.text_map.get(&entity) {
+        if !visibility.is_visible() {
+            continue;
+        }
+
+        // --- Get Text Content from YrsDocResource (using sync Transact) ---
+        // Explicitly get the Arc<Mutex<HashMap>> before locking
+        let text_map_arc: &Arc<Mutex<HashMap<Entity, TextRef>>> = &yrs_doc_res.text_map;
+        let text_map_guard = text_map_arc.lock().expect("Failed to lock text_map mutex");
+        let text_content = match text_map_guard.get(&entity) { // Call .get() on the MutexGuard
             Some(yrs_text_handle) => {
-                // Lock the document briefly to get the string representation
-                // Note: This uses a read transaction, which is usually fast.
-                // Consider potential performance implications if many text entities change frequently.
+                // Access the Arc<Doc> within the resource and use synchronous Transact
                 let txn = yrs_doc_res.doc.transact();
                 yrs_text_handle.get_string(&txn)
             }
             None => {
                 warn!("[text_layout_system] Entity {:?} has Text component but no corresponding YrsText in resource map. Skipping.", entity);
-                continue; // Skip this entity if no Yrs data found
+                continue;
             }
         };
 
+        // --- Create Cosmic Text Buffer PER ENTITY being processed ---
+        let metrics = Metrics::new(text.size, text.size * 1.2); // Use Metrics here
+        let mut buffer = Buffer::new(&mut font_server.font_system, metrics); // Create buffer inside the loop
+
+        // --- Set Text Content and Attributes ---
+        let cosmic_color = match text.color {
+             bevy_color::Color::Srgba(srgba) => CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8),
+             bevy_color::Color::LinearRgba(linear) => CosmicColor::rgba((linear.red * 255.0) as u8, (linear.green * 255.0) as u8, (linear.blue * 255.0) as u8, (linear.alpha * 255.0) as u8),
+             bevy_color::Color::Hsla(hsla) => { let srgba: bevy_color::Srgba = hsla.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
+             bevy_color::Color::Hsva(hsva) => { let srgba: bevy_color::Srgba = hsva.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
+             bevy_color::Color::Hwba(hwba) => { let srgba: bevy_color::Srgba = hwba.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
+             bevy_color::Color::Laba(laba) => { let srgba: bevy_color::Srgba = laba.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
+             bevy_color::Color::Lcha(lcha) => { let srgba: bevy_color::Srgba = lcha.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
+             bevy_color::Color::Oklaba(oklaba) => { let srgba: bevy_color::Srgba = oklaba.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
+             bevy_color::Color::Oklcha(oklcha) => { let srgba: bevy_color::Srgba = oklcha.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
+             bevy_color::Color::Xyza(xyza) => { let srgba: bevy_color::Srgba = xyza.into(); CosmicColor::rgba((srgba.red * 255.0) as u8, (srgba.green * 255.0) as u8, (srgba.blue * 255.0) as u8, (srgba.alpha * 255.0) as u8) },
+        };
+        let attrs = Attrs::new().color(cosmic_color);
         buffer.set_text(&mut font_server.font_system, &text_content, &attrs, Shaping::Advanced);
 
         // --- Set Wrapping ---
@@ -770,7 +799,7 @@ fn text_layout_system(
         let mut positioned_glyphs = Vec::new();
 
         // --- Loop through Layout Runs (Lines) ---
-        for run in buffer.layout_runs() {
+        for run in buffer.layout_runs() { // Use the buffer created inside the loop
             let baseline_y = -run.line_y;
 
             // --- Loop through Glyphs in the Run ---
@@ -798,32 +827,21 @@ fn text_layout_system(
                         let width = placement.width as f32;
                         let height = placement.height as f32;
 
-                        // --- Get Font Arc ---
                         let font_arc: Arc<Font> = match font_server.font_system.get_font(layout_glyph.font_id) {
                             Some(f) => f,
-                            None => {
-                                warn!("Font ID {:?} not found in FontSystem.", layout_glyph.font_id);
-                                continue;
-                            }
+                            None => { warn!("Font ID {:?} not found.", layout_glyph.font_id); continue; }
                         };
 
-                        // --- Get swash metrics ---
-                        // Assuming as_swash() returns FontRef directly based on previous compiler error
                         let swash_font_ref: FontRef = font_arc.as_swash();
                         let swash_metrics = swash_font_ref.metrics(&[]);
-
-                        // --- Proceed directly with metrics ---
                         let units_per_em = swash_metrics.units_per_em as f32;
 
-                        if units_per_em == 0.0 {
-                            warn!("Units per em is 0 for font ID {:?}, skipping glyph.", layout_glyph.font_id);
-                            continue; // Skip glyph if metrics are bad
-                        }
-                        let scale_factor = layout_glyph.font_size / units_per_em;
-                        let ascent = swash_metrics.ascent * scale_factor;
-                        let descent = swash_metrics.descent * scale_factor;
+                        if units_per_em == 0.0 { warn!("Units per em is 0 for font ID {:?}.", layout_glyph.font_id); continue; }
 
-                        // --- Calculate Vertex Positions ---
+                        let scale_factor = layout_glyph.font_size / units_per_em;
+                        // let ascent = swash_metrics.ascent * scale_factor; // Not needed for vertex calc
+                        // let descent = swash_metrics.descent * scale_factor; // Not needed for vertex calc
+
                         let relative_left_x = layout_glyph.x;
                         let relative_right_x = relative_left_x + width;
                         let relative_top_y = baseline_y + placement.top as f32;
@@ -834,32 +852,23 @@ fn text_layout_system(
                         let bottom_right = Vec2::new(relative_right_x, relative_bottom_y);
                         let bottom_left = Vec2::new(relative_left_x, relative_bottom_y);
 
-                        // Define the [Vec2; 4] array
                         let relative_vertices = [top_left, top_right, bottom_right, bottom_left];
-                        // --- End Vertex Calculation ---
 
-                        // --- Push the PositionedGlyph with calculated vertices ---
                         positioned_glyphs.push(PositionedGlyph {
                             glyph_info: glyph_info_copy,
                             layout_glyph: layout_glyph.clone(),
-                            vertices: relative_vertices, // Use the calculated array
+                            vertices: relative_vertices,
                         });
                     }
-                    Err(e) => {
-                        warn!("Failed to add glyph to atlas: {:?}", e);
-                    }
-                } // End match add_result
-            } // End loop: for layout_glyph
-        } // End loop: for run
-
-        // --- Get the length BEFORE moving the vector ---
-        let num_glyphs = positioned_glyphs.len();
+                    Err(e) => { warn!("Failed to add glyph to atlas: {:?}", e); }
+                }
+            }
+        }
 
         // --- Insert Component AFTER processing all glyphs for the entity ---
         commands.entity(entity).insert(TextLayoutOutput {
-            glyphs: positioned_glyphs, // Move happens here
+            glyphs: positioned_glyphs,
         });
-
     } // --- End loop: for (entity, ...) ---
 }
 

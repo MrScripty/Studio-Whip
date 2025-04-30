@@ -14,7 +14,7 @@ use std::env;
 use crate::gui_framework::{
     interaction::hotkeys::{HotkeyConfig, HotkeyError},
     components::{Interaction, ShapeData, Visibility}, // Need ShapeData/Visibility for interaction_system query
-    events::{EntityClicked, EntityDragged, HotkeyActionTriggered},
+    events::{EntityClicked, EntityDragged, HotkeyActionTriggered, YrsTextChanged},
 };
 
 // Import resources used/managed by this plugin's systems
@@ -39,18 +39,19 @@ impl Plugin for GuiFrameworkInteractionPlugin {
 
         // --- Type Registration ---
         app.register_type::<Interaction>()
-           .register_type::<HotkeyResource>() // Register the resource wrapper
-           .register_type::<HotkeyConfig>()   // Register the inner config struct
-           .register_type::<EntityClicked>()
-           .register_type::<EntityDragged>()
-           .register_type::<HotkeyActionTriggered>();
+            .register_type::<HotkeyResource>() // Register the resource wrapper
+            .register_type::<HotkeyConfig>()   // Register the inner config struct
+            .register_type::<EntityClicked>()
+            .register_type::<EntityDragged>()
+            .register_type::<HotkeyActionTriggered>();
 
         // --- Event Registration ---
         // Ensure events are registered if not already done elsewhere
         // (App::add_event is idempotent)
         app.add_event::<EntityClicked>()
-           .add_event::<EntityDragged>()
-           .add_event::<HotkeyActionTriggered>();
+            .add_event::<EntityDragged>()
+            .add_event::<HotkeyActionTriggered>()
+            .add_event::<YrsTextChanged>();
 
         // --- System Setup ---
         app

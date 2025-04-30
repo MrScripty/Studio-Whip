@@ -3,7 +3,7 @@
 ## Overview
 These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin structure, supporting future features like advanced UI elements and collaborative editing. The framework uses Bevy's core non-rendering features (ECS, input, events, etc.) and drives a custom Vulkan rendering backend.
 
-**Current Status:** The migration to Bevy (v0.15) and the refactor into Bevy plugins (Tasks 6 & 7) are complete. Core logic resides in Bevy systems within framework plugins (`GuiFrameworkCorePlugin`, etc.). Rendering uses the custom Vulkan backend, handles dynamic resizing, uses a Y-up world coordinate system, and supports dynamic vertex buffer updates for shapes. **Task 8 (Text Rendering Foundation) is now complete:** text layout occurs via `cosmic-text`, glyphs are cached/uploaded to a Vulkan atlas managed by `GlyphAtlas` (using `rectangle-pack` for packing), vertices are generated with correct baseline alignment, and text is drawn using a dedicated pipeline and dynamic vertex buffer managed by the `Renderer`. Known issues remain regarding text descriptor set binding and potential optimizations/refactoring.
+**Current Status:** The migration to Bevy (v0.15) and the refactor into Bevy plugins (Tasks 6 & 7) are complete. Core logic resides in Bevy systems within framework plugins (`GuiFrameworkCorePlugin`, etc.). Rendering uses the custom Vulkan backend, handles dynamic resizing, uses a Y-up world coordinate system, and supports dynamic vertex buffer updates for shapes. **Task 8 (Text Rendering Foundation) is complete.** Text layout occurs via `cosmic-text`, glyphs are cached/uploaded to a Vulkan atlas, vertices are generated, and text is drawn using a dedicated pipeline. **Task 9 (Text Editing) is in progress:** Yrs integration, focus management, and layout caching (`TextBufferCache`) are complete. Cursor state components (`CursorState`, `CursorVisual`) have been added.
 
 ## Task 1: Implement Event Bus and Convert Existing Functionality
 - **Goal**: Introduce an event bus to decouple components and convert current interactions (dragging, instancing) to use it.
@@ -115,32 +115,41 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
 - **Constraints**: Requires Task 7 (Plugin Refactor) completion. Initial focus on non-wrapping, static text. Rendering uses the custom Vulkan backend. **Known issues:** Text descriptor Set 0 binding uses an incorrect workaround. Text rendering resource management could be refactored for efficiency/encapsulation. Minor visual artifacts may occur near glyph edges with linear filtering.
 
 ## Task 9: Text Handling - Editing & Interaction
-- **Goal**: Integrate `yrs` (`YText`) for collaborative data storage. Implement basic mouse/keyboard editing for text entities using Bevy Input and Systems.
+- **Goal**: Integrate `yrs` (`YText`) for collaborative data storage. Implement basic mouse/keyboard editing for text entities using Bevy Input and Systems, including accurate cursor positioning and rendering.
 - **Status**: **In Progress**
 - **Affected Components/Systems/Resources**:
     - Modified Component: `Text` (removed `content` field).
-    - New Component: `EditableText` (marker), `Focus` (marker).
+    - New Component: `EditableText` (marker), `Focus` (marker), **`CursorState`**, **`CursorVisual`**, **`TextBufferCache`**.
     - New Resource: `YrsDocResource { doc: Arc<yrs::Doc>, text_map: Arc<Mutex<HashMap<Entity, TextRef>>> }`.
-    - New Systems: `text_editing_system` (Not Started).
-    - Modified Systems: `interaction_system` (focus management added), `text_layout_system` (reads from Yrs, event-driven).
+    - New Systems: `text_editing_system` (Not Started), `manage_cursor_visual_system` (Not Started), `update_cursor_transform_system` (Not Started).
+    - Modified Systems: `interaction_system` (focus management added), `text_layout_system` (reads from Yrs, event-driven, **writes `TextBufferCache`**), `cleanup_trigger_system` (**cleans `TextBufferCache`**).
     - New Events: `TextFocusChanged { entity: Option<Entity> }`, `YrsTextChanged { entity: Entity }`.
 - **Steps**:
     1.  **Add Dependency:** Add `yrs` to `Cargo.toml`. - **Complete.**
     2.  **Integrate `YrsDocResource`:** Set up a central Yrs document and map Bevy `Entity` IDs to shared `yrs::TextRef` types within the document resource. Initialize and populate in `main.rs`. - **Complete.**
     3.  **Modify `Text` Component:** Remove `content: String`. Modify `text_layout_system` to fetch content from `YrsDocResource`. - **Complete.**
-    4.  **Modify `interaction_system`:** Query entities with `EditableText`. On click, determine the focused entity using line-based hit testing, add/remove the `Focus` marker component, and send `TextFocusChanged` event. - **Partially Complete** (Focus switching implemented; calculating precise click position within text for cursor placement is deferred).
-    5.  **Create `text_editing_system`:** (Not Started)
-        *   Queries for the entity with the `Focus` component.
-        *   Reads `Res<ButtonInput<KeyCode>>`, `EventReader<ReceivedCharacter>` (from `bevy_input`).
-        *   Calculates cursor position based on clicks/input (Requires Step 4 completion).
-        *   Generates `yrs::TextRef` transaction operations (inserts, deletes) on the `YrsDocResource` based on keyboard input for the focused entity.
+    4.  **Implement Focus Management:** Modify `interaction_system` to query `EditableText`, handle clicks, manage `Focus` component, and send `TextFocusChanged` event. - **Complete.**
+    5.  **Implement Yrs Change Observation:** Modify `text_layout_system` to trigger on `YrsTextChanged` or `Added<Text>`. - **Complete.**
+    6.  **Add Cursor State & Cache Components:** Define `CursorState`, `CursorVisual`, `TextBufferCache`. Modify `text_layout_system` to populate `TextBufferCache`. Modify cleanup to remove cache. Register components. - **Complete.**
+    7.  **Implement Cursor Visual Management:** (Next Step) Create `manage_cursor_visual_system`.
+        *   Reacts to `TextFocusChanged` events and `RemovedComponents<Focus>`.
+        *   Adds/removes `CursorState` component to/from the focused text entity.
+        *   Spawns/despawns a child entity with `CursorVisual`, `ShapeData` (for a simple quad), `Transform`, and `Visibility` components.
+    8.  **Implement Text Editing Logic:** (Future Step) Create `text_editing_system`.
+        *   Queries for the entity with `Focus` and its `CursorState`.
+        *   Reads `Res<ButtonInput<KeyCode>>`, `EventReader<ReceivedCharacter>`.
+        *   Calculates new cursor position (byte offset) based on input (characters, backspace, delete, arrow keys - using `cosmic_text::Buffer::cursor_motion`).
+        *   Generates `yrs::TextRef` transaction operations (inserts, deletes) on `YrsDocResource`.
         *   Sends `YrsTextChanged` event after successful transaction.
-        *   Store cursor position state (perhaps in a component on the focused entity or the `Focus` component itself).
-    6.  **Implement Yrs Change Observation:** (Alternative Implemented)
-        *   Instead of a dedicated observer system, `text_layout_system` is now triggered by the `YrsTextChanged` event (sent by the future `text_editing_system` or network sync systems) or `Added<Text>`. This ensures layout only runs when the underlying data changes.
-    7.  **Cursor Rendering:** (Not Started) Modify `rendering_system` (or create a new system) to query for the entity with `Focus` and cursor position data. Render a visual cursor (e.g., a simple quad) using the custom Vulkan renderer.
-    8.  **Test:** (Partially Testable) Spawn an entity with `Text` and `EditableText`. Click to focus/unfocus, verify `Focus` component and `TextFocusChanged` event. Full editing test requires Step 5.
-- **Constraints**: Requires Task 8. Focus on basic local editing. P2P synchronization deferred. Precise cursor positioning within text deferred.
+        *   Updates the `CursorState.position`.
+    9.  **Implement Cursor Rendering/Positioning:** (Future Step) Create `update_cursor_transform_system`.
+        *   Queries for entities with `CursorVisual` and their parent's `CursorState`, `TextBufferCache`, `GlobalTransform`.
+        *   Uses `cosmic_text::Buffer::layout_cursor` (from `TextBufferCache`) and `CursorState.position` to get the precise local (X, Y) coordinates for the cursor.
+        *   Combines local coordinates with the parent text entity's `GlobalTransform` to calculate the world position.
+        *   Updates the `Transform` of the `CursorVisual` entity.
+        *   Requires new shaders (`cursor.vert`, `cursor.frag`) and `build.rs` update.
+    10. **Test:** Test focus changes, cursor appearance/disappearance, character insertion/deletion, and arrow key navigation.
+- **Constraints**: Requires Task 8. Focus on basic local editing. P2P synchronization deferred. Requires careful handling of UTF-8 byte offsets vs. character/glyph indices when interacting with `yrs` and `cosmic-text`.
 
 ## Task 10: Implement Radial Pie Context Menu
 - **Goal**: Implement a popup pie-style context menu triggered by a hotkey, using Bevy ECS entities for UI elements and Bevy events/resources for state management.

@@ -5,6 +5,6 @@ This is a casual dump file for assorted parts to a future coding utility. If you
 - Create differentials, for example, only providing what changed in the terminal output
 - Code stripping
     - Return Functions Without Body
-
+- Fetch recent gitt commit messages for initial context
 ### Secondary debgging
 - `env:RUST_BACKTRACE=1 ; ./*

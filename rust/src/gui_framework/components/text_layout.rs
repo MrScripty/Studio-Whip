@@ -42,3 +42,13 @@ pub struct TextRenderData {
     /// Handle to the per-entity descriptor set (Set 0: Global Projection, Entity Transform).
     pub descriptor_set_0: vk::DescriptorSet,
 }
+
+/// Component caching the `cosmic_text::Buffer` used for layout.
+/// This avoids recalculating layout just for cursor positioning or hit testing.
+/// Note: `cosmic_text::Buffer` itself is not Reflectable.
+#[derive(Component)]
+pub struct TextBufferCache {
+    // Store Option<Buffer> because Buffer::new_empty requires Metrics,
+    // and we might want to represent an empty/unlayouted state.
+    pub buffer: Option<cosmic_text::Buffer>,
+}

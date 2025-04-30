@@ -31,7 +31,7 @@ use crate::gui_framework::{
     rendering::render_engine::Renderer,
     rendering::glyph_atlas::GlyphAtlas,
     rendering::font_server::FontServer,
-    components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph, TextRenderData},
+    components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph, TextRenderData, TextBufferCache},
     rendering::shader_utils,
 };
 
@@ -78,6 +78,9 @@ impl Plugin for GuiFrameworkCorePlugin {
         // Register math types used in reflection
         app.register_type::<Vec2>();
         app.register_type::<IVec2>();
+        app.register_type::<crate::gui_framework::components::CursorState>();
+        app.register_type::<crate::gui_framework::components::CursorVisual>();
+        // TextBufferCache is not registered as it contains non-reflectable Buffer
 
 
         // --- System Setup ---
@@ -691,9 +694,9 @@ fn create_swash_cache_system(mut commands: Commands) {
 fn text_layout_system(
     mut commands: Commands,
     mut event_reader: EventReader<YrsTextChanged>,
-    query: Query<(Entity, &Text, &Transform), (Or<(Changed<Text>, Added<Text>)>, With<Visibility>)>,
     text_component_query: Query<(&Text, &Transform, &Visibility)>,
     new_text_component_query: Query<Entity, Added<Text>>,
+    mut text_buffer_cache_query: Query<&mut TextBufferCache>,
     yrs_doc_res: Res<YrsDocResource>,
     font_server_res: Res<FontServerResource>,
     glyph_atlas_res: Res<GlyphAtlasResource>,
@@ -865,11 +868,21 @@ fn text_layout_system(
             }
         }
 
-        // --- Insert Component AFTER processing all glyphs for the entity ---
+        // --- Update/Insert Components AFTER processing all glyphs for the entity ---
+        // 1. Update/Insert TextLayoutOutput
         commands.entity(entity).insert(TextLayoutOutput {
             glyphs: positioned_glyphs,
         });
-    } // --- End loop: for (entity, ...) ---
+
+        // 2. Update/Insert TextBufferCache
+        if let Ok(mut cache) = text_buffer_cache_query.get_mut(entity) {
+            cache.buffer = Some(buffer);
+        } else {
+            commands.entity(entity).insert(TextBufferCache {
+                buffer: Some(buffer),
+            });
+        }
+    }
 }
 
 // Last system: Collects shape/text render data and triggers rendering via the custom Vulkan Renderer.
@@ -1028,6 +1041,13 @@ fn cleanup_trigger_system(world: &mut World) {
                     let mut sets_to_free: Vec<vk::DescriptorSet> = Vec::new();
                     let entity_count = text_render_query.iter(world).count();
                     info!("[Cleanup] Found {} entities with TextRenderData.", entity_count);
+                    // Also remove TextBufferCache components during cleanup
+                    let mut text_cache_query = world.query_filtered::<Entity, With<TextBufferCache>>(); // Use imported type
+                    let cache_entities: Vec<Entity> = text_cache_query.iter(world).collect();
+                    for entity in cache_entities {
+                        world.entity_mut(entity).remove::<TextBufferCache>();
+                    }
+                    info!("[Cleanup] Removed TextBufferCache components.");
 
                     // Need allocator temporarily here as well
                     if let Some(allocator) = allocator_arc_opt.as_ref() {

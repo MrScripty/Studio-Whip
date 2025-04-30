@@ -50,3 +50,18 @@ pub struct EditableText;
 #[derive(Component, Debug, Clone, Copy, Default, Reflect)]
 #[reflect(Component)]
 pub struct Focus;
+
+/// Component storing the logical cursor position (byte offset) within the text.
+/// Added to the entity that has `Focus`.
+#[derive(Component, Debug, Clone, Copy, Default, Reflect)]
+#[reflect(Component)]
+pub struct CursorState {
+    pub position: usize,
+    // Add selection range later if needed
+}
+
+/// Marker component for the entity that visually represents the cursor.
+/// This entity is typically a child of the focused text entity.
+#[derive(Component, Debug, Clone, Copy, Default, Reflect)]
+#[reflect(Component)]
+pub struct CursorVisual;

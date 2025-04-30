@@ -2,7 +2,6 @@ use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::{PreparedDrawData, PreparedTextDrawData};
 use bevy_log::info; // Added for logging
-use bevy_log::warn;
 
 pub fn record_command_buffers(
     platform: &mut VulkanContext,

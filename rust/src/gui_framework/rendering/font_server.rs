@@ -1,5 +1,5 @@
 use bevy_ecs::system::Resource;
-use bevy_log::{info, warn};
+use bevy_log::warn;
 use cosmic_text::{fontdb, FontSystem};
 use std::sync::{Arc, Mutex};
 

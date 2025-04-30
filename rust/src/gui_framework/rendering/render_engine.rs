@@ -6,13 +6,11 @@ use crate::gui_framework::rendering::command_buffers::record_command_buffers;
 use crate::gui_framework::rendering::pipeline_manager::PipelineManager;
 use crate::gui_framework::rendering::buffer_manager::BufferManager;
 use crate::gui_framework::rendering::resize_handler::ResizeHandler;
-use bevy_math::Mat4;
-use bevy_log::{info, warn, error};
+use bevy_log::{warn, error};
 use crate::{RenderCommandData, VulkanContextResource};  // from lib.rs
-use crate::{TextVertex, PreparedTextDrawData, GlobalProjectionUboResource}; // Added TextVertex and TextRenderCommandData
-use vk_mem::{Allocation, Alloc}; // Added for text vertex buffer allocation
-use crate::GlyphAtlasResource; // Added for render signature
-use crate::gui_framework::rendering::shader_utils;
+use crate::{PreparedTextDrawData, GlobalProjectionUboResource}; // Added TextVertex and TextRenderCommandData
+ // Added for text vertex buffer allocation
+ // Added for render signature
 
 pub struct Renderer {
     buffer_manager: BufferManager,
@@ -124,7 +122,7 @@ impl Renderer {
         global_ubo_res: &GlobalProjectionUboResource,
     ) {
         // --- Lock context once at the beginning to get handles and perform operations ---
-        let Ok(mut platform_guard) = vk_context_res.0.lock() else {
+        let Ok(platform_guard) = vk_context_res.0.lock() else {
             warn!("[Renderer::render] Could not lock VulkanContext. Skipping frame.");
             return;
         };

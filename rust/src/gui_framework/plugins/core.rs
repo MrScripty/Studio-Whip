@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use ash::vk;
 use bevy_color::Color;
 use bevy_math::{Vec2, IVec2, Mat4};
-use cosmic_text::{Attrs, BufferLine, FontSystem, Metrics, Shaping, SwashCache, Wrap, Color as CosmicColor, Font};
+use cosmic_text::{Attrs, Metrics, Shaping, SwashCache, Wrap, Color as CosmicColor, Font};
 use swash::FontRef;
 use vk_mem::Alloc;
 
@@ -19,15 +19,14 @@ use crate::{
     Vertex, RenderCommandData, TextVertex,
     PreparedTextDrawData, // <-- Add this import
     GlobalProjectionUboResource,
-    TextRenderingResources, // text Vulkan objects
-    PreparedTextDrawsResource, // Keep this if cleanup needs it, otherwise remove
+    TextRenderingResources, // Keep this if cleanup needs it, otherwise remove
 };
 
 // Import types/functions from the gui_framework
 use crate::gui_framework::{
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
     rendering::render_engine::Renderer,
-    rendering::glyph_atlas::{GlyphAtlas, GlyphInfo},
+    rendering::glyph_atlas::GlyphAtlas,
     rendering::font_server::FontServer,
     components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph, TextRenderData},
     rendering::shader_utils,
@@ -181,7 +180,7 @@ fn create_global_ubo_system(
     primary_window_q: Query<&Window, With<PrimaryWindow>>, // Add window query parameter
 ) {
     info!("Running create_global_ubo_system (Core Plugin)...");
-    let Ok(mut vk_ctx_guard) = vk_context_res.0.lock() else {
+    let Ok(vk_ctx_guard) = vk_context_res.0.lock() else {
         error!("Failed to lock VulkanContext in create_global_ubo_system");
         return;
     };
@@ -312,7 +311,7 @@ fn create_text_rendering_resources_system(
     glyph_atlas_res: Res<GlyphAtlasResource>, // Need atlas for initial descriptor set update
 ) {
     info!("Running create_text_rendering_resources_system (Core Plugin)...");
-    let Ok(mut vk_ctx_guard) = vk_context_res.0.lock() else {
+    let Ok(vk_ctx_guard) = vk_context_res.0.lock() else {
         error!("Failed to lock VulkanContext in create_text_rendering_resources_system");
         return;
     };
@@ -954,7 +953,7 @@ fn rendering_system(
     // TODO: Sort text draws by depth if needed
 
     // --- Call Custom Renderer ---
-    let mut renderer_guard_opt = renderer_res.0.lock().ok(); // Bind Option<Guard> to variable first
+    let renderer_guard_opt = renderer_res.0.lock().ok(); // Bind Option<Guard> to variable first
     if let Some(mut renderer_guard) = renderer_guard_opt {
         renderer_guard.render(
             &vk_context_res,

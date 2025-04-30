@@ -1,6 +1,6 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use bevy_log::{info, error, warn};
+use bevy_log::{info, error};
 use vk_mem::{Alloc, AllocationCreateInfo}; // For depth image allocation
 
 // Helper to find supported depth format

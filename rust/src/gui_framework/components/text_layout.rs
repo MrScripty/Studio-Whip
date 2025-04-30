@@ -1,7 +1,6 @@
 use crate::gui_framework::rendering::glyph_atlas::GlyphInfo;
 use bevy_ecs::prelude::Component;
 use bevy_math::Vec2;
-use bevy_reflect::{Reflect, FromReflect};
 use cosmic_text::LayoutGlyph;
 use ash::vk;
 

@@ -1,6 +1,4 @@
 use ash::vk;
-use bevy_math::Mat4;
-use bevy_log::{info, warn, error};
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::gui_framework::rendering::swapchain::{create_swapchain, create_framebuffers, cleanup_swapchain_resources}; // Import new functions
 

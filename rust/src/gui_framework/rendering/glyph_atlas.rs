@@ -1,19 +1,15 @@
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use ash::vk;
 use bevy_ecs::system::Resource;
-use bevy_log::{info, error, warn};
+use bevy_log::{info, error};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use vk_mem::{Alloc, AllocationCreateInfo, Allocation};
-use bevy_reflect::{Reflect, FromReflect};
-use cosmic_text::{CacheKey, FontSystem, SwashCache, Placement};
-use rectangle_pack::{RectToInsert, GroupedRectsToPlace, TargetBin, pack_rects, volume_heuristic, contains_smallest_box, RectanglePackError, PackedLocation};
+use bevy_reflect::Reflect;
+use cosmic_text::CacheKey;
+use rectangle_pack::{RectToInsert, GroupedRectsToPlace, TargetBin, pack_rects, volume_heuristic, contains_smallest_box, RectanglePackError};
 use std::collections::BTreeMap;
-use swash::{
-    scale::{Render, ScaleContext, Source, StrikeWith},
-    zeno::Format,
-    FontRef,
-};
+use swash::scale::ScaleContext;
 
 // Represents the location and UV coordinates of a single glyph within the atlas
 #[derive(Debug, Clone, Copy, Reflect)]

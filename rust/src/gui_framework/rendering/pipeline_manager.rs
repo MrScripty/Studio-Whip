@@ -1,6 +1,5 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use bevy_log::info;
 
 pub struct PipelineManager {
     // Layout for per-entity data (Set 0: Global UBO, Transform UBO) - Used by shapes & text

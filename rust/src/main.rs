@@ -1,7 +1,7 @@
 use bevy_app::{App, Startup, Update};
 use bevy_ecs::prelude::*;
 use bevy_log::{info, error, warn, LogPlugin, Level};
-use bevy_utils::default;
+use bevy_utils::{default, HashMap};
 use bevy_input::InputPlugin;
 use bevy_window::{
     PrimaryWindow, Window, WindowPlugin, PresentMode,
@@ -29,7 +29,11 @@ use rusty_whip::gui_framework::{
 // Import Bevy Name for debugging entities
 use bevy_core::Name;
 use bevy_color::Color;
-
+// Import Yrs types needed for resource initialization
+use yrs::{Doc, Text as YrsText}; // Alias YrsText to avoid conflict
+use rusty_whip::YrsDocResource; // Import the new resource type
+use yrs::TextRef;
+use yrs::Transact;
 
 #[derive(Component)]
 struct BackgroundQuad;
@@ -61,7 +65,11 @@ fn main() {
             // DO NOT ADD DefaultPlugins, RenderPlugin, PbrPlugin, etc.
         ))
         // == Resources ==
-        .insert_resource(VulkanContextResource(vulkan_context)) // Insert Vulkan context here
+        .insert_resource(VulkanContextResource(vulkan_context))
+        .insert_resource(YrsDocResource {
+            doc: Doc::new(),
+            text_map: std::collections::HashMap::new(),
+        })
         // == Add Framework Plugins ==
         .add_plugins(GuiFrameworkCorePlugin)
         .add_plugins(GuiFrameworkInteractionPlugin) 
@@ -92,6 +100,7 @@ fn main() {
 fn setup_scene_ecs(
     mut commands: Commands,
     primary_window_q: Query<&Window, With<PrimaryWindow>>,
+    mut yrs_res: ResMut<YrsDocResource>,
 ) {
     info!("Running setup_scene_ecs...");
     // --- Spawn Initial Entities ---
@@ -166,18 +175,34 @@ fn setup_scene_ecs(
     ));
 
     // --- Spawn Sample Text ---
-    commands.spawn((
+    // 1. Create the YrsText data within the YrsDoc using the system parameter
+    let yrs_text_content = "Hello, Studio Whip!\nThis is collaborative text.".to_string();
+    // Access yrs_res directly (it's already mutable)
+    let text_handle: yrs::TextRef = { // Explicit type annotation can help clarity
+        let text_ref = yrs_res.doc.get_or_insert_text("sample_text"); // Use a unique name for the YrsText
+        let mut txn = yrs_res.doc.transact_mut();
+        text_ref.insert(&mut txn, 0, &yrs_text_content);
+        text_ref // Return the handle
+    }; // yrs_res mutable borrow ends here if txn is dropped
+
+    // 2. Spawn the Bevy entity and store the mapping
+    let text_entity = commands.spawn((
+        // Text component no longer has 'content'
         Text {
-            content: "Hello, Rusty Whip!\nThis is a test of text rendering.".to_string(),
-            size: 24.0, // Font size
-            color: Color::WHITE, // Text color
-            alignment: TextAlignment::Left, // Text alignment
-            bounds: None, // No specific bounds for wrapping initially
+            size: 24.0,
+            color: Color::WHITE,
+            alignment: TextAlignment::Left,
+            bounds: None,
         },
         Transform::from_xyz(50.0, 250.0, -2.0), // Position the text (ensure Z > shapes if needed)
         Visibility(true),
         Name::new("SampleText"),
-    ));
+    )).id(); // Get the entity ID after spawning
+
+    // 3. Update the YrsDocResource map using the system parameter
+    // No need for Option<> here, ResMut will panic if resource doesn't exist
+    yrs_res.text_map.insert(text_entity, text_handle);
+    info!("Mapped Entity {:?} to YrsText 'sample_text'", text_entity);
 
 
     // TODO: Add instancing later using ECS patterns

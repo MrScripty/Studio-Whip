@@ -20,7 +20,6 @@ pub enum TextAlignment {
 #[derive(Component, Debug, Clone, Reflect)]
 #[reflect(Component)] // Add this for reflection registration
 pub struct Text {
-    pub content: String,
     // pub font_id: FontId, // Using default font for now
     pub size: f32,
     pub color: Color,
@@ -33,7 +32,6 @@ pub struct Text {
 impl Default for Text {
     fn default() -> Self {
         Self {
-            content: String::new(),
             // font_id: FontId(0), // Default font ID
             size: 16.0, // Default font size
             color: Color::WHITE,

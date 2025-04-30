@@ -20,6 +20,12 @@ pub struct TextVertex {
     pub uv: [f32; 2],
 }
 
+#[derive(bevy_ecs::prelude::Resource)]
+pub struct YrsDocResource {
+    pub doc: yrs::Doc, // The shared Yrs document
+    pub text_map: std::collections::HashMap<Entity, yrs::TextRef>,
+}
+
 /// Holds the prepared Vulkan handles and metadata needed for drawing a batch of text.
 #[derive(Debug, Clone)]
 pub struct PreparedTextDrawData {

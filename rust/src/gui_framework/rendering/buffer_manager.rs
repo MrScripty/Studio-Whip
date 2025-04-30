@@ -31,14 +31,14 @@ pub struct BufferManager {
     entity_cache: HashMap<Entity, EntityRenderResources>,
     pipeline_cache: HashMap<PipelineCacheKey, vk::Pipeline>,
     shader_cache: HashMap<ShaderCacheKey, vk::ShaderModule>,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    per_entity_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
 }
 
 impl BufferManager {
     pub fn new(
         platform: &mut VulkanContext,
-        descriptor_set_layout: vk::DescriptorSetLayout, // Layout for per-entity sets
+        per_entity_layout: vk::DescriptorSetLayout,
         descriptor_pool: vk::DescriptorPool, // Pool for allocating per-entity sets
     ) -> Self {
         // --- Initialize Caches ---
@@ -56,7 +56,7 @@ impl BufferManager {
             entity_cache,
             pipeline_cache,
             shader_cache,
-            descriptor_set_layout, // Store layout for per-entity sets
+            per_entity_layout, // Store layout for per-entity sets
             descriptor_pool,       // Store pool for per-entity sets
         }
     }
@@ -114,7 +114,7 @@ impl BufferManager {
 
                 // 3. Allocate Descriptor Set
                 let descriptor_set = unsafe {
-                    device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo { s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO, descriptor_pool: self.descriptor_pool, descriptor_set_count: 1, p_set_layouts: &self.descriptor_set_layout, ..Default::default() })
+                    device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo { s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO, descriptor_pool: self.descriptor_pool, descriptor_set_count: 1, p_set_layouts: &self.per_entity_layout, ..Default::default() })
                           .expect("Failed to allocate descriptor set")[0]
                 };
 

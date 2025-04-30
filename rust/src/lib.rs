@@ -25,7 +25,6 @@ pub struct TextVertex {
 pub struct PreparedTextDrawData {
     pub pipeline: vk::Pipeline,
     pub vertex_buffer: vk::Buffer,         // Handle to the *shared* text vertex buffer
-    pub vertex_buffer_offset: u32,     // Starting index in the vertex buffer
     pub vertex_count: u32,             // Number of vertices for this batch
     pub projection_descriptor_set: vk::DescriptorSet, // Set 0: Global Projection UBO
     pub atlas_descriptor_set: vk::DescriptorSet,    // Set 1: Glyph Atlas Sampler

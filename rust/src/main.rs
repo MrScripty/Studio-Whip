@@ -174,7 +174,7 @@ fn setup_scene_ecs(
             alignment: TextAlignment::Left, // Text alignment
             bounds: None, // No specific bounds for wrapping initially
         },
-        Transform::from_xyz(50.0, 250.0, 3.0), // Position the text (ensure Z > shapes if needed)
+        Transform::from_xyz(50.0, 250.0, -2.0), // Position the text (ensure Z > shapes if needed)
         Visibility(true),
         Name::new("SampleText"),
     ));

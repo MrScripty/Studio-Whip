@@ -234,6 +234,8 @@ impl GlyphAtlas {
                         uv_min,
                         uv_max,
                     };
+                    info!("[GlyphAtlas] Caching GlyphInfo for key {:?}: px={}, py={}, w={}, h={}, uv_min={:?}, uv_max={:?}",
+                           cache_key, pixel_x, pixel_y, width, height, uv_min, uv_max);
 
                     // Use entry API to insert and return reference
                     let inserted_info = self.glyph_cache.entry(cache_key).or_insert(glyph_info);

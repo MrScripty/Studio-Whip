@@ -1,26 +1,22 @@
 #version 450
 
-// Input from vertex shader
 layout(location = 0) in vec2 fragUV;
 
-// Output color
+// The glyph atlas texture sampler
+layout(set = 1, binding = 0) uniform sampler2D texSampler;
+
 layout(location = 0) out vec4 outColor;
 
-// Texture Sampler for the glyph atlas
-// Binding 0, Set 1 (Different set from UBOs)
-layout(binding = 0, set = 1) uniform sampler2D glyphAtlasSampler;
-
 void main() {
-    // Sample the glyph atlas texture using the UV coordinates
-    // The texture contains the alpha mask (grayscale)
-    float alpha = texture(glyphAtlasSampler, fragUV).r; // Sample red channel (it's grayscale)
+    // Sample the texture (R8_UNORM). The 'r' component contains the alpha.
+    float alpha = texture(texSampler, fragUV).r;
 
-    // Output white color modulated by the sampled alpha
-    // TODO: Add support for vertex color or uniform color later
+    // Use the sampled alpha. Output white text for now.
+    // Later, you might pass the text color via vertex attributes or another UBO.
     outColor = vec4(1.0, 1.0, 1.0, alpha);
-ac
-    // Discard fully transparent pixels to potentially improve performance (optional)
-    if (alpha < 0.01) {
-        discard;
-    }
+
+    // Discard fragments that are fully transparent (optional optimization)
+    // if (alpha < 0.01) {
+    //     discard;
+    // }
 }

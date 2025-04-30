@@ -8,4 +8,4 @@ pub use shape_data::ShapeData;
 pub use visibility::Visibility;
 pub use interaction::Interaction;
 pub use text_data::{Text, FontId, TextAlignment};
-pub use text_layout::{TextLayoutOutput, PositionedGlyph}; 
+pub use text_layout::{TextLayoutOutput, PositionedGlyph, TextRenderData};

@@ -30,25 +30,21 @@ impl Renderer {
         // Create PipelineManager temporarily to get layout/pool
         let pipeline_mgr = PipelineManager::new(platform);
 
-        // Store layouts in VulkanContext for BufferManager access and text resource creation
+        // Store layouts in VulkanContext for access by other systems
         platform.shape_pipeline_layout = Some(pipeline_mgr.shape_pipeline_layout);
         platform.text_pipeline_layout = Some(pipeline_mgr.text_pipeline_layout);
 
         // Create BufferManager - Pass only needed layout/pool
         let buffer_mgr = BufferManager::new(
             platform, // Pass &mut VulkanContext
-            pipeline_mgr.shape_descriptor_set_layout, // Pass only shape layout
-            pipeline_mgr.descriptor_pool,             // Pass pool
+            pipeline_mgr.per_entity_layout,
+            pipeline_mgr.descriptor_pool,
         );
 
         // Store pool and set_layout in Renderer for cleanup
         let descriptor_pool = pipeline_mgr.descriptor_pool;
-        // Store the shape layout, as BufferManager uses it
-        let descriptor_set_layout = pipeline_mgr.shape_descriptor_set_layout;
-        // Also store the text layout for potential future cleanup needs? Or let VulkanContext own it?
-        // Let's store both shape and text layouts in Renderer for cleanup for now.
-        let text_descriptor_set_layout = pipeline_mgr.text_descriptor_set_layout;
-        // pipeline_mgr goes out of scope here, its layouts are moved to platform/Renderer
+        let per_entity_layout = pipeline_mgr.per_entity_layout;
+        let atlas_layout = pipeline_mgr.atlas_layout;
 
         // --- Create Command Pool (Once) ---
         // Command buffers will be allocated later in record_command_buffers if needed
@@ -86,9 +82,9 @@ impl Renderer {
         // Initialize Renderer struct
         Self {
             buffer_manager: buffer_mgr,
-            descriptor_pool, // Store for cleanup
-            descriptor_set_layout, // Store shape layout for cleanup
-            text_descriptor_set_layout, // Store text layout for cleanup
+            descriptor_pool,
+            descriptor_set_layout: per_entity_layout,
+            text_descriptor_set_layout: atlas_layout,
         }
     }
 
@@ -310,8 +306,8 @@ impl Renderer {
             }
             // Use pool/set_layouts stored in self
             device.destroy_descriptor_pool(self.descriptor_pool, None);
-            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None); // Shape layout
-            device.destroy_descriptor_set_layout(self.text_descriptor_set_layout, None); // Text layout
+            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None); // Per-entity layout
+            device.destroy_descriptor_set_layout(self.text_descriptor_set_layout, None); // Atlas layout
         }
 
         // Cleanup of text pipeline handled by cleanup_trigger_system

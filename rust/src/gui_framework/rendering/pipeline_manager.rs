@@ -1,34 +1,35 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use bevy_log::info; // Use info! macro
+use bevy_log::info;
 
-// Represents the PipelineManager struct
 pub struct PipelineManager {
-    // --- Shape Rendering ---
-    pub shape_pipeline_layout: vk::PipelineLayout,
-    pub shape_descriptor_set_layout: vk::DescriptorSetLayout,
+    // Layout for per-entity data (Set 0: Global UBO, Transform UBO) - Used by shapes & text
+    pub per_entity_layout: vk::DescriptorSetLayout,
+    // Layout for text atlas sampler (Set 1) - Used only by text
+    pub atlas_layout: vk::DescriptorSetLayout,
 
-    // --- Text Rendering ---
+    // Pipeline layout using only per-entity data (for shapes)
+    pub shape_pipeline_layout: vk::PipelineLayout,
+    // Pipeline layout using per-entity data (Set 0) AND atlas sampler (Set 1) (for text)
     pub text_pipeline_layout: vk::PipelineLayout,
-    pub text_descriptor_set_layout: vk::DescriptorSetLayout, // For sampler
 
     // --- Shared ---
-    pub descriptor_pool: vk::DescriptorPool, // Shared pool for simplicity for now
+    pub descriptor_pool: vk::DescriptorPool, // Shared pool
 }
 
 impl PipelineManager {
     pub fn new(platform: &mut VulkanContext) -> Self {
         let device = platform.device.as_ref().unwrap();
 
-        // --- Shape Descriptor Set Layout (Set 0: Global UBO, Object UBO) ---
-        let shape_descriptor_set_layout = unsafe {
+        // --- Per-Entity Descriptor Set Layout (Set 0: Global UBO, Transform UBO) ---
+        let per_entity_layout = unsafe {
             let bindings = [
                 // Binding 0: Global Projection UBO
                 vk::DescriptorSetLayoutBinding {
                     binding: 0,
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                     descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::VERTEX, // Used in vertex shader
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
                     ..Default::default()
                 },
                 // Binding 1: Per-Object Transform UBO
@@ -36,7 +37,7 @@ impl PipelineManager {
                     binding: 1,
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                     descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::VERTEX, // Used in vertex shader
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
                     ..Default::default()
                 },
             ];
@@ -45,28 +46,28 @@ impl PipelineManager {
                 binding_count: bindings.len() as u32,
                 p_bindings: bindings.as_ptr(),
                 ..Default::default()
-            }, None).expect("Failed to create shape descriptor set layout")
+            }, None).expect("Failed to create per-entity descriptor set layout")
         };
 
-        // --- Text Descriptor Set Layout (Set 1: Sampler) ---
-        let text_descriptor_set_layout = unsafe {
-             let bindings = [
-                // Binding 0: Glyph Atlas Sampler
-                vk::DescriptorSetLayoutBinding {
-                    binding: 0,
-                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::FRAGMENT, // Used in fragment shader
-                    ..Default::default()
-                },
-            ];
-             device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
-                s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-                binding_count: bindings.len() as u32,
-                p_bindings: bindings.as_ptr(),
-                ..Default::default()
-            }, None).expect("Failed to create text descriptor set layout")
-        };
+        // --- Atlas Sampler Descriptor Set Layout (Set 1) ---
+        let atlas_layout = unsafe {
+            let bindings = [
+               // Binding 0: Glyph Atlas Sampler
+               vk::DescriptorSetLayoutBinding {
+                   binding: 0,
+                   descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                   descriptor_count: 1,
+                   stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                   ..Default::default()
+               },
+           ];
+            device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo {
+               s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+               binding_count: bindings.len() as u32,
+               p_bindings: bindings.as_ptr(),
+               ..Default::default()
+           }, None).expect("Failed to create atlas sampler descriptor set layout")
+       };
 
         // --- Shared Descriptor Pool (Increased size estimate) ---
         let descriptor_pool = unsafe {
@@ -97,22 +98,19 @@ impl PipelineManager {
             }, None).expect("Failed to create descriptor pool") // Use expect directly
         };
 
-        // --- Shape Pipeline Layout (Uses Set 0) ---
+        // --- Shape Pipeline Layout (Uses Set 0: per_entity_layout) ---
         let shape_pipeline_layout = unsafe {
             device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo {
                 s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
                 set_layout_count: 1,
-                p_set_layouts: &shape_descriptor_set_layout, // Only uses the shape layout
+                p_set_layouts: &per_entity_layout, // Use the per-entity layout
                 ..Default::default()
             }, None).expect("Failed to create shape pipeline layout")
         };
 
-        // --- Text Pipeline Layout (Uses Set 0 AND Set 1) ---
-        // Text shaders need access to global projection (Set 0, Binding 0)
-        // and the glyph atlas sampler (Set 1, Binding 0).
-        // We can reuse the shape_descriptor_set_layout for Set 0.
+        // --- Text Pipeline Layout (Uses Set 0: per_entity_layout AND Set 1: atlas_layout) ---
         let text_pipeline_layout = unsafe {
-            let set_layouts = [shape_descriptor_set_layout, text_descriptor_set_layout];
+            let set_layouts = [per_entity_layout, atlas_layout]; // Use both layouts
             device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo {
                 s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
                 set_layout_count: set_layouts.len() as u32,
@@ -122,11 +120,11 @@ impl PipelineManager {
         };
 
         Self {
+            per_entity_layout,
+            atlas_layout,
             shape_pipeline_layout,
-            shape_descriptor_set_layout,
             text_pipeline_layout,
-            text_descriptor_set_layout,
-            descriptor_pool, // Shared pool
+            descriptor_pool,
         }
     }
 

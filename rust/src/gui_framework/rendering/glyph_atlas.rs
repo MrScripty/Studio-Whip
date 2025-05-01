@@ -249,11 +249,6 @@ impl GlyphAtlas {
                 Err("Glyph atlas is full".to_string())
                 // TODO: Implement atlas resizing or eviction strategy
             }
-            Err(e) => {
-                 // Other packing error
-                error!("[GlyphAtlas::add_glyph] Failed to pack glyph ({}x{}). Key: {:?}. Error: {:?}", width, height, cache_key, e);
-                Err(format!("Glyph packing failed: {:?}", e))
-            }
         }
     }
 

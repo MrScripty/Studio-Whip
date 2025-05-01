@@ -144,10 +144,7 @@ pub fn record_command_buffers(
             let text_pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing");
             let mut current_text_pipeline = vk::Pipeline::null();
 
-            info!("[record_cmd] Processing {} prepared text draws.", prepared_text_draws.len()); // Log count
             for text_draw in prepared_text_draws {
-                 info!("  [record_cmd] Preparing text draw: Pipeline={:?}, VtxBuf={:?}, VtxCount={}, DescSet0={:?}, AtlasSet={:?}",
-                      text_draw.pipeline, text_draw.vertex_buffer, text_draw.vertex_count, text_draw.projection_descriptor_set, text_draw.atlas_descriptor_set);
                 if text_draw.vertex_count > 0 {
                     // Bind text pipeline if changed
                     if text_draw.pipeline != current_text_pipeline {
@@ -177,7 +174,6 @@ pub fn record_command_buffers(
                         0, // firstVertex (offset is handled by cmd_bind_vertex_buffers)
                         0, // firstInstance
                     );
-                    info!("    [record_cmd] Issued vkCmdDraw for text.");
                 }
             }
         }

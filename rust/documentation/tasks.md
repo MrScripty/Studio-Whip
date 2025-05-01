@@ -116,40 +116,50 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
 
 ## Task 9: Text Handling - Editing & Interaction
 - **Goal**: Integrate `yrs` (`YText`) for collaborative data storage. Implement basic mouse/keyboard editing for text entities using Bevy Input and Systems, including accurate cursor positioning and rendering.
-- **Status**: **In Progress**
+- **Status**: **In Progress** (Hit detection and ECS-based focus management complete)
 - **Affected Components/Systems/Resources**:
     - Modified Component: `Text` (removed `content` field).
     - New Component: `EditableText` (marker), `Focus` (marker), **`CursorState`**, **`CursorVisual`**, **`TextBufferCache`**.
     - New Resource: `YrsDocResource { doc: Arc<yrs::Doc>, text_map: Arc<Mutex<HashMap<Entity, TextRef>>> }`.
     - New Systems: `text_editing_system` (Not Started), `manage_cursor_visual_system` (Not Started), `update_cursor_transform_system` (Not Started).
-    - Modified Systems: `interaction_system` (focus management added), `text_layout_system` (reads from Yrs, event-driven, **writes `TextBufferCache`**), `cleanup_trigger_system` (**cleans `TextBufferCache`**).
+    - Modified Systems:
+        - `interaction_system`: **Implemented overall bounding box hit detection for `EditableText` using `TextBufferCache` and `cosmic_text::Buffer::hit()`. Manages `Focus` component via `Commands` and sends `TextFocusChanged` event.**
+        - `text_layout_system`: Reads from Yrs, event-driven, writes `TextBufferCache`.
+        - `cleanup_trigger_system`: Cleans `TextBufferCache`.
     - New Events: `TextFocusChanged { entity: Option<Entity> }`, `YrsTextChanged { entity: Entity }`.
 - **Steps**:
     1.  **Add Dependency:** Add `yrs` to `Cargo.toml`. - **Complete.**
     2.  **Integrate `YrsDocResource`:** Set up a central Yrs document and map Bevy `Entity` IDs to shared `yrs::TextRef` types within the document resource. Initialize and populate in `main.rs`. - **Complete.**
     3.  **Modify `Text` Component:** Remove `content: String`. Modify `text_layout_system` to fetch content from `YrsDocResource`. - **Complete.**
-    4.  **Implement Focus Management:** Modify `interaction_system` to query `EditableText`, handle clicks, manage `Focus` component, and send `TextFocusChanged` event. - **Complete.**
+    4.  **Implement Text Hit Detection & Focus Management:** Modify `interaction_system` to:
+        *   Calculate overall bounding box for `EditableText` layout runs (including empty lines).
+        *   Perform hit detection using the bounding box and transformed mouse coordinates.
+        *   Use `cosmic_text::Buffer::hit()` to determine the precise `Cursor` position on successful hit.
+        *   Manage the `Focus` component via `Commands` (add on click gain, remove on click loss).
+        *   Send `TextFocusChanged` event only when focus state actually changes.
+        *   Handle coordinate system differences (Bevy Y-up vs. cosmic-text Y-down).
+        - **Complete.**
     5.  **Implement Yrs Change Observation:** Modify `text_layout_system` to trigger on `YrsTextChanged` or `Added<Text>`. - **Complete.**
     6.  **Add Cursor State & Cache Components:** Define `CursorState`, `CursorVisual`, `TextBufferCache`. Modify `text_layout_system` to populate `TextBufferCache`. Modify cleanup to remove cache. Register components. - **Complete.**
     7.  **Implement Cursor Visual Management:** (Next Step) Create `manage_cursor_visual_system`.
-        *   Reacts to `TextFocusChanged` events and `RemovedComponents<Focus>`.
+        *   Reacts to `Added<Focus>` and `RemovedComponents<Focus>` events/states.
         *   Adds/removes `CursorState` component to/from the focused text entity.
-        *   Spawns/despawns a child entity with `CursorVisual`, `ShapeData` (for a simple quad), `Transform`, and `Visibility` components.
-    8.  **Implement Text Editing Logic:** (Future Step) Create `text_editing_system`.
-        *   Queries for the entity with `Focus` and its `CursorState`.
-        *   Reads `Res<ButtonInput<KeyCode>>`, `EventReader<ReceivedCharacter>`.
-        *   Calculates new cursor position (byte offset) based on input (characters, backspace, delete, arrow keys - using `cosmic_text::Buffer::cursor_motion`).
-        *   Generates `yrs::TextRef` transaction operations (inserts, deletes) on `YrsDocResource`.
-        *   Sends `YrsTextChanged` event after successful transaction.
-        *   Updates the `CursorState.position`.
-    9.  **Implement Cursor Rendering/Positioning:** (Future Step) Create `update_cursor_transform_system`.
+        *   Spawns/despawns a child entity with `CursorVisual`, `ShapeData` (for a simple quad using `cursor.vert`/`.frag`), `Transform`, and `Visibility` components.
+    8.  **Implement Cursor Rendering/Positioning:** (Future Step) Create `update_cursor_transform_system`.
         *   Queries for entities with `CursorVisual` and their parent's `CursorState`, `TextBufferCache`, `GlobalTransform`.
-        *   Uses `cosmic_text::Buffer::layout_cursor` (from `TextBufferCache`) and `CursorState.position` to get the precise local (X, Y) coordinates for the cursor.
+        *   Uses `cosmic_text::Buffer::hit()` or similar API (like `layout_cursor`) with `CursorState.position` to get the precise local (X, Y) coordinates for the cursor visual (considering ascent/midline).
         *   Combines local coordinates with the parent text entity's `GlobalTransform` to calculate the world position.
         *   Updates the `Transform` of the `CursorVisual` entity.
         *   Requires new shaders (`cursor.vert`, `cursor.frag`) and `build.rs` update.
-    10. **Test:** Test focus changes, cursor appearance/disappearance, character insertion/deletion, and arrow key navigation.
-- **Constraints**: Requires Task 8. Focus on basic local editing. P2P synchronization deferred. Requires careful handling of UTF-8 byte offsets vs. character/glyph indices when interacting with `yrs` and `cosmic-text`.
+    9.  **Implement Text Editing Logic:** (Future Step) Create `text_editing_system`.
+        *   Queries for the entity with `Focus` and its `CursorState`.
+        *   Reads `Res<ButtonInput<KeyCode>>`, `EventReader<ReceivedCharacter>`.
+        *   Calculates new cursor position (byte offset) based on input (characters, backspace, delete, arrow keys - using `cosmic_text::Buffer::cursor_motion` or similar).
+        *   Generates `yrs::TextRef` transaction operations (inserts, deletes) on `YrsDocResource`.
+        *   Sends `YrsTextChanged` event after successful transaction.
+        *   Updates the `CursorState.position`.
+    10. **Test:** Test focus changes, cursor appearance/disappearance/positioning, character insertion/deletion, and arrow key navigation.
+- **Constraints**: Requires Task 8. Focus on basic local editing. P2P synchronization deferred. Requires careful handling of UTF-8 byte offsets vs. character/glyph indices when interacting with `yrs` and `cosmic-text`. **Requires careful handling of coordinate system differences between Bevy (Y-up) and cosmic-text (Y-down).**
 
 ## Task 10: Implement Radial Pie Context Menu
 - **Goal**: Implement a popup pie-style context menu triggered by a hotkey, using Bevy ECS entities for UI elements and Bevy events/resources for state management.

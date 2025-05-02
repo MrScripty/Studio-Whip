@@ -114,64 +114,52 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
     8.  **Test:** - **Complete.** (Basic text renders with correct baseline alignment. Minor artifacts with linear filtering noted).
 - **Constraints**: Requires Task 7 (Plugin Refactor) completion. Initial focus on non-wrapping, static text. Rendering uses the custom Vulkan backend. **Known issues:** Text descriptor Set 0 binding uses an incorrect workaround. Text rendering resource management could be refactored for efficiency/encapsulation. Minor visual artifacts may occur near glyph edges with linear filtering.
 
-## Task 9: Text Handling - Editing, Selection, Highlighting & Clipboard
-- **Goal**: Integrate `yrs` for data storage. Implement mouse/keyboard editing for `EditableText` entities, including cursor management, text selection (click, drag, double-click, keyboard), visual highlighting, and clipboard (cut/copy/paste) integration.
-- **Status**: **In Progress** (Yrs integration, hit detection, focus management, basic cache/state components complete)
+## Task 9: Text Handling - Editing & Interaction
+- **Goal**: Integrate `yrs` (`YText`) for collaborative data storage. Implement basic mouse/keyboard editing for text entities using Bevy Input and Systems, including accurate cursor positioning and rendering.
+- **Status**: **In Progress** (Hit detection and ECS-based focus management complete)
 - **Affected Components/Systems/Resources**:
-    - Modified Component: `Text` (removed `content`).
-    - New Components: `EditableText`, `Focus`, `CursorState`, `CursorVisual`, `TextBufferCache`, `TextSelection { start: usize, end: usize }`, `HighlightVisual` (marker).
-    - New Resources: `YrsDocResource`, `MouseContext { context: Option<MouseContextType> }`, `ClipboardResource` (e.g., holding `arboard::Clipboard`). Potentially `UndoRedoHistory`.
-    - New Systems: `manage_cursor_visual_system`, `update_cursor_transform_system`, `text_editing_system` (expanded), `TextDragSystem`, `highlight_selection_system`, clipboard handling systems/logic.
-    - Modified Systems: `interaction_system` (context, click/double-click logic, shift+click), `text_layout_system` (reads Yrs, writes cache), `cleanup_trigger_system` (cleans cache).
-    - New Events: `TextFocusChanged`, `YrsTextChanged`.
-    - New Utility: `get_cursor_at_position` function.
-    - New Shaders: `cursor.vert`/`.frag`, `highlight.vert`/`.frag`.
-- **Steps (Phased Implementation with Integrated Testing)**:
-    1.  **Phase 1: Cursor Foundation**
-        *   Implement `manage_cursor_visual_system` (spawns/despawns `CursorVisual`, adds/removes `CursorState`).
-        *   Implement `update_cursor_transform_system` (positions `CursorVisual` via `layout_cursor`).
-        *   Create `cursor.vert`/`.frag` shaders, update `build.rs`.
-        *   **TEST:** Cursor appears/disappears with focus, positions correctly.
-    2.  **Phase 2: Basic Selection State & Context**
-        *   Define `TextSelection` component, `MouseContext` resource. Register them.
-        *   Create `get_cursor_at_position` utility function (using `buffer.hit`).
-        *   Modify `interaction_system`: Set `MouseContext` on mousedown. Handle basic click on `EditableText` (set `CursorState`, set `TextSelection` with start=end=click_pos, clear previous selection).
-        *   Modify `manage_cursor_visual_system`: Hide cursor if `selection.start != selection.end`.
-        *   **TEST:** Context set correctly. Clicking sets cursor/selection. Cursor hides when selection active. Non-text drag works.
-    3.  **Phase 3: Refined Drag Selection & Clearing**
-        *   Create `TextDragSystem`: Handle mouse drag when `MouseContext::Text`. Use `get_cursor_at_position` to detect character position changes (drag threshold). Update `TextSelection.end`. Keep selection active on release.
-        *   Modify `interaction_system`: Implement second-click logic (if click on text entity that already has active selection, clear selection and place cursor).
-        *   **TEST:** Drag selection works (character threshold, multi-line). Second-click clears selection correctly.
-    4.  **Phase 4: Selection Editing & Extension**
-        *   Modify `text_editing_system`: Handle Backspace/Delete/Typing when `TextSelection` is active (replace/delete range). Implement Shift+Arrow key logic to modify `TextSelection` range based on `cursor_motion`.
-        *   Modify `interaction_system`: Implement Shift+Click logic to set `TextSelection` range (from current `CursorState.position` to click position).
-        *   **TEST:** Deleting/typing over selections. Extending selections with Shift+Arrow/Shift+Click.
-    5.  **Phase 5: Double-Click Word Selection**
-        *   Modify `interaction_system`: Detect double-clicks on `EditableText`.
-        *   Implement word boundary detection logic around the click index.
-        *   Update `TextSelection` to select the word. Update `CursorState.position`.
-        *   **TEST:** Double-click selects words correctly (including punctuation/whitespace boundaries).
-    6.  **Phase 6: Visual Feedback (Highlighting)**
-        *   Implement `highlight_selection_system` triggered by `Changed<TextSelection>` or `YrsTextChanged`.
-        *   Calculate highlight rectangles (potentially multi-line) using `TextBufferCache` and `cosmic-text` layout info.
-        *   Spawn/update `HighlightVisual` entities (using `ShapeData` with `highlight.vert`/`.frag`). Render behind text (Z offset).
-        *   Create `highlight.vert`/`.frag` shaders, update `build.rs`.
-        *   **TEST:** Highlights appear correctly for all selection methods, update dynamically, handle multi-line, render behind text.
-    7.  **Phase 7: Clipboard Integration (Cut/Copy/Paste)**
-        *   Add clipboard dependency (`arboard`). Create/initialize `ClipboardResource`.
-        *   Implement Cut/Copy/Paste logic (likely via hotkey handlers reacting to `HotkeyActionTriggered`).
-        *   Interact with `ClipboardResource`, `YrsDocResource`, `TextSelection`, `CursorState`.
-        *   Send `YrsTextChanged` on Cut/Paste.
-        *   **TEST:** Cut/Copy/Paste within editor and with external applications. Test with/without active selections.
-    8.  **Phase 8: Undo/Redo Foundation (Potentially Deferred)**
-        *   Define `UndoRedoHistory` resource.
-        *   Modify editing actions (Type, Delete, Cut, Paste) to use `doc.transact_mut_with_origin(...)` and store origins.
-        *   Implement basic Undo/Redo hotkey handlers calling `doc.undo()`/`doc.redo()`.
-        *   **TEST (Basic):** Simple undo/redo works. (Acknowledge cursor/selection state restoration is complex and likely incomplete in this phase).
-    9.  **Phase 9: Optimization (Post-Functionality)**
-        *   Implement optimizations (e.g., highlight batching, cursor calculation caching, event-driven system execution).
-        *   **TEST:** Profile and verify performance improvements and lack of regressions.
-- **Constraints**: Requires Task 8 completion. Requires `yrs`, `cosmic-text`, `arboard`. Requires careful handling of coordinate systems, UTF-8 byte offsets, Yrs transactions, and Bevy system ordering/dependencies. Full Undo/Redo state restoration is complex. P2P synchronization deferred.
+    - Modified Component: `Text` (removed `content` field).
+    - New Component: `EditableText` (marker), `Focus` (marker), **`CursorState`**, **`CursorVisual`**, **`TextBufferCache`**.
+    - New Resource: `YrsDocResource { doc: Arc<yrs::Doc>, text_map: Arc<Mutex<HashMap<Entity, TextRef>>> }`.
+    - New Systems: `text_editing_system` (Not Started), `manage_cursor_visual_system` (Not Started), `update_cursor_transform_system` (Not Started).
+    - Modified Systems:
+        - `interaction_system`: **Implemented overall bounding box hit detection for `EditableText` using `TextBufferCache` and `cosmic_text::Buffer::hit()`. Manages `Focus` component via `Commands` and sends `TextFocusChanged` event.**
+        - `text_layout_system`: Reads from Yrs, event-driven, writes `TextBufferCache`.
+        - `cleanup_trigger_system`: Cleans `TextBufferCache`.
+    - New Events: `TextFocusChanged { entity: Option<Entity> }`, `YrsTextChanged { entity: Entity }`.
+- **Steps**:
+    1.  **Add Dependency:** Add `yrs` to `Cargo.toml`. - **Complete.**
+    2.  **Integrate `YrsDocResource`:** Set up a central Yrs document and map Bevy `Entity` IDs to shared `yrs::TextRef` types within the document resource. Initialize and populate in `main.rs`. - **Complete.**
+    3.  **Modify `Text` Component:** Remove `content: String`. Modify `text_layout_system` to fetch content from `YrsDocResource`. - **Complete.**
+    4.  **Implement Text Hit Detection & Focus Management:** Modify `interaction_system` to:
+        *   Calculate overall bounding box for `EditableText` layout runs (including empty lines).
+        *   Perform hit detection using the bounding box and transformed mouse coordinates.
+        *   Use `cosmic_text::Buffer::hit()` to determine the precise `Cursor` position on successful hit.
+        *   Manage the `Focus` component via `Commands` (add on click gain, remove on click loss).
+        *   Send `TextFocusChanged` event only when focus state actually changes.
+        *   Handle coordinate system differences (Bevy Y-up vs. cosmic-text Y-down).
+        - **Complete.**
+    5.  **Implement Yrs Change Observation:** Modify `text_layout_system` to trigger on `YrsTextChanged` or `Added<Text>`. - **Complete.**
+    6.  **Add Cursor State & Cache Components:** Define `CursorState`, `CursorVisual`, `TextBufferCache`. Modify `text_layout_system` to populate `TextBufferCache`. Modify cleanup to remove cache. Register components. - **Complete.**
+    7.  **Implement Cursor Visual Management:** (Next Step) Create `manage_cursor_visual_system`.
+        *   Reacts to `Added<Focus>` and `RemovedComponents<Focus>` events/states.
+        *   Adds/removes `CursorState` component to/from the focused text entity.
+        *   Spawns/despawns a child entity with `CursorVisual`, `ShapeData` (for a simple quad using `cursor.vert`/`.frag`), `Transform`, and `Visibility` components.
+    8.  **Implement Cursor Rendering/Positioning:** (Future Step) Create `update_cursor_transform_system`.
+        *   Queries for entities with `CursorVisual` and their parent's `CursorState`, `TextBufferCache`, `GlobalTransform`.
+        *   Uses `cosmic_text::Buffer::hit()` or similar API (like `layout_cursor`) with `CursorState.position` to get the precise local (X, Y) coordinates for the cursor visual (considering ascent/midline).
+        *   Combines local coordinates with the parent text entity's `GlobalTransform` to calculate the world position.
+        *   Updates the `Transform` of the `CursorVisual` entity.
+        *   Requires new shaders (`cursor.vert`, `cursor.frag`) and `build.rs` update.
+    9.  **Implement Text Editing Logic:** (Future Step) Create `text_editing_system`.
+        *   Queries for the entity with `Focus` and its `CursorState`.
+        *   Reads `Res<ButtonInput<KeyCode>>`, `EventReader<ReceivedCharacter>`.
+        *   Calculates new cursor position (byte offset) based on input (characters, backspace, delete, arrow keys - using `cosmic_text::Buffer::cursor_motion` or similar).
+        *   Generates `yrs::TextRef` transaction operations (inserts, deletes) on `YrsDocResource`.
+        *   Sends `YrsTextChanged` event after successful transaction.
+        *   Updates the `CursorState.position`.
+    10. **Test:** Test focus changes, cursor appearance/disappearance/positioning, character insertion/deletion, and arrow key navigation.
+- **Constraints**: Requires Task 8. Focus on basic local editing. P2P synchronization deferred. Requires careful handling of UTF-8 byte offsets vs. character/glyph indices when interacting with `yrs` and `cosmic-text`. **Requires careful handling of coordinate system differences between Bevy (Y-up) and cosmic-text (Y-down).**
 
 ## Task 10: Implement Radial Pie Context Menu
 - **Goal**: Implement a popup pie-style context menu triggered by a hotkey, using Bevy ECS entities for UI elements and Bevy events/resources for state management.

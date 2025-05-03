@@ -114,6 +114,31 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
     8.  **Test:** - **Complete.** (Basic text renders with correct baseline alignment. Minor artifacts with linear filtering noted).
 - **Constraints**: Requires Task 7 (Plugin Refactor) completion. Initial focus on non-wrapping, static text. Rendering uses the custom Vulkan backend. **Known issues:** Text descriptor Set 0 binding uses an incorrect workaround. Text rendering resource management could be refactored for efficiency/encapsulation. Minor visual artifacts may occur near glyph edges with linear filtering.
 
+## Task 8.5: Refactor Shape Rendering with Push Constants
+- **Goal**: Unify shape shaders (`square`, `triangle`) into a single shader program (`shape.vert`/`.frag`). Use Vulkan push constants to efficiently pass per-object color data to the fragment shader, removing the need for shader path strings in `ShapeData`. Prepare for relative Z-depth calculations by anticipating parent/child relationships for associated UI elements (like cursors).
+- **Status**: Not started
+- **Affected Components/Systems/Resources**:
+    - Modified Component: `ShapeData` (add `color`, remove shader paths).
+    - Modified Structs: `RenderCommandData`, `PreparedDrawData` (add `color`, remove shader paths).
+    - Modified Systems: `rendering_system` (adapt data collection), `BufferManager` (simplify pipeline caching), `record_command_buffers` (use push constants), `setup_scene_ecs` (update entity spawning).
+    - Modified Vulkan Setup: `PipelineManager` (add push constant range to shape layout).
+    - New Shaders: `shape.vert`, `shape.frag`.
+    - Removed Shaders: `square.*`, `triangle.*`, `background.*` (Background will also use the new shape shader).
+    - Modified Build Script: `build.rs` (update shader compilation).
+- **Steps**:
+    1. Define `shape.vert` and `shape.frag` shaders.
+    2. Update `build.rs` to compile new shaders and remove old ones.
+    3. Modify `ShapeData` component in `components/shape_data.rs`.
+    4. Modify `RenderCommandData` and `PreparedDrawData` in `lib.rs`.
+    5. Modify `PipelineManager` in `rendering/pipeline_manager.rs` to include a push constant range for the shape pipeline layout.
+    6. Modify `BufferManager` in `rendering/buffer_manager.rs` to use the new layout and simplify pipeline caching.
+    7. Modify `rendering_system` in `plugins/core.rs` to gather color data.
+    8. Modify `record_command_buffers` in `rendering/command_buffers.rs` to bind the single pipeline and use `vkCmdPushConstants`.
+    9. Modify `setup_scene_ecs` in `main.rs` to spawn shapes with color data.
+    10. Update documentation (`architecture.md`, `modules.md`).
+    11. Test rendering of shapes with different colors.
+- **Constraints**: Requires Task 7 completion. Affects core shape rendering path.
+
 ## Task 9: Text Handling - Editing, Selection, Highlighting & Clipboard
 - **Goal**: Integrate `yrs` for data storage. Implement mouse/keyboard editing for `EditableText` entities, including cursor management, text selection (click, drag, double-click, keyboard), visual highlighting, and clipboard (cut/copy/paste) integration.
 - **Status**: **In Progress** (Yrs integration, hit detection, focus management, basic cache/state components complete)

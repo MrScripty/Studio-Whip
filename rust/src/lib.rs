@@ -4,6 +4,7 @@ use ash::vk;
 use bevy_reflect::Reflect;
 use std::collections::HashMap;
 use yrs::TextRef;
+use bevy_color::Color; // Import Bevy Color
 
 pub mod gui_framework;
 
@@ -32,9 +33,9 @@ pub struct YrsDocResource {
 #[derive(Debug, Clone)]
 pub struct PreparedTextDrawData {
     pub pipeline: vk::Pipeline,
-    pub vertex_buffer: vk::Buffer,         // Handle to the *shared* text vertex buffer
-    pub vertex_count: u32,             // Number of vertices for this batch
-    pub projection_descriptor_set: vk::DescriptorSet, // Set 0: Global Projection UBO
+    pub vertex_buffer: vk::Buffer,         // Handle to the *per-entity* text vertex buffer
+    pub vertex_count: u32,             // Number of vertices for this entity
+    pub projection_descriptor_set: vk::DescriptorSet, // Set 0: Global Projection UBO + Entity Transform UBO
     pub atlas_descriptor_set: vk::DescriptorSet,    // Set 1: Glyph Atlas Sampler
 }
 
@@ -53,12 +54,11 @@ pub struct GlobalProjectionUboResource {
 // Managed by a dedicated system in core plugin.
 #[derive(bevy_ecs::prelude::Resource)]
 pub struct TextRenderingResources {
-    pub vertex_buffer: vk::Buffer,
-    pub vertex_allocation: vk_mem::Allocation,
-    pub vertex_buffer_capacity: u32, // Max number of TextVertex this buffer can hold
+    pub vertex_buffer: vk::Buffer, // REMOVED - Now per-entity
+    pub vertex_allocation: vk_mem::Allocation, // REMOVED - Now per-entity
+    pub vertex_buffer_capacity: u32, // REMOVED - Now per-entity
     pub pipeline: vk::Pipeline,
     pub atlas_descriptor_set: vk::DescriptorSet, // Single set pointing to the atlas texture/sampler
-    // Add descriptor pool/layout if managed here? Or use global ones? Let's use global for now.
 }
 
 // Resource to hold the prepared text draw commands for the current frame
@@ -86,28 +86,25 @@ pub struct GlyphAtlasResource(pub std::sync::Arc<std::sync::Mutex<gui_framework:
 #[derive(bevy_ecs::prelude::Resource)]
 pub struct SwashCacheResource(pub std::sync::Mutex<cosmic_text::SwashCache>);
 
-/// Holds the prepared Vulkan handles needed for a single draw call.
+/// Holds the prepared Vulkan handles needed for a single shape draw call.
 #[derive(Debug, Clone)]
 pub struct PreparedDrawData {
     pub pipeline: vk::Pipeline,
     pub vertex_buffer: vk::Buffer,
     pub vertex_count: u32,
-    pub descriptor_set: vk::DescriptorSet, // Per-entity set (bindings 0=global proj, 1=entity offset)
-    // Add instance buffer/count later if needed
+    pub descriptor_set: vk::DescriptorSet, // Per-entity set (bindings 0=global proj, 1=entity transform)
+    pub color: [f32; 4], // Added color for push constants
 }
 
+/// Holds the data needed to prepare Vulkan resources for a shape entity.
 #[derive(Debug, Clone)]
 pub struct RenderCommandData {
     pub entity_id: Entity,
     pub transform_matrix: bevy_math::Mat4, // Pre-calculated world matrix
     pub vertices: Arc<Vec<Vertex>>,
-    pub vertex_shader_path: String,
-    pub fragment_shader_path: String,
+    // pub vertex_shader_path: String, // REMOVED
+    // pub fragment_shader_path: String, // REMOVED
+    pub color: Color, // Added Bevy Color
     pub depth: f32, // For sorting
     pub vertices_changed: bool, // For background quad resizing
-    // Add instancing info later if needed
 }
-
-// Specific exports might be needed later, but often importing
-// directly like `use rusty_whip::gui_framework::components::Visibility`
-// in main.rs is clearer.

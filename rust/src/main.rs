@@ -9,7 +9,7 @@ use bevy_window::{
 };
 use bevy_winit::{WinitPlugin, WakeUp};
 use bevy_a11y::AccessibilityPlugin;
-use bevy_transform::prelude::Transform; // Keep for setup_scene_ecs
+use bevy_transform::prelude::Transform;
 use bevy_transform::TransformPlugin;
 // Import types defined in lib.rs
 use rusty_whip::{Vertex, VulkanContextResource};
@@ -47,7 +47,7 @@ fn main() {
     // --- Build Bevy App ---
     App::new()
         .add_plugins((
-            LogPlugin { level: Level::INFO, filter: "wgpu=error,naga=warn,bevy_app=info,bevy_ecs=info,rusty_whip=debug".to_string(), ..default() },
+            LogPlugin { level: Level::DEBUG, filter: "wgpu=error,naga=warn,bevy_app=info,bevy_ecs=info,rusty_whip=debug".to_string(), ..default() }, // Use DEBUG for more build script info
             bevy_time::TimePlugin::default(),
             TransformPlugin::default(),
             InputPlugin::default(),
@@ -72,9 +72,9 @@ fn main() {
         })
         // == Add Framework Plugins ==
         .add_plugins(GuiFrameworkCorePlugin)
-        .add_plugins(GuiFrameworkInteractionPlugin) 
-        .add_plugins(GuiFrameworkDefaultMovementPlugin) 
-        .add_plugins(GuiFrameworkDefaultBindingsPlugin) 
+        .add_plugins(GuiFrameworkInteractionPlugin)
+        .add_plugins(GuiFrameworkDefaultMovementPlugin)
+        .add_plugins(GuiFrameworkDefaultBindingsPlugin)
 
         // == Startup Systems ==
         .add_systems(Startup,
@@ -126,8 +126,7 @@ fn setup_scene_ecs(
                 Vertex { position: [0.0, logical_height] }, // Top-left (0, H)
                 Vertex { position: [logical_width, logical_height] },// Top-right (W, H)
             ]),
-            vertex_shader_path: "background.vert.spv".to_string(),
-            fragment_shader_path: "background.frag.spv".to_string(),
+            color: Color::srgba(0.129, 0.161, 0.165, 1.0), // Dark grey background
         },
         Transform::from_xyz(0.0, 0.0, 0.0), // Use Z for depth
         Visibility(true),
@@ -136,7 +135,7 @@ fn setup_scene_ecs(
         BackgroundQuad,
     ));
 
-    // Triangle (Draggable and Clickable)
+    // Triangle (Draggable and Clickable) - Blue
     commands.spawn((
         ShapeData {
             vertices: Arc::new(vec![
@@ -144,8 +143,7 @@ fn setup_scene_ecs(
                 Vertex { position: [0.0, 25.0] },    // Top-center local
                 Vertex { position: [25.0, -25.0] }, // Bottom-right local
             ]),
-            vertex_shader_path: "triangle.vert.spv".to_string(),
-            fragment_shader_path: "triangle.frag.spv".to_string(),
+            color: Color::srgba(1.0, 0.596, 0.0, 1.0), // Blue color
         },
         Transform::from_xyz(300.0, 150.0, -1.0),
         Visibility(true),
@@ -153,7 +151,7 @@ fn setup_scene_ecs(
         Name::new("Triangle"),
     ));
 
-    // Square (Draggable and Clickable)
+    // Square (Draggable and Clickable) - Green
     commands.spawn((
         ShapeData {
             vertices: Arc::new(vec![ // Use Arc
@@ -165,8 +163,7 @@ fn setup_scene_ecs(
                 Vertex { position: [-25.0, 25.0] },
                 Vertex { position: [25.0, 25.0] },
             ]),
-            vertex_shader_path: "square.vert.spv".to_string(),
-            fragment_shader_path: "square.frag.spv".to_string(),
+            color: Color::srgba(0.259, 0.788, 0.133, 1.0), // Green color
         },
         Transform::from_xyz(125.0, 75.0, -2.0),
         Visibility(true),
@@ -190,7 +187,7 @@ fn setup_scene_ecs(
         // Text component no longer has 'content'
         Text {
             size: 24.0,
-            color: Color::WHITE,
+            color: Color::BLACK,
             alignment: TextAlignment::Left,
             bounds: None,
         },

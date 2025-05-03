@@ -921,8 +921,7 @@ fn rendering_system(
                 entity_id: entity,
                 transform_matrix: global_transform.compute_matrix(),
                 vertices: shape.vertices.clone(),
-                vertex_shader_path: shape.vertex_shader_path.clone(),
-                fragment_shader_path: shape.fragment_shader_path.clone(),
+                color: shape.color, // Get color from ShapeData
                 depth: global_transform.translation().z,
                 vertices_changed,
             });

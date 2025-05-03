@@ -1,76 +1,77 @@
-use bevy_log::{info, error, warn}; 
+use bevy_log::{info, error, warn};
 use ash::vk;
 use vk_mem::Alloc;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use bevy_math::Mat4;
 use std::collections::HashMap;
 use bevy_ecs::prelude::Entity;
-use crate::Vertex;
-use crate::PreparedDrawData;
+use crate::{Vertex, Color}; // Import Vertex and Color
+use crate::{PreparedDrawData, RenderCommandData}; // Import command/prepared data structs
 use crate::GlobalProjectionUboResource;
+use crate::gui_framework::rendering::shader_utils; // Keep shader_utils for loading the single shader set
+use std::mem; // Import mem for size_of
+use bevy_color::ColorToComponents;
 
+// Struct holding Vulkan resources specific to one entity
 struct EntityRenderResources {
     vertex_buffer: vk::Buffer,
     vertex_allocation: vk_mem::Allocation,
     vertex_count: u32,
-    offset_uniform: vk::Buffer,
-    offset_allocation: vk_mem::Allocation,
-    descriptor_set: vk::DescriptorSet,
+    offset_uniform: vk::Buffer, // Renamed from transform_ubo for clarity
+    offset_allocation: vk_mem::Allocation, // Renamed from transform_alloc
+    descriptor_set: vk::DescriptorSet, // Set 0 (Global UBO, Offset UBO)
 }
 
+// Key for caching pipelines. Currently only one shape pipeline exists.
+// Kept for potential future variations (e.g., blend modes, wireframe).
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 struct PipelineCacheKey {
-    vertex_shader_path: String,
-    fragment_shader_path: String,
+    // Placeholder for future state variations
+    id: u32, // Simple ID for now, always 0
 }
 
-type ShaderCacheKey = String;
-
+// REMOVED: type ShaderCacheKey = String;
 
 pub struct BufferManager {
-    entity_cache: HashMap<Entity, EntityRenderResources>,
+    // Renamed entity_cache to entity_resources for clarity
+    entity_resources: HashMap<Entity, EntityRenderResources>,
     pipeline_cache: HashMap<PipelineCacheKey, vk::Pipeline>,
-    shader_cache: HashMap<ShaderCacheKey, vk::ShaderModule>,
-    per_entity_layout: vk::DescriptorSetLayout,
+    // REMOVED: shader_cache: HashMap<ShaderCacheKey, vk::ShaderModule>,
+    per_entity_layout: vk::DescriptorSetLayout, // Layout for Set 0
     descriptor_pool: vk::DescriptorPool,
 }
 
 impl BufferManager {
     pub fn new(
-        platform: &mut VulkanContext,
+        _platform: &mut VulkanContext, // Mark platform as unused for now if only needed for handles
         per_entity_layout: vk::DescriptorSetLayout,
         descriptor_pool: vk::DescriptorPool, // Pool for allocating per-entity sets
     ) -> Self {
         // --- Initialize Caches ---
-        let entity_cache = HashMap::new();
+        let entity_resources = HashMap::new();
         let pipeline_cache = HashMap::new();
-        let shader_cache = HashMap::new();
-
-
-        // Note: GlobalProjectionUboResource is created and managed elsewhere (e.g., core plugin startup)
-        // BufferManager will expect it to exist when prepare_frame_resources is called.
+        // REMOVED: let shader_cache = HashMap::new();
 
         Self {
-            // Removed: uniform_buffer,
-            // Removed: uniform_allocation,
-            entity_cache,
+            entity_resources,
             pipeline_cache,
-            shader_cache,
+            // REMOVED: shader_cache,
             per_entity_layout, // Store layout for per-entity sets
             descriptor_pool,       // Store pool for per-entity sets
         }
     }
 
-    // --- prepare_frame_resources with immediate descriptor updates ---
+    // --- prepare_frame_resources with push constants ---
     pub fn prepare_frame_resources(
         &mut self,
         platform: &mut VulkanContext,
-        render_commands: &[crate::RenderCommandData], // Includes vertices_changed flag
+        render_commands: &[RenderCommandData], // Use updated RenderCommandData
         global_ubo_res: &GlobalProjectionUboResource,
     ) -> Vec<PreparedDrawData> {
         let device = platform.device.as_ref().expect("Device missing in prepare_frame_resources");
         let allocator = platform.allocator.as_ref().expect("Allocator missing in prepare_frame_resources");
         let render_pass = platform.render_pass.expect("Render pass missing in prepare_frame_resources");
+        // Get the shape pipeline layout (includes push constant range)
         let pipeline_layout = platform.shape_pipeline_layout.expect("Shape pipeline layout missing in prepare_frame_resources");
 
         let mut prepared_draws: Vec<PreparedDrawData> = Vec::with_capacity(render_commands.len());
@@ -80,7 +81,7 @@ impl BufferManager {
             let mut entity_existed = true; // Flag to track if entity was new this frame
 
             // --- Get or Create Entity Resources ---
-            if !self.entity_cache.contains_key(&entity_id) {
+            if !self.entity_resources.contains_key(&entity_id) {
                 entity_existed = false;
                 let vertex_count = command.vertices.len();
                 let vertex_buffer_size = (std::mem::size_of::<Vertex>() * vertex_count) as u64;
@@ -93,10 +94,6 @@ impl BufferManager {
                 };
                 unsafe {
                     let info = allocator.get_allocation_info(&vertex_allocation); assert!(!info.mapped_data.is_null(), "Vertex allocation should be mapped");
-                    // --- Log Vertex Data for Debugging ---
-                    if entity_id.index() == 5 { // Log only for square (adjust index if needed)
-                    }
-                    // --- End Log ---
                     info.mapped_data.cast::<Vertex>().copy_from_nonoverlapping(command.vertices.as_ptr(), vertex_count);
                 }
 
@@ -112,79 +109,16 @@ impl BufferManager {
                     else { error!("[BufferManager] Offset UBO allocation not mapped during initial write for {:?}!", entity_id); }
                 }
 
-                // 3. Allocate Descriptor Set
+                // 3. Allocate Descriptor Set (Set 0)
                 let descriptor_set = unsafe {
                     device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo { s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO, descriptor_pool: self.descriptor_pool, descriptor_set_count: 1, p_set_layouts: &self.per_entity_layout, ..Default::default() })
                           .expect("Failed to allocate descriptor set")[0]
                 };
 
-                // 4. Load/Get Shaders from Cache (Only need to do this once per shader path)
-                let vertex_shader_path = &command.vertex_shader_path;
-                if !self.shader_cache.contains_key(vertex_shader_path) {
-                    let shader = crate::gui_framework::rendering::shader_utils::load_shader(device, vertex_shader_path);
-                    self.shader_cache.insert(vertex_shader_path.clone(), shader);
-                }
-                let fragment_shader_path = &command.fragment_shader_path;
-                 if !self.shader_cache.contains_key(fragment_shader_path) {
-                    let shader = crate::gui_framework::rendering::shader_utils::load_shader(device, fragment_shader_path);
-                    self.shader_cache.insert(fragment_shader_path.clone(), shader);
-                }
-
-                // 5. Create/Get Pipeline from Cache (Only need to do this once per shader pair)
-                let pipeline_key = PipelineCacheKey { vertex_shader_path: command.vertex_shader_path.clone(), fragment_shader_path: command.fragment_shader_path.clone() };
-                self.pipeline_cache.entry(pipeline_key.clone()).or_insert_with(|| {
-                    let vertex_shader = self.shader_cache[&pipeline_key.vertex_shader_path];
-                    let fragment_shader = self.shader_cache[&pipeline_key.fragment_shader_path];
-                    // (Pipeline creation logic remains the same as before)
-                    unsafe {
-                        let shader_stages = [ vk::PipelineShaderStageCreateInfo { s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO, module: vertex_shader, stage: vk::ShaderStageFlags::VERTEX, p_name: b"main\0".as_ptr() as _, ..Default::default() }, vk::PipelineShaderStageCreateInfo { s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO, module: fragment_shader, stage: vk::ShaderStageFlags::FRAGMENT, p_name: b"main\0".as_ptr() as _, ..Default::default() }, ];
-                        let vertex_attr_descs = [ vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: 0 } ];
-                        let vertex_binding_descs = [ vk::VertexInputBindingDescription { binding: 0, stride: std::mem::size_of::<Vertex>() as u32, input_rate: vk::VertexInputRate::VERTEX } ];
-                        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo { s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, vertex_binding_description_count: 1, p_vertex_binding_descriptions: vertex_binding_descs.as_ptr(), vertex_attribute_description_count: 1, p_vertex_attribute_descriptions: vertex_attr_descs.as_ptr(), ..Default::default() };
-                        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo { s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() };
-                        let viewport_state = vk::PipelineViewportStateCreateInfo { s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO, viewport_count: 1, scissor_count: 1, ..Default::default() };
-                        let rasterizer = vk::PipelineRasterizationStateCreateInfo { s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO, polygon_mode: vk::PolygonMode::FILL, line_width: 1.0, cull_mode: vk::CullModeFlags::NONE, front_face: vk::FrontFace::CLOCKWISE, ..Default::default() };
-                        let multisampling = vk::PipelineMultisampleStateCreateInfo { s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, rasterization_samples: vk::SampleCountFlags::TYPE_1, ..Default::default() };
-                        let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
-                            s_type: vk::StructureType::PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-                            depth_test_enable: vk::TRUE,
-                            depth_write_enable: vk::TRUE,
-                            depth_compare_op: vk::CompareOp::LESS, // lower z depth is on the bottom, higher z depth is ontop
-                            depth_bounds_test_enable: vk::FALSE, // Optional: Keep fragments in specific range
-                            stencil_test_enable: vk::FALSE, // No stencil needed for now
-                            // min_depth_bounds, max_depth_bounds, front, back fields default ok
-                            ..Default::default()
-                        };
-                        let color_blend_attachment = vk::PipelineColorBlendAttachmentState { // No s_type here
-                            blend_enable: vk::FALSE,
-                            color_write_mask: vk::ColorComponentFlags::RGBA,
-                            ..Default::default()
-                        }; // Use default for blend factors/ops when disabled
-                        let color_blend_attachment = vk::PipelineColorBlendAttachmentState { blend_enable: vk::FALSE, color_write_mask: vk::ColorComponentFlags::RGBA, ..Default::default() };
-                        let color_blending = vk::PipelineColorBlendStateCreateInfo { s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachment_count: 1, p_attachments: &color_blend_attachment, ..Default::default() };
-                        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-                        let dynamic_state_info = vk::PipelineDynamicStateCreateInfo { s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamic_state_count: dynamic_states.len() as u32, p_dynamic_states: dynamic_states.as_ptr(), ..Default::default() };
-                        let pipeline_info = vk::GraphicsPipelineCreateInfo { s_type: 
-                            vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO, 
-                            stage_count: shader_stages.len() as u32, 
-                            p_stages: shader_stages.as_ptr(), 
-                            p_vertex_input_state: &vertex_input_info, 
-                            p_input_assembly_state: &input_assembly, 
-                            p_viewport_state: &viewport_state, 
-                            p_rasterization_state: &rasterizer,
-                            p_multisample_state: &multisampling,
-                            p_color_blend_state: &color_blending,
-                            p_depth_stencil_state: &depth_stencil_state,
-                            p_dynamic_state: &dynamic_state_info,
-                            layout: pipeline_layout,
-                            render_pass, subpass: 0,
-                            ..Default::default() };
-                        device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None).expect("Failed to create graphics pipeline").remove(0)
-                    }
-                });
+                // REMOVED: Shader loading/caching logic
 
                 // Insert the newly created resources into the cache
-                self.entity_cache.insert(entity_id, EntityRenderResources {
+                self.entity_resources.insert(entity_id, EntityRenderResources {
                     vertex_buffer, vertex_allocation,
                     vertex_count: vertex_count as u32,
                     offset_uniform, offset_allocation,
@@ -194,7 +128,7 @@ impl BufferManager {
 
             // --- Update Existing Entity Resources ---
             if entity_existed {
-                let resources = self.entity_cache.get_mut(&entity_id).unwrap();
+                let resources = self.entity_resources.get_mut(&entity_id).unwrap();
 
                 // --- Update Vertex Buffer IF vertices changed ---
                 if command.vertices_changed {
@@ -223,6 +157,8 @@ impl BufferManager {
                     }
                     resources.vertex_count = new_vertex_count as u32; // Update vertex count only if vertices changed
                 }
+
+                // --- Update Offset Uniform Buffer (Always) ---
                 unsafe {
                     let info = allocator.get_allocation_info(&resources.offset_allocation);
                     if !info.mapped_data.is_null() {
@@ -240,32 +176,73 @@ impl BufferManager {
             // --- Update Descriptor Set (Always, for both new and existing entities) ---
             // This needs to happen *after* potential buffer recreation/update
             // Get the resources again (might have been created above if new)
-            let resources = self.entity_cache.get(&entity_id).unwrap(); // Should always exist now
+            let resources = self.entity_resources.get(&entity_id).unwrap(); // Should always exist now
             let offset_buffer_info_single = vk::DescriptorBufferInfo { buffer: resources.offset_uniform, offset: 0, range: std::mem::size_of::<Mat4>() as u64 };
             let writes_single = [
+                // Binding 0: Global UBO
                 vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: resources.descriptor_set, dst_binding: 0, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &vk::DescriptorBufferInfo { buffer: global_ubo_res.buffer, offset: 0, range: std::mem::size_of::<Mat4>() as u64 }, ..Default::default() },
+                // Binding 1: Offset UBO
                 vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: resources.descriptor_set, dst_binding: 1, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &offset_buffer_info_single, ..Default::default() },
             ];
             unsafe { device.update_descriptor_sets(&writes_single, &[]); }
 
+            // --- Get or Create the single Shape Pipeline ---
+            let pipeline_key = PipelineCacheKey { id: 0 }; // Use constant key
+            let pipeline = *self.pipeline_cache.entry(pipeline_key).or_insert_with(|| {
+                // Load shaders
+                let vert_shader_module = shader_utils::load_shader(device, "shape.vert.spv");
+                let frag_shader_module = shader_utils::load_shader(device, "shape.frag.spv");
+
+                // Create pipeline (using logic from previous attempt)
+                let pipeline = unsafe {
+                    let shader_stages = [ vk::PipelineShaderStageCreateInfo { s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO, module: vert_shader_module, stage: vk::ShaderStageFlags::VERTEX, p_name: b"main\0".as_ptr() as _, ..Default::default() }, vk::PipelineShaderStageCreateInfo { s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO, module: frag_shader_module, stage: vk::ShaderStageFlags::FRAGMENT, p_name: b"main\0".as_ptr() as _, ..Default::default() }, ];
+                    let vertex_attr_descs = [ vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32_SFLOAT, offset: 0 }, ];
+                    let vertex_binding_descs = [ vk::VertexInputBindingDescription { binding: 0, stride: std::mem::size_of::<Vertex>() as u32, input_rate: vk::VertexInputRate::VERTEX } ];
+                    let vertex_input_info = vk::PipelineVertexInputStateCreateInfo { s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, vertex_binding_description_count: vertex_binding_descs.len() as u32, p_vertex_binding_descriptions: vertex_binding_descs.as_ptr(), vertex_attribute_description_count: vertex_attr_descs.len() as u32, p_vertex_attribute_descriptions: vertex_attr_descs.as_ptr(), ..Default::default() };
+                    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo { s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() };
+                    let viewport_state = vk::PipelineViewportStateCreateInfo { s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO, viewport_count: 1, scissor_count: 1, ..Default::default() };
+                    let rasterizer = vk::PipelineRasterizationStateCreateInfo { s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO, polygon_mode: vk::PolygonMode::FILL, line_width: 1.0, cull_mode: vk::CullModeFlags::NONE, front_face: vk::FrontFace::CLOCKWISE, ..Default::default() };
+                    let multisampling = vk::PipelineMultisampleStateCreateInfo { s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, rasterization_samples: vk::SampleCountFlags::TYPE_1, ..Default::default() };
+                    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo { s_type: vk::StructureType::PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO, depth_test_enable: vk::TRUE, depth_write_enable: vk::TRUE, depth_compare_op: vk::CompareOp::LESS, depth_bounds_test_enable: vk::FALSE, stencil_test_enable: vk::FALSE, ..Default::default() };
+                    let color_blend_attachment = vk::PipelineColorBlendAttachmentState { blend_enable: vk::TRUE, src_color_blend_factor: vk::BlendFactor::SRC_ALPHA, dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA, color_blend_op: vk::BlendOp::ADD, src_alpha_blend_factor: vk::BlendFactor::ONE, dst_alpha_blend_factor: vk::BlendFactor::ZERO, alpha_blend_op: vk::BlendOp::ADD, color_write_mask: vk::ColorComponentFlags::RGBA, };
+                    let color_blending = vk::PipelineColorBlendStateCreateInfo { s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, logic_op_enable: vk::FALSE, attachment_count: 1, p_attachments: &color_blend_attachment, ..Default::default() };
+                    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+                    let dynamic_state_info = vk::PipelineDynamicStateCreateInfo { s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamic_state_count: dynamic_states.len() as u32, p_dynamic_states: dynamic_states.as_ptr(), ..Default::default() };
+                    let pipeline_info = vk::GraphicsPipelineCreateInfo { s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO, stage_count: shader_stages.len() as u32, p_stages: shader_stages.as_ptr(), p_vertex_input_state: &vertex_input_info, p_input_assembly_state: &input_assembly, p_viewport_state: &viewport_state, p_rasterization_state: &rasterizer, p_multisample_state: &multisampling, p_color_blend_state: &color_blending, p_depth_stencil_state: &depth_stencil_state, p_dynamic_state: &dynamic_state_info, layout: pipeline_layout, render_pass, subpass: 0, ..Default::default() };
+                    device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None).expect("Failed to create shape graphics pipeline").remove(0)
+                };
+                // Cleanup shader modules immediately
+                unsafe {
+                    device.destroy_shader_module(vert_shader_module, None);
+                    device.destroy_shader_module(frag_shader_module, None);
+                }
+                pipeline
+            });
+
+
             // --- Collect Prepared Draw Data ---
-            // Retrieve the potentially updated/created resources and pipeline
-            let resources = self.entity_cache.get(&entity_id).unwrap();
-            let pipeline_key = PipelineCacheKey { vertex_shader_path: command.vertex_shader_path.clone(), fragment_shader_path: command.fragment_shader_path.clone() };
-            let pipeline = self.pipeline_cache.get(&pipeline_key).expect("Pipeline should be in cache!");
+            let resources = self.entity_resources.get(&entity_id).unwrap(); // Get resources again
+
+            // Convert Bevy Color to [f32; 4] for push constants
+            let color_rgba = match command.color {
+                 Color::Srgba(c) => c.to_f32_array(),
+                 Color::LinearRgba(c) => c.to_f32_array(),
+                 _ => Color::WHITE.to_srgba().to_f32_array(), // Fallback
+            };
 
             prepared_draws.push(PreparedDrawData {
-                pipeline: *pipeline,
+                pipeline, // Use the pipeline retrieved/created above
                 vertex_buffer: resources.vertex_buffer,
                 vertex_count: resources.vertex_count,
                 descriptor_set: resources.descriptor_set,
+                color: color_rgba, // Add color data
             });
         } // End of loop through render_commands
 
         prepared_draws
-    } 
+    }
 
-    // --- cleanup() function remains the same ---
+    // --- cleanup() function ---
     pub fn cleanup(
         &mut self,
         platform: &mut VulkanContext,
@@ -275,7 +252,7 @@ impl BufferManager {
 
         unsafe {
             // Cleanup cached resources
-            let sets_to_free: Vec<vk::DescriptorSet> = self.entity_cache.values()
+            let sets_to_free: Vec<vk::DescriptorSet> = self.entity_resources.values()
                 .map(|r| r.descriptor_set)
                 .collect();
 
@@ -289,27 +266,21 @@ impl BufferManager {
             }
 
            // Cleanup entity-specific resources
-           let entity_count = self.entity_cache.len();
-           for (entity_id, mut resources) in self.entity_cache.drain() {
+           let entity_count = self.entity_resources.len();
+           for (_entity_id, mut resources) in self.entity_resources.drain() { // Use _entity_id
                allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
                allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
            }
+           info!("[BufferManager::cleanup] Cleaned up resources for {} entities.", entity_count);
 
            // Cleanup cached pipelines
            let pipeline_count = self.pipeline_cache.len();
-           for (key, pipeline) in self.pipeline_cache.drain() {
+           for (_key, pipeline) in self.pipeline_cache.drain() { // Use _key
                 device.destroy_pipeline(pipeline, None);
            }
+           info!("[BufferManager::cleanup] Cleaned up {} cached pipelines.", pipeline_count);
 
-           // Cleanup cached shaders
-           let shader_count = self.shader_cache.len();
-
-           for (key, shader_module) in self.shader_cache.drain() {
-                device.destroy_shader_module(shader_module, None);
-           }
-
-            // Global uniform buffer cleanup handled where GlobalProjectionUboResource is managed
-
+           // REMOVED: Shader cache cleanup
         }
     }
 }

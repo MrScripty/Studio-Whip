@@ -47,7 +47,7 @@ fn movement_system(
 
             // Apply delta directly based on Y-up world coordinates
             transform.translation.x += ev.delta.x;
-            transform.translation.y -= ev.delta.y; // Ensure Y-inversion is active
+            transform.translation.y += ev.delta.y; // Ensure Y-inversion is active
 
             info!("[MovementSystem] Transform modified for {:?}. After: {:?}", ev.entity, transform.translation);
         } else {

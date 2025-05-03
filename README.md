@@ -30,10 +30,11 @@ The table below summarizes recommended hardware specifications for different tie
 ### Example Model Configurations per Tier
 
 The following table provides *example* model combinations suitable for each hardware tier when running locally. These are just suggestions; you can:
-*   Mix and match models based on your specific tasks (writing, image gen, video gen).
+*   Mix and match models based on your specific tasks (writing, image gen, video gen, etc...).
 *   Use fewer, larger models or more, smaller models depending on VRAM/RAM.
-*   Choose models optimized for specific hardware (e.g., NF4/FP8 quantizations if supported).
+*   Choose models optimized for specific hardware (e.g., INT4/FP8 quantizations if supported).
 *   Combine local models with cloud APIs.
+*   Distribute models accross CPU and GPU
 
 <sub>Hover over models for license</sub>
 |**Tier**        |<span title="These are finetunes of other base LLM's">**Creative Writing**</span> |<span title="Used for a variety of behind-the-scenes functionality such as planning, prompt writing, and editing">**Instruct**</span> |<span title="Also use variants such as in/out painting and image to image">**Image Generation**</span> |**Video Generation**                                                                                                            |
@@ -56,7 +57,7 @@ The following table provides *example* model combinations suitable for each hard
 3. Build: `cargo run --release`
 
 ### For Windows Users
-Install [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/), this allows you to run the linux shell script utlities located into use the provided Linux shell script utilities located in [/rust/utilities](https://github.com/MrScripty/Studio-Whip/tree/main/rust/utilities)
+Install [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/), this allows you to run the linux shell script utlities located into [/rust/utilities](https://github.com/MrScripty/Studio-Whip/tree/main/rust/utilities)
 
 1. Open Powershell as admin and install wsl ```wsl --install```
 2. Find availible linux distros ```wsl --list --online```

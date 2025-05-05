@@ -20,19 +20,19 @@
     *   Role: Manages font loading (`font_server`), text layout/shaping (`text_layout_system`), glyph caching/packing/upload (`glyph_atlas` using `rectangle-pack`), **per-entity text Vulkan resource management** (`TextRenderData` component), **shared text resource management** (`TextRenderingResources`), **text rendering preparation** (`rendering_system`), **caching of layout results** (`TextBufferCache`), **visual cursor management** (`manage_cursor_visual_system`, `update_cursor_transform_system`).
     *   Key Modules: `font_server.rs`, `glyph_atlas.rs`, `text_data.rs`, `text_layout.rs`. Systems in `plugins/core.rs` orchestrate layout, resource creation/management, caching, cursor management, and rendering preparation.
 6.  **Bevy ECS Components (`components/`)**
-    *   Role: Defines the data associated with entities (e.g., shape, text, visibility, interaction properties, **text render resources**, **text editing state (`Focus`, `CursorState` with position and line)**, **cursor visual marker (`CursorVisual`)**, **layout cache (`TextBufferCache`)**). Used alongside `bevy_transform::components::Transform` and `bevy_hierarchy` components (`Parent`, `Children`). Implements `bevy_reflect::Reflect` where possible.
-    *   Key Modules: `shape_data.rs`, `visibility.rs`, `interaction.rs`, `text_data.rs` (defines `Text`, `EditableText`, `Focus`, `CursorState`, `CursorVisual`), `text_layout.rs` (defines `TextLayoutOutput`, `TextRenderData`, `TextBufferCache`).
+    *   Role: Defines the data associated with entities (e.g., shape, text, visibility, interaction properties, **text render resources**, **text editing state (`Focus`, `CursorState`, `TextSelection`)**, **cursor visual marker (`CursorVisual`)**, **layout cache (`TextBufferCache`)**). Used alongside `bevy_transform::components::Transform` and `bevy_hierarchy` components (`Parent`, `Children`). Implements `bevy_reflect::Reflect` where possible.
+    *   Key Modules: `shape_data.rs`, `visibility.rs`, `interaction.rs`, `text_data.rs` (defines `Text`, `EditableText`, `Focus`, `CursorState`, `CursorVisual`, `TextSelection`), `text_layout.rs` (defines `TextLayoutOutput`, `TextRenderData`, `TextBufferCache`).
 7.  **Bevy Events (`events/`)**
     *   Role: Defines event types for communication between systems (e.g., user interactions, hotkey triggers, **text focus changes**). Implements `bevy_reflect::Reflect`.
     *   Key Modules: `interaction_events.rs` (defines `EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`, `YrsTextChanged`, `TextFocusChanged`).
-8.  **Hotkey Loading (`interaction/hotkeys.rs`)**
-    *   Role: Defines logic for loading hotkey configurations from a TOML file (`HotkeyConfig`).
-    *   Key Modules: `hotkeys.rs`.
+8.  **Interaction Logic (`interaction/`)**
+    *   Role: Defines hotkey loading (`hotkeys.rs`), text interaction utilities (`utils.rs`).
+    *   Key Modules: `hotkeys.rs`, `utils.rs`.
 9.  **Framework Plugins (`plugins/`)**
     *   Role: Encapsulate core framework logic into modular Bevy plugins for better organization and reusability. Define `SystemSet`s (`CoreSet`, `InteractionSet`, etc.) to manage execution order.
     *   Key Modules:
-        *   `core.rs`: Vulkan/Renderer/Text setup, text layout & caching, text resource management, **cursor management**, rendering system, resize, cleanup.
-        *   `interaction.rs`: Input processing (mouse clicks/drags, keyboard), hotkey loading/dispatch, window close. **Manages text focus (`Focus` component) and cursor state (`CursorState` component) via `Commands`, performs hit detection on `EditableText` using `cosmic_text::Buffer::hit()`.**
+        *   `core.rs`: Vulkan/Renderer/Text setup, text layout & caching, text resource management, **cursor management (including visibility based on `TextSelection`)**, rendering system, resize, cleanup.
+        *   `interaction.rs`: Input processing (mouse clicks/drags, keyboard), hotkey loading/dispatch, window close. **Manages text focus (`Focus` component), cursor state (`CursorState` component), and selection state (`TextSelection` component) via `Commands`. Manages local `MouseContext` resource. Performs hit detection on `EditableText` using `get_cursor_at_position` utility.**
         *   `movement.rs`: Default drag movement. **Includes fix for Y-axis inversion.**
         *   `bindings.rs`: Default hotkey actions.
 10. **Bevy App Core (`main.rs`)**
@@ -52,12 +52,12 @@
     *   `create_glyph_atlas_system`, `create_font_server_system`, `create_swash_cache_system` create text foundation resources.
     *   `create_global_ubo_system` creates `GlobalProjectionUboResource`.
     *   `create_text_rendering_resources_system` creates shared `TextRenderingResources`.
-    *   `load_hotkeys_system` (Interaction Plugin) loads hotkeys.
+    *   `load_hotkeys_system` (Interaction Plugin) loads hotkeys, initializes `MouseContext`.
     *   `setup_scene_ecs` (main.rs) spawns initial entities (shapes with **color**, text with `EditableText`), populates `YrsDocResource`.
-3.  Bevy `Update` schedule runs (ordered by `CoreSet`, `InteractionSet`):
-    *   `interaction_system` processes input (mouse clicks/drags, keyboard), performs hit testing (shapes, **overall text bounding box + `buffer.hit()`**), sends `EntityClicked`/`EntityDragged`/`HotkeyActionTriggered`/`TextFocusChanged` events, **manages `Focus` component via `Commands`, updates `CursorState` component**.
+3.  Bevy `Update` schedule runs (ordered by `InteractionSet`, `CoreSet`):
+    *   `interaction_system` processes input (mouse clicks/drags, keyboard), performs hit testing (shapes, **text using `get_cursor_at_position`**), sends events, **manages `Focus`, `CursorState`, `TextSelection` components via `Commands`, updates `MouseContext`**.
     *   `update_cursor_transform_system` reads `CursorState`, `TextBufferCache`, calculates visual position using layout runs, updates `Transform` of `CursorVisual` entity.
-    *   `manage_cursor_visual_system` reacts to `Added<Focus>` / `RemovedComponents<Focus>`, adds/removes `CursorState`, spawns/despawns `CursorVisual` entity as child of focused text.
+    *   `manage_cursor_visual_system` reacts to `Added<Focus>` / `RemovedComponents<Focus>`, adds/removes `CursorState`, spawns/despawns `CursorVisual` entity, **reads `TextSelection` to set `CursorVisual` visibility**.
     *   `text_layout_system` runs on `YrsTextChanged` or `Added<Text>`, reads content from `YrsDocResource`, uses `FontServer`, `SwashCache`, calls `GlyphAtlas::add_glyph`, updates `TextLayoutOutput`, and **updates/inserts `TextBufferCache`**.
     *   `text_rendering_system` queries `Changed<TextLayoutOutput>`, creates/updates per-entity `TextRenderData` components.
     *   `handle_resize_system` handles `WindowResized`, updates `GlobalProjectionUboResource`, and calls `Renderer::resize_renderer`.
@@ -72,15 +72,15 @@
 
 ## Key Interactions (Updated)
 - **Plugins <-> Bevy App**: Plugins register components/resources/events and add systems to schedules.
-- **Plugins <-> System Sets**: Plugins define and use `SystemSet`s (`CoreSet`, `InteractionSet`, etc.) to configure execution order.
+- **Plugins <-> System Sets**: Plugins define and use `SystemSet`s (`CoreSet`, `InteractionSet`, etc.) to configure execution order. **InteractionSet now runs before CoreSet::ManageCursorVisual.**
 - **App Systems (`main.rs`) <-> Plugin Sets**: Application systems order themselves relative to plugin sets.
 - **Interaction Plugin -> Events**: Writes `EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`, `TextFocusChanged` (based on `Focus` component changes), `AppExit` events.
-- **Interaction Plugin -> ECS**: **Adds/Removes `Focus` component using `Commands`. Writes `CursorState` component.** Reads `TextBufferCache` for hit detection.
+- **Interaction Plugin -> ECS**: **Adds/Removes `Focus`, `TextSelection` components using `Commands`. Writes `CursorState` component. Writes `MouseContext` resource.** Reads `TextBufferCache` for hit detection.
 - **Movement Plugin <- Events**: Reads `EntityDragged`, writes `Transform`.
 - **Bindings Plugin <- Events**: Reads `HotkeyActionTriggered`.
 - **Core Plugin (Text Layout)**: `text_layout_system` reads `YrsTextChanged`/`Added<Text>`, `Text`, `Transform`, `Visibility`; uses `YrsDocResource`, `FontServerResource`, `SwashCacheResource`, `VulkanContextResource`; reads/writes `GlyphAtlasResource`; writes `TextLayoutOutput`, **writes `TextBufferCache`**.
 - **Core Plugin (Text Prep)**: `text_rendering_system` reads `Changed<TextLayoutOutput>`, `GlobalTransform`; uses `GlobalProjectionUboResource`, `VulkanContextResource`, `RendererResource`; creates/updates `TextRenderData` components.
-- **Core Plugin (Cursor Management)**: `manage_cursor_visual_system` reads `Added<Focus>`/`RemovedComponents<Focus>`, writes `CursorState`, spawns/despawns `CursorVisual` (using `Commands`, `BuildChildren`, `DespawnRecursiveExt`). `update_cursor_transform_system` reads `CursorState`, `TextBufferCache`, `Children`; uses `FontServerResource`; writes `Transform` (for `CursorVisual`).
+- **Core Plugin (Cursor Management)**: `manage_cursor_visual_system` reads `Added<Focus>`/`RemovedComponents<Focus>`, **reads `TextSelection`**, writes `CursorState`, spawns/despawns `CursorVisual` (using `Commands`, `BuildChildren`, `DespawnRecursiveExt`), **writes `Visibility` for `CursorVisual`**. `update_cursor_transform_system` reads `CursorState`, `TextBufferCache`, `Children`; uses `FontServerResource`; writes `Transform` (for `CursorVisual`).
 - **Core Plugin (Rendering)**: `rendering_system` reads `ShapeData`, `TextRenderData`, `CursorVisual`, `GlobalTransform`; uses `TextRenderingResources`; calls `Renderer::render`.
 - **Core Plugin (Cleanup)**: `cleanup_trigger_system` queries/cleans up `TextRenderData`, **`TextBufferCache`**, then cleans up `Renderer`, `TextRenderingResources`, `GlobalProjectionUboResource`, `GlyphAtlas`, `VulkanContext`.
 - **Renderer <-> BufferManager**: Renderer calls BufferManager for **shape/cursor** resource prep/cleanup.
@@ -99,10 +99,10 @@
 - **Modular Framework**: Core rendering, interaction, text foundation, and default behaviors encapsulated in Bevy Plugins.
 - **System Set Ordering**: Explicit execution order defined using Bevy `SystemSet`s.
 - **Bevy Math**: Uses `bevy_math` types (`Vec2`, `Mat4`).
-- **Bevy ECS**: Defines and uses custom components (`ShapeData`, `Visibility`, `Interaction`, `BackgroundQuad`, `Text`, `TextLayoutOutput`, `TextRenderData`, `EditableText`, `Focus`, **`CursorState`**, **`CursorVisual`**, **`TextBufferCache`**) and `bevy_transform::components::Transform`. Uses `bevy_hierarchy` (`Parent`, `Children`).
+- **Bevy ECS**: Defines and uses custom components (`ShapeData`, `Visibility`, `Interaction`, `BackgroundQuad`, `Text`, `TextLayoutOutput`, `TextRenderData`, `EditableText`, `Focus`, **`CursorState`**, **`CursorVisual`**, **`TextBufferCache`**, **`TextSelection`**) and `bevy_transform::components::Transform`. Uses `bevy_hierarchy` (`Parent`, `Children`).
 - **Bevy Events**: Defines and uses custom events (`EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`, `YrsTextChanged`, `TextFocusChanged`) for system communication.
 - **Bevy Reflection**: Core framework components/events/resources implement `Reflect` where feasible and are registered.
-- **Input Processing**: Uses `bevy_input` via `GuiFrameworkInteractionPlugin`. Basic click detection (shapes), dragging (shapes), hotkey dispatching implemented. **Text interaction includes overall bounding box hit detection using `cosmic_text::Buffer::hit()`, ECS-based focus management (`Focus` component), and cursor state update (`CursorState` component).** Hit detection uses **Y-up world coordinates**. Dragging updates `Transform` correctly (**Y-axis inversion fixed**).
+- **Input Processing**: Uses `bevy_input` via `GuiFrameworkInteractionPlugin`. Basic click detection (shapes), dragging (shapes), hotkey dispatching implemented. **Text interaction includes overall bounding box hit detection using `get_cursor_at_position`, ECS-based focus management (`Focus` component), cursor state update (`CursorState` component), and basic selection state management (`TextSelection` component - click sets collapsed selection).** Hit detection uses **Y-up world coordinates**. Dragging updates `Transform` correctly (**Y-axis inversion fixed**).
 - **Vulkan Setup**: Core context initialized via `GuiFrameworkCorePlugin`. Separate pipeline layouts for shapes (with **push constant range**) and text created. **Depth buffer created. Debug messenger enabled (debug builds).**
 - **Rendering Bridge**: Custom Vulkan context (`VulkanContextResource`) and renderer (`RendererResource`) managed as Bevy resources.
 - **ECS-Driven Resource Management**:
@@ -115,9 +115,9 @@
 - **Configurable Hotkeys**: Loads from TOML file into `HotkeyResource`.
 - **Build Script**: Compiles GLSL shaders to SPIR-V, copies assets.
 - **Resize Handling**: Correctly handles window resizing, swapchain/framebuffer/depth buffer recreation, projection matrix updates, and dynamic background vertex updates.
-- **Visual Output**: Functional 2D rendering of **shapes (with color)**, **static text**, and **visual text cursor** based on ECS data. Background dynamically resizes. Objects positioned and layered correctly according to **Y-up world coordinates and Z-depth**. Alpha blending enabled for shapes, text, and cursor.
+- **Visual Output**: Functional 2D rendering of **shapes (with color)**, **static text**, and **visual text cursor** based on ECS data. Background dynamically resizes. Objects positioned and layered correctly according to **Y-up world coordinates and Z-depth**. Alpha blending enabled for shapes, text, and cursor. **Cursor visibility correctly reflects collapsed selection state.**
 - **Text Foundation**:
-    - Text component definition (`Text`, `TextVertex`, `EditableText`, `Focus`, `CursorState`, `CursorVisual`).
+    - Text component definition (`Text`, `TextVertex`, `EditableText`, `Focus`, `CursorState`, `CursorVisual`, `TextSelection`).
     - Font loading and management (`FontServer`, `FontServerResource`).
     - Glyph atlas resource management (`GlyphAtlas`, `GlyphAtlasResource`), including packing/upload.
     - CPU-side text layout system (`text_layout_system` using `cosmic-text`, triggered by `YrsTextChanged`/`Added<Text>`).
@@ -126,12 +126,12 @@
     - **Text layout result caching (`text_layout_system`, `TextBufferCache`).**
     - Text shaders (`text.vert`, `text.frag`) created and used by text pipeline.
     - Text-specific Vulkan layouts and pipeline created.
-    - **Visual text cursor display and positioning (Task 9 foundation).**
+    - **Visual text cursor display and positioning.**
 - **Yrs Integration**: Basic setup with `YrsDocResource`, text content read from Yrs for layout.
 - **Robust Shutdown**: Application exit sequence correctly cleans up **per-entity text resources**, **layout caches**, and then shared Vulkan resources via `cleanup_trigger_system`.
 
 ## Future Extensions
-- **Text Handling**: Implement text editing (**Task 9 - selection, editing, clipboard**), context menus (Task 10). Improve text rendering quality (e.g., SDF). Improve cursor positioning logic with wrapping.
+- **Text Handling**: Implement text editing (**Task 9 - Phase 3+ selection, editing, clipboard**), context menus (Task 10). Improve text rendering quality (e.g., SDF). Improve cursor positioning logic with wrapping.
 - **Rendering Optimization**: Implement resource removal for despawned entities (using `RemovedComponents`). Optimize text vertex buffer updates.
 - **Hit Detection**: Improve Z-sorting/picking logic in `interaction_system` for overlapping non-text objects.
 - **Bevy State Integration**: Consider Bevy State for managing application modes.
@@ -169,3 +169,4 @@
     - `rendering_system` temporarily updates text transform UBOs; this should be moved to a dedicated system.
     - Cursor positioning logic needs refinement for complex text wrapping.
 - **Cleanup Logic**: Synchronous cleanup on `AppExit` is handled by `cleanup_trigger_system` within the `GuiFrameworkCorePlugin`, running in the `Last` schedule. It now cleans up per-entity `TextRenderData` and `TextBufferCache` before shared resources. `CursorVisual` cleanup handled via `DespawnRecursiveExt`.
+- **Mouse Context**: `MouseContext` resource is currently local to the `interaction` plugin.

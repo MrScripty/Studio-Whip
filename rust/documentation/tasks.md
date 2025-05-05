@@ -141,16 +141,17 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
 
 ## Task 9: Text Handling - Editing, Selection, Highlighting & Clipboard
 - **Goal**: Integrate `yrs` for data storage. Implement mouse/keyboard editing for `EditableText` entities, including cursor management, text selection (click, drag, double-click, keyboard), visual highlighting, and clipboard (cut/copy/paste) integration.
-- **Status**: **In Progress** (Yrs integration, hit detection, focus management, basic cache/state components, Cursor Foundation complete)
+- **Status**: **In Progress** (Yrs integration, hit detection, focus management, basic cache/state components, Cursor Foundation, **Basic Selection State/Context Complete**) (**Updated**)
 - **Affected Components/Systems/Resources**:
     - Modified Component: `Text` (removed `content`).
-    - New Components: `EditableText`, `Focus`, `CursorState`, `CursorVisual`, `TextBufferCache`, `TextSelection { start: usize, end: usize }`, `HighlightVisual` (marker).
-    - New Resources: `YrsDocResource`, `MouseContext { context: Option<MouseContextType> }`, `ClipboardResource` (e.g., holding `arboard::Clipboard`). Potentially `UndoRedoHistory`.
-    - New Systems: `manage_cursor_visual_system`, `update_cursor_transform_system`, `text_editing_system` (expanded), `TextDragSystem`, `highlight_selection_system`, clipboard handling systems/logic.
-    - Modified Systems: `interaction_system` (context, click/double-click logic, shift+click), `text_layout_system` (reads Yrs, writes cache), `cleanup_trigger_system` (cleans cache).
+    - New Components: `EditableText`, `Focus`, `CursorState`, `CursorVisual`, `TextBufferCache`, **`TextSelection { start: usize, end: usize }`**. (**Updated**)
+    - New Resources: `YrsDocResource`, **`MouseContext { context: MouseContextType }` (local to interaction plugin)**. Potentially `ClipboardResource`, `UndoRedoHistory`. (**Updated**)
+    - New Systems: `TextDragSystem`, `highlight_selection_system`, clipboard handling systems/logic.
+    - Modified Systems: `interaction_system` (**sets context, uses `get_cursor_at_position`, sets collapsed selection on click**), `text_layout_system` (reads Yrs, writes cache), `cleanup_trigger_system` (cleans cache), **`manage_cursor_visual_system` (sets cursor visibility based on selection)**. (**Updated**)
+    - Modified Plugin Config: **`GuiFrameworkInteractionPlugin` (system order adjusted)**. (**New**)
     - New Events: `TextFocusChanged`, `YrsTextChanged`.
-    - New Utility: `get_cursor_at_position` function.
-    - New Shaders: `cursor.vert`/`.frag`, `highlight.vert`/`.frag`.
+    - New Utility: **`get_cursor_at_position` function**. (**Updated**)
+    - New Shaders: `highlight.vert`/`.frag`. (Cursor shaders removed as it uses shape shader) (**Updated**)
 - **Steps (Phased Implementation with Integrated Testing)**:
     1.  **Add Dependency:** Add `yrs` to `Cargo.toml`. - **Complete.**
     2.  **Integrate `YrsDocResource`:** Set up a central Yrs document and map Bevy `Entity` IDs to shared `yrs::TextRef` types within the document resource. Initialize and populate in `main.rs`. - **Complete.**
@@ -158,23 +159,23 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
     4.  **Implement Text Hit Detection & Focus Management:** Modify `interaction_system` to manage `Focus` component via `Commands` based on `cosmic_text::Buffer::hit()` results and send `TextFocusChanged`. - **Complete.**
     5.  **Implement Yrs Change Observation:** Modify `text_layout_system` to trigger on `YrsTextChanged` or `Added<Text>`. - **Complete.**
     6.  **Add Cursor State & Cache Components:** Define `CursorState`, `CursorVisual`, `TextBufferCache`. Modify `text_layout_system` to populate `TextBufferCache`. Modify cleanup to remove cache. Register components. - **Complete.**
-    7.  **Phase 1: Cursor Foundation** **Complete**
+    7.  **Phase 1: Cursor Foundation** - **Complete.**
         *   Implement `manage_cursor_visual_system` (spawns/despawns `CursorVisual`, adds/removes `CursorState`).
         *   Implement `update_cursor_transform_system` (positions `CursorVisual` via `layout_cursor`).
-        *   Create `cursor.vert`/`.frag` shaders, update `build.rs`.
         *   **TEST:** Cursor appears/disappears with focus, positions correctly.
-    8.  **Phase 2: Basic Selection State & Context**
-        *   Define `TextSelection` component, `MouseContext` resource. Register them.
-        *   Create `get_cursor_at_position` utility function (using `buffer.hit`).
-        *   Modify `interaction_system`: Set `MouseContext` on mousedown. Handle basic click on `EditableText` (set `CursorState`, set `TextSelection` with start=end=click_pos, clear previous selection).
-        *   Modify `manage_cursor_visual_system`: Hide cursor if `selection.start != selection.end`.
-        *   **TEST:** Context set correctly. Clicking sets cursor/selection. Cursor hides when selection active. Non-text drag works.
+    8.  **Phase 2: Basic Selection State, Context & Cursor Utility** - **Complete.** (**Updated**)
+        *   Define `TextSelection` component, local `MouseContext` resource. Register them.
+        *   Create `get_cursor_at_position` utility function.
+        *   Modify `interaction_system`: Set `MouseContext` on mousedown. Handle basic click on `EditableText` (set `CursorState`, set `TextSelection` with start=end=click_pos).
+        *   Adjust system order (`InteractionSet` before `CoreSet::ManageCursorVisual`).
+        *   Modify `manage_cursor_visual_system`: Set cursor `Visibility` based on `selection.start == selection.end`.
+        *   **TEST:** Context set correctly. Clicking sets cursor/selection (`start == end`). Cursor remains visible after click. Non-text drag works.
     9.  **Phase 3: Refined Drag Selection & Clearing**
-        *   Create `TextDragSystem`: Handle mouse drag when `MouseContext::Text`. Use `get_cursor_at_position` to detect character position changes (drag threshold). Update `TextSelection.end`. Keep selection active on release.
+        *   Create `TextDragSystem`: Handle mouse drag when `MouseContext::TextInteraction`. Use `get_cursor_at_position` to detect character position changes. Update `TextSelection.end`. Keep selection active on release.
         *   Modify `interaction_system`: Implement second-click logic (if click on text entity that already has active selection, clear selection and place cursor).
         *   **TEST:** Drag selection works (character threshold, multi-line). Second-click clears selection correctly.
     10. **Phase 4: Selection Editing & Extension**
-        *   Modify `text_editing_system`: Handle Backspace/Delete/Typing when `TextSelection` is active (replace/delete range). Implement Shift+Arrow key logic to modify `TextSelection` range based on `cursor_motion`.
+        *   Modify `text_editing_system` (or create if needed): Handle Backspace/Delete/Typing when `TextSelection` is active (replace/delete range). Implement Shift+Arrow key logic to modify `TextSelection` range based on `cursor_motion`.
         *   Modify `interaction_system`: Implement Shift+Click logic to set `TextSelection` range (from current `CursorState.position` to click position).
         *   **TEST:** Deleting/typing over selections. Extending selections with Shift+Arrow/Shift+Click.
     11. **Phase 5: Double-Click Word Selection**
@@ -202,7 +203,7 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
     15. **Phase 9: Optimization (Post-Functionality)**
         *   Implement optimizations (e.g., highlight batching, cursor calculation caching, event-driven system execution).
         *   **TEST:** Profile and verify performance improvements and lack of regressions.
-- **Constraints**: Requires Task 8 completion. Requires `yrs`, `cosmic-text`, `arboard`. Requires careful handling of coordinate systems, UTF-8 byte offsets, Yrs transactions, and Bevy system ordering/dependencies. Full Undo/Redo state restoration is complex. P2P synchronization deferred.
+- **Constraints**: Requires Task 8 completion. Requires `yrs`, `cosmic-text`. Potentially `arboard`. Requires careful handling of coordinate systems, UTF-8 byte offsets, Yrs transactions, and Bevy system ordering/dependencies. Full Undo/Redo state restoration is complex. P2P synchronization deferred. (**Updated**)
 
 ## Task 10: Implement Radial Pie Context Menu
 - **Goal**: Implement a popup pie-style context menu triggered by a hotkey, using Bevy ECS entities for UI elements and Bevy events/resources for state management.

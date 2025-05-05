@@ -17,8 +17,6 @@ use yrs::{Transact, GetString, TextRef};
 use crate::gui_framework::components::{CursorState, CursorVisual};
 use bevy_hierarchy::{BuildChildren, DespawnRecursiveExt, Children, Parent};
 use bevy_core::Name;
-use crate::gui_framework::components::Interaction;
-use crate::gui_framework::components::Focus;
 
 
 // Import types from the crate root (lib.rs)
@@ -37,7 +35,7 @@ use crate::gui_framework::{
     rendering::render_engine::Renderer,
     rendering::glyph_atlas::GlyphAtlas,
     rendering::font_server::FontServer,
-    components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph, TextRenderData, TextBufferCache},
+    components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph, TextRenderData, TextBufferCache, TextSelection, Focus, Interaction},
     rendering::shader_utils,
 };
 
@@ -505,8 +503,14 @@ fn manage_cursor_visual_system(
     focus_added_query: Query<(Entity, &Transform), Added<Focus>>,
     // Query for entities that lost focus this frame
     mut focus_removed_query: RemovedComponents<Focus>,
-    // Query for existing cursor visuals to despawn them
-    cursor_visual_query: Query<(Entity, &Parent), With<CursorVisual>>,
+    // Query for existing cursor visuals to despawn/update them
+    mut cursor_visual_query: Query<(Entity, &Parent, &mut Visibility), With<CursorVisual>>, // Query Visibility mutably
+    // Query TextSelection to determine cursor visibility
+    text_selection_query: Query<&TextSelection>,
+    // Query for focused entities to update existing cursors
+    focused_query: Query<Entity, With<Focus>>, // Add query for focused entities
+    // Query for children to find the cursor entity
+    children_query: Query<&Children>, // Add query for children
 ) {
     // --- Handle Focus Gained ---
     for (focused_entity, text_transform) in focus_added_query.iter() {
@@ -515,32 +519,45 @@ fn manage_cursor_visual_system(
         // 1. Add CursorState component to the focused text entity
         commands.entity(focused_entity).insert(CursorState::default());
 
-        // 2. Spawn the visual cursor entity as a child
+        // 2. Determine initial visibility based on selection state (if available)
+        let initial_visibility = if let Ok(selection) = text_selection_query.get(focused_entity) {
+            selection.start == selection.end // Visible only if selection is collapsed
+        } else {
+            true // Assume visible if selection component doesn't exist yet
+        };
+
+        // 3. Spawn the visual cursor entity as a child
         let cursor_z = text_transform.translation.z - 0.1; // Slightly in front of text
         let cursor_entity = commands.spawn((
             CursorVisual, // Marker component
-            ShapeData {
-                // Define a thin rectangle for the cursor
-                vertices: Arc::new(vec![
-                    Vertex { position: [-0.5, -8.0] }, // Bottom-left
-                    Vertex { position: [-0.5, 8.0] },  // Top-left
-                    Vertex { position: [0.5, -8.0] }, // Bottom-right
-                    Vertex { position: [0.5, -8.0] }, // Bottom-right
-                    Vertex { position: [-0.5, 8.0] },  // Top-left
-                    Vertex { position: [0.5, 8.0] },   // Top-right
-                ]),
+            ShapeData { // Define a thin rectangle for the cursor
+                vertices: Arc::new(vec![ Vertex { position: [-0.5, -8.0] }, Vertex { position: [-0.5, 8.0] }, Vertex { position: [0.5, -8.0] }, Vertex { position: [0.5, -8.0] }, Vertex { position: [-0.5, 8.0] }, Vertex { position: [0.5, 8.0] }, ]),
                 color: Color::BLACK, // Cursor color
             },
-            // Start cursor at local origin (0,0), update_cursor_transform_system will position it
-            // Z depth is relative to parent due to child relationship
             Transform::from_xyz(0.0, 0.0, -0.1), // Relative Z offset
-            Visibility(true),
+            Visibility(initial_visibility), // Set initial visibility
             Interaction::default(), // Not interactive itself
             Name::new("CursorVisual"),
         )).id();
 
-        // 3. Add the cursor as a child of the focused text entity
+        // 4. Add the cursor as a child of the focused text entity
         commands.entity(focused_entity).add_child(cursor_entity);
+    }
+
+    // --- Update Visibility for Existing Cursors based on Selection ---
+    // This handles cases where selection changes while focus is maintained
+    for focused_entity in focused_query.iter() {
+        if let Ok(selection) = text_selection_query.get(focused_entity) {
+            // Find the child cursor visual
+            if let Ok(children) = children_query.get(focused_entity) {
+                for &child in children.iter() {
+                    if let Ok((_cursor_entity, _parent, mut visibility)) = cursor_visual_query.get_mut(child) {
+                        visibility.0 = selection.start == selection.end; // Update visibility
+                        break; // Found the cursor for this parent
+                    }
+                }
+            }
+        }
     }
 
     // --- Handle Focus Lost ---
@@ -554,9 +571,9 @@ fn manage_cursor_visual_system(
         // End of Edit
 
         // 2. Find and despawn the child CursorVisual entity
-        for (cursor_entity, parent) in cursor_visual_query.iter() {
+        // Iterate mutably to access Visibility component if needed, though we just despawn here.
+        for (cursor_entity, parent, _visibility) in cursor_visual_query.iter() {
             if parent.get() == lost_focus_entity {
-                // Use despawn_recursive to ensure cleanup if cursor had children (unlikely)
                 commands.entity(cursor_entity).despawn_recursive();
                 break; // Found and despawned the cursor for this parent
             }

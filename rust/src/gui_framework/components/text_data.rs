@@ -2,7 +2,7 @@ use bevy_ecs::prelude::Component;
 use bevy_ecs::prelude::ReflectComponent;
 use bevy_reflect::prelude::*;
 use bevy_math::Vec2;
-use bevy_color::Color; // Using bevy_color for simplicity
+use bevy_color::Color;
 
 // Placeholder for FontId - will likely be replaced by something from cosmic-text/fontdb later
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Reflect)]
@@ -18,7 +18,7 @@ pub enum TextAlignment {
 }
 
 #[derive(Component, Debug, Clone, Reflect)]
-#[reflect(Component)] // Add this for reflection registration
+#[reflect(Component)]
 pub struct Text {
     // pub font_id: FontId, // Using default font for now
     pub size: f32,
@@ -66,3 +66,12 @@ pub struct CursorState {
 #[derive(Component, Debug, Clone, Copy, Default, Reflect)]
 #[reflect(Component)]
 pub struct CursorVisual;
+
+/// Component storing the text selection range (byte offsets).
+/// Added to the entity that has `Focus`. `start == end` means no range is selected.
+#[derive(Component, Debug, Clone, Copy, Default, Reflect)]
+#[reflect(Component)]
+pub struct TextSelection {
+    pub start: usize,
+    pub end: usize,
+}

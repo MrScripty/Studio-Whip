@@ -57,6 +57,7 @@ pub struct Focus;
 #[reflect(Component)]
 pub struct CursorState {
     pub position: usize,
+    pub line: usize,
     // Add selection range later if needed
 }
 

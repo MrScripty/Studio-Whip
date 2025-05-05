@@ -14,6 +14,12 @@ use cosmic_text::{Attrs, Shaping, SwashCache, Wrap, Color as CosmicColor, Font, 
 use swash::FontRef;
 use vk_mem::Alloc;
 use yrs::{Transact, GetString, TextRef};
+use crate::gui_framework::components::{CursorState, CursorVisual};
+use bevy_hierarchy::{BuildChildren, DespawnRecursiveExt, Children, Parent};
+use bevy_core::Name;
+use crate::gui_framework::components::Interaction;
+use crate::gui_framework::components::Focus;
+
 
 // Import types from the crate root (lib.rs)
 use crate::{
@@ -54,6 +60,8 @@ pub enum CoreSet {
     HandleResize,           // Handle window resize events, update global UBO
     TextLayout,             // Perform text layout using cosmic-text
     TextRendering,   // Prepare text vertex data and Vulkan resources
+    ManageCursorVisual,     // Spawn/despawn cursor visual based on Focus
+    UpdateCursorTransform,  // Update cursor visual position based on state/layout
 
     // Last sequence
     Render,                 // Perform rendering using prepared data
@@ -121,14 +129,23 @@ impl Plugin for GuiFrameworkCorePlugin {
             // == Update Systems ==
             // Define the desired execution order for Update systems
             .configure_sets(Update, (
-                CoreSet::TextLayout, // Run text layout first
-                CoreSet::TextRendering.after(CoreSet::TextLayout), // Then prepare text rendering
-                CoreSet::HandleResize.after(CoreSet::TextRendering), // Finally, handle resize *after* text prep
+                // Run cursor update first, using last frame's layout state
+                CoreSet::UpdateCursorTransform,
+                // Then manage the visual (spawn/despawn)
+                CoreSet::ManageCursorVisual.after(CoreSet::UpdateCursorTransform),
+                // Then perform text layout for the *next* frame
+                CoreSet::TextLayout.after(CoreSet::ManageCursorVisual),
+                // Then prepare text rendering resources based on the new layout
+                CoreSet::TextRendering.after(CoreSet::TextLayout),
+                // Finally, handle resize *after* all layout/rendering prep
+                CoreSet::HandleResize.after(CoreSet::TextRendering),
         ).chain()) // Chain these sets to enforce the order
             .add_systems(Update, (
                 handle_resize_system.in_set(CoreSet::HandleResize),
                 text_layout_system.in_set(CoreSet::TextLayout),
                 text_rendering_system.in_set(CoreSet::TextRendering),
+                manage_cursor_visual_system.in_set(CoreSet::ManageCursorVisual),
+                update_cursor_transform_system.in_set(CoreSet::UpdateCursorTransform),
         ))
             .configure_sets(Last, (
                 // Ensure Render runs after TextLayout and TextRendering
@@ -475,6 +492,221 @@ fn handle_resize_system(
                 // Renderer lock released when guard goes out of scope here
             } else {
                 warn!("Could not lock RendererResource for renderer resize handling (Core Plugin).");
+            }
+        }
+    }
+}
+
+/// System to spawn/despawn the visual cursor entity based on `Focus` component changes.
+/// Adds/Removes `CursorState` from the focused entity.
+fn manage_cursor_visual_system(
+    mut commands: Commands,
+    // Query for entities that just gained focus this frame
+    focus_added_query: Query<(Entity, &Transform), Added<Focus>>,
+    // Query for entities that lost focus this frame
+    mut focus_removed_query: RemovedComponents<Focus>,
+    // Query for existing cursor visuals to despawn them
+    cursor_visual_query: Query<(Entity, &Parent), With<CursorVisual>>,
+) {
+    // --- Handle Focus Gained ---
+    for (focused_entity, text_transform) in focus_added_query.iter() {
+        info!("Focus gained by {:?}, spawning cursor visual.", focused_entity);
+
+        // 1. Add CursorState component to the focused text entity
+        commands.entity(focused_entity).insert(CursorState::default());
+
+        // 2. Spawn the visual cursor entity as a child
+        let cursor_z = text_transform.translation.z - 0.1; // Slightly in front of text
+        let cursor_entity = commands.spawn((
+            CursorVisual, // Marker component
+            ShapeData {
+                // Define a thin rectangle for the cursor
+                vertices: Arc::new(vec![
+                    Vertex { position: [-0.5, -8.0] }, // Bottom-left
+                    Vertex { position: [-0.5, 8.0] },  // Top-left
+                    Vertex { position: [0.5, -8.0] }, // Bottom-right
+                    Vertex { position: [0.5, -8.0] }, // Bottom-right
+                    Vertex { position: [-0.5, 8.0] },  // Top-left
+                    Vertex { position: [0.5, 8.0] },   // Top-right
+                ]),
+                color: Color::BLACK, // Cursor color
+            },
+            // Start cursor at local origin (0,0), update_cursor_transform_system will position it
+            // Z depth is relative to parent due to child relationship
+            Transform::from_xyz(0.0, 0.0, -0.1), // Relative Z offset
+            Visibility(true),
+            Interaction::default(), // Not interactive itself
+            Name::new("CursorVisual"),
+        )).id();
+
+        // 3. Add the cursor as a child of the focused text entity
+        commands.entity(focused_entity).add_child(cursor_entity);
+    }
+
+    // --- Handle Focus Lost ---
+    // Iterate over RemovedComponents directly
+    for lost_focus_entity in focus_removed_query.read() {
+        // Start of Edit - Use the correct loop variable 'lost_focus_entity'
+        info!("Focus lost by {:?}, despawning cursor visual.", lost_focus_entity);
+
+        // 1. Remove CursorState from the entity that lost focus
+        commands.entity(lost_focus_entity).remove::<CursorState>();
+        // End of Edit
+
+        // 2. Find and despawn the child CursorVisual entity
+        for (cursor_entity, parent) in cursor_visual_query.iter() {
+            if parent.get() == lost_focus_entity {
+                // Use despawn_recursive to ensure cleanup if cursor had children (unlikely)
+                commands.entity(cursor_entity).despawn_recursive();
+                break; // Found and despawned the cursor for this parent
+            }
+        }
+    }
+}
+
+/// System to update the visual cursor's position based on `CursorState` and `TextBufferCache`.
+fn update_cursor_transform_system(
+    mut focused_query: Query<(Entity, &CursorState, &TextBufferCache), With<Focus>>,
+    mut cursor_visual_query: Query<&mut Transform, With<CursorVisual>>,
+    children_query: Query<&Children>,
+    font_server_res: Res<FontServerResource>,
+) {
+    // Start of Edit - Correct buffer binding
+    if let Ok((focused_entity, cursor_state, text_cache)) = focused_query.get_single() {
+        // Bind buffer immutably here. It's valid for the rest of this block.
+        let Some(buffer) = text_cache.buffer.as_ref() else {
+            // If buffer isn't ready yet (e.g., first frame), skip positioning
+            return;
+        };
+    // End of Edit
+
+        // Find the child cursor entity
+        let mut target_cursor_entity: Option<Entity> = None;
+        if let Ok(children) = children_query.get(focused_entity) {
+            for &child in children.iter() {
+                if cursor_visual_query.get(child).is_ok() {
+                    target_cursor_entity = Some(child);
+                    break;
+                }
+            }
+        }
+
+        if let Some(cursor_entity) = target_cursor_entity {
+            if let Ok(mut cursor_transform) = cursor_visual_query.get_mut(cursor_entity) {
+                let Ok(mut font_server) = font_server_res.0.lock() else { // Lock immutably is fine now
+                    error!("Failed to lock FontServer in update_cursor_transform_system");
+                    return;
+                };
+                // Use stored line index and byte offset from CursorState
+                let line_index = cursor_state.line;
+                let byte_offset = cursor_state.position;
+
+                let mut position_found = false;
+                let mut current_logical_line = 0; // Track which logical line the visual run corresponds to
+
+                // Use the 'buffer' variable bound above
+                for run in buffer.layout_runs() {
+                    // TODO: Improve mapping from logical line index to visual run index, especially with wrapping.
+                    // This simple check assumes one logical line per visual run for now.
+                    if current_logical_line == line_index {
+                        let mut current_x = 0.0; // Default to start of line
+                        let mut found_glyph_pos = false;
+
+                        let mut max_scaled_ascent = 0.0f32;
+                        let mut max_scaled_descent = 0.0f32; // Should be negative or zero
+
+                        // Calculate max ascent/descent for vertical positioning later
+                        for glyph_layout in run.glyphs.iter() {
+                             if let Some(font) = font_server.font_system.get_font(glyph_layout.font_id) {
+                                let metrics = font.as_swash().metrics(&[]);
+                                if metrics.units_per_em > 0 {
+                                    let scale = glyph_layout.font_size / metrics.units_per_em as f32;
+                                    max_scaled_ascent = max_scaled_ascent.max(metrics.ascent * scale);
+                                    max_scaled_descent = max_scaled_descent.min(metrics.descent * scale); // Use min for descent
+                                }
+                            }
+                        }
+                        // If line is empty, use default font metrics? For now, defaults to 0.
+
+                        // Iterate glyphs again for horizontal position
+                        for (i, glyph_layout) in run.glyphs.iter().enumerate() {
+                            if byte_offset >= glyph_layout.start && byte_offset < glyph_layout.end {
+                                // Cursor is within this glyph, position at its leading edge (x)
+                                current_x = glyph_layout.x;
+                                found_glyph_pos = true;
+                                break;
+                            }
+                            if byte_offset == glyph_layout.end {
+                                // Cursor is exactly at the end of this glyph.
+                                // Position it at the start of the *next* glyph's x, or end of line width.
+                                if let Some(next_glyph) = run.glyphs.get(i + 1) {
+                                    current_x = next_glyph.x;
+                                } else {
+                                    // This was the last glyph, position at end of line width
+                                    current_x = run.line_w;
+                                }
+                                found_glyph_pos = true;
+                                break;
+                            }
+                             if byte_offset < glyph_layout.start {
+                                // Cursor is before this glyph starts (should only happen for first glyph).
+                                current_x = glyph_layout.x;
+                                found_glyph_pos = true;
+                                break;
+                            }
+                        }
+
+                        // Handle cases where the offset is before the first glyph or the line is empty
+                        if !found_glyph_pos {
+                            if run.glyphs.is_empty() || byte_offset == 0 {
+                                // Empty line or cursor at the very beginning
+                                current_x = 0.0;
+                                found_glyph_pos = true;
+                            } else if byte_offset >= run.glyphs.last().unwrap().end {
+                                // After the last glyph (this case should be handled by byte_offset == end logic above)
+                                // But as a fallback, position at end of line width
+                                current_x = run.line_w;
+                                found_glyph_pos = true;
+                            }
+                        }
+
+                        // If we determined a position on this line
+                        if found_glyph_pos {
+                            let local_x = current_x;
+
+                            // Calculate vertical center based on ascent/descent
+                            // Descent is negative, Ascent is positive relative to baseline
+                            let vertical_center_offset = (max_scaled_ascent + max_scaled_descent) / 2.0;
+
+                            // Baseline Y (down is positive in cosmic-text)
+                            let baseline_y_down = run.line_y;
+                            let descent_y_up = max_scaled_descent;
+                            // Final Y position in Bevy's Y-up system
+                            let local_y_up = -baseline_y_down + descent_y_up + 8.0;
+
+                            cursor_transform.translation.x = local_x;
+                            cursor_transform.translation.y = local_y_up;
+                            position_found = true;
+                            break; // Exit run loop
+                        }
+                    }
+                    // Increment logical line counter (still approximate with wrapping)
+                    current_logical_line += 1;
+                }
+
+                // Fallback if no position was found (e.g., line_index out of bounds)
+                if !position_found {
+                    warn!("Could not determine cursor position from runs for line {}, offset {}. Falling back.", line_index, byte_offset);
+                    // Use the 'buffer' variable bound above
+                    if let Some(last_run) = buffer.layout_runs().last() {
+                        cursor_transform.translation.x = last_run.line_w;
+                        cursor_transform.translation.y = -last_run.line_y;
+                    } else {
+                        // No runs at all, place at origin
+                        cursor_transform.translation.x = 0.0;
+                        cursor_transform.translation.y = 0.0;
+                    }
+                }
             }
         }
     }
@@ -875,9 +1107,12 @@ fn text_layout_system(
         });
 
         // 2. Update/Insert TextBufferCache
+        let buffer_line_count = buffer.lines.len(); // Get line count before moving buffer
         if let Ok(mut cache) = text_buffer_cache_query.get_mut(entity) {
+            info!("[text_layout_system] Updating TextBufferCache for {:?} ({} lines)", entity, buffer_line_count);
             cache.buffer = Some(buffer);
         } else {
+            info!("[text_layout_system] Inserting TextBufferCache for {:?} ({} lines)", entity, buffer_line_count);
             commands.entity(entity).insert(TextBufferCache {
                 buffer: Some(buffer),
             });
@@ -894,10 +1129,10 @@ fn rendering_system(
     text_res_opt: Option<Res<TextRenderingResources>>, // Need global text resources (pipeline, atlas set)
 
     // Queries for scene data
-    shape_query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility), Without<TextRenderData>>, // Exclude text entities
+    shape_query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility), (Without<TextRenderData>, Or<(With<ShapeData>, With<CursorVisual>)>)>, // Include CursorVisual
     shape_change_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
     // Query for text entities that have render data prepared
-    text_query: Query<(&TextRenderData, &Visibility, &GlobalTransform)>, // Add GlobalTransform here
+    text_query: Query<(&TextRenderData, &Visibility, &GlobalTransform)>,
 ) {
     // Ensure all required resources are available
     let (

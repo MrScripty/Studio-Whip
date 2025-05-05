@@ -15,6 +15,7 @@ use std::env;
 use std::sync::{Arc, Mutex};
 use swash::Metrics as SwashMetrics;
 use cosmic_text::Cursor;
+use crate::gui_framework::components::CursorState;
 
 
 // Import types from the crate root (lib.rs)
@@ -169,7 +170,7 @@ pub fn interaction_system(
 
                         let mut clicked_on_something = false;
                         let mut clicked_on_text_entity: Option<Entity> = None;
-                        let mut text_hit_cursor: Option<Cursor> = None;
+                        let mut text_hit_details: Option<(Entity, Cursor)> = None; 
 
                         // --- 1. Check Editable Text Hit Detection (Overall BBox + buffer.hit()) ---
                         let Ok(mut font_server_guard) = font_server_res.0.lock() else {
@@ -243,7 +244,8 @@ pub fn interaction_system(
                                     if let Some(cursor) = buffer.hit(cursor_pos_local_ydown.x, cursor_pos_local_ydown.y) {
                                         info!("Hit text entity {:?} at cursor: {:?}", entity, cursor);
                                         clicked_on_text_entity = Some(entity);
-                                        text_hit_cursor = Some(cursor); // Store cursor info for later use
+                                        text_hit_details = Some((entity, cursor));
+                                        let text_hit_cursor = Some(cursor);
                                         clicked_on_something = true;
                                         break; // Found hit on this entity
                                     }
@@ -297,32 +299,37 @@ pub fn interaction_system(
                             break; // Should only be one
                         }
 
-                        if let Some(target_text_entity) = clicked_on_text_entity {
-                            // Clicked on text
+                        // Update CursorState based on text_hit_details
+                        if let Some((target_text_entity, hit_cursor)) = text_hit_details {
+                            let new_cursor_pos = hit_cursor.index; // Get byte offset
+                            let new_cursor_line = hit_cursor.line; // Get line index
+
                             if entity_to_unfocus != Some(target_text_entity) {
-                                // If the currently focused entity is different OR no entity was focused...
-                                // Remove focus from the old entity, if there was one
+                                // Focus is changing TO this text entity
                                 if let Some(old_focus) = entity_to_unfocus {
                                     commands.entity(old_focus).remove::<Focus>();
                                     info!("Focus lost: {:?}", old_focus);
-                                    // Don't set focus_event_to_send here, wait until adding new focus
                                 }
-                                // Add focus to the new entity
                                 commands.entity(target_text_entity).insert(Focus);
-                                info!("Focus gained: {:?}", target_text_entity);
-                                focus_event_to_send = Some(Some(target_text_entity)); // Mark event to send
+                                // Insert CursorState with the new position
+                                commands.entity(target_text_entity).insert(CursorState { position: new_cursor_pos, line: new_cursor_line });
+                                info!("Focus gained: {:?}, CursorState set to: pos {}, line {}", target_text_entity, new_cursor_pos, new_cursor_line);
+                                focus_event_to_send = Some(Some(target_text_entity));
+                            } else {
+                                // Clicked on already focused text entity, just update CursorState
+                                commands.entity(target_text_entity).insert(CursorState { position: new_cursor_pos, line: new_cursor_line });
+                                info!("Focus maintained: {:?}, CursorState updated to: pos {}, line {}", target_text_entity, new_cursor_pos, new_cursor_line);
+                                // No focus change event needed here unless we want to signal cursor move
                             }
-                            // If clicked on already focused text, do nothing (entity_to_unfocus == Some(target_text_entity))
                         } else {
                             // Clicked on non-text or empty space
-                            // If an entity currently has focus, remove it
                             if let Some(old_focus) = entity_to_unfocus {
                                 commands.entity(old_focus).remove::<Focus>();
+                                // CursorState is removed automatically when Focus is removed by manage_cursor_visual_system
                                 info!("Focus lost: {:?}", old_focus);
-                                focus_event_to_send = Some(None); // Mark event to send (focus lost)
+                                focus_event_to_send = Some(None);
                             }
                         }
-
                         // Send the event if focus actually changed state
                         if let Some(event_data) = focus_event_to_send {
                             text_focus_writer.send(TextFocusChanged { entity: event_data });

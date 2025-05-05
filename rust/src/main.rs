@@ -34,6 +34,8 @@ use yrs::{Doc, Text as YrsText}; // Alias YrsText to avoid conflict
 use rusty_whip::YrsDocResource; // Import the new resource type
 use yrs::TextRef;
 use yrs::Transact;
+use bevy_hierarchy::{BuildChildren, DespawnRecursiveExt, Children, Parent};
+use bevy_hierarchy::HierarchyPlugin;
 
 #[derive(Component)]
 struct BackgroundQuad;
@@ -62,6 +64,7 @@ fn main() {
             },
             AccessibilityPlugin,
             WinitPlugin::<WakeUp>::default(),
+            HierarchyPlugin::default(),
             // DO NOT ADD DefaultPlugins, RenderPlugin, PbrPlugin, etc.
         ))
         // == Resources ==

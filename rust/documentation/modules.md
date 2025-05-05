@@ -2,20 +2,20 @@
 
 ## Project Overview: `rusty_whip`
 ### Purpose
-`rusty_whip` is an advanced 2D & 3D content generation application with GPU-accelerated AI diffusion/inference, multimedia creation, and story-driven workflows, targeting P2P networking. **It uses the Bevy engine (v0.15) for its core application structure, input handling, and ECS, while strictly avoiding Bevy's rendering stack.**
-### Current State (Task 9 In Progress)
-- **Bevy Integration**: Application runs using `bevy_app::App`, `bevy_winit`, `bevy_input`, `bevy_transform`, `bevy_log`, `bevy_reflect`, `bevy_color` and other core non-rendering Bevy plugins.
+`rusty_whip` is an advanced 2D & 3D content generation application with GPU-accelerated AI diffusion/inference, multimedia creation, and story-driven workflows, targeting P2P networking. **It uses the Bevy engine (v0.15) for its core application structure, input handling, ECS, and hierarchy, while strictly avoiding Bevy's rendering stack.**
+### Current State (Task 9 Partially Complete)
+- **Bevy Integration**: Application runs using `bevy_app::App`, `bevy_winit`, `bevy_input`, `bevy_transform`, `bevy_log`, `bevy_reflect`, `bevy_color`, **`bevy_hierarchy`**, and other core non-rendering Bevy plugins.
 - **Plugin Architecture**: Core framework logic (rendering, interaction, text foundation, default behaviors) refactored into modular Bevy plugins (`GuiFrameworkCorePlugin`, `GuiFrameworkInteractionPlugin`, etc.) using `SystemSet`s for execution ordering. Application-specific logic remains in `main.rs`.
 - **ECS Core**: Application state and logic managed via Bevy ECS components (`ShapeData`, `Visibility`, `Interaction`, `Transform`, `BackgroundQuad`, `Text`, `TextLayoutOutput`, `TextRenderData`, `EditableText`, `Focus`, `CursorState`, `CursorVisual`, `TextBufferCache`). User input processed by plugin systems, triggering Bevy events (`EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`, `YrsTextChanged`, `TextFocusChanged`). Dragging correctly updates `Transform` (**Y-axis inversion fixed**).
 - **Reflection**: Core framework components, events, and resources implement `Reflect` where feasible and are registered by the plugins. `TextLayoutOutput`, `PositionedGlyph`, `TextRenderData`, and `TextBufferCache` currently do not support reflection due to containing external or Vulkan types.
 - **Math Migration**: Uses `bevy_math` types (`Vec2`, `Mat4`).
 - **Rendering Bridge**: Custom Vulkan context (`VulkanContext`) managed via `VulkanContextResource`. Custom Vulkan renderer (`Renderer`) accessed via `RendererResource`. Both resources defined in `lib.rs`.
-- **Rendering Status**: Rendering triggered by `rendering_system` (in `GuiFrameworkCorePlugin`). `BufferManager` creates/updates Vulkan resources for **shapes** using a **single unified pipeline and push constants for color**. **Text rendering uses per-entity Vulkan resources** (`TextRenderData` component) managed by `text_rendering_system`. `TextRenderingResources` holds the shared text pipeline and global atlas descriptor set. `GlyphAtlas` manages Vulkan texture for glyphs. `command_buffers` records draw calls for **shapes and text**. Synchronization and resize handling are corrected. **Depth testing is enabled.** **Visual output functional for shapes (with color) and text, correctly layered by Z-depth.** Optimizations needed: resource removal for despawned entities.
-- **Text Handling**: Foundation laid with `Text` component, `FontServer`, `GlyphAtlas`, `SwashCache` resource, and `text_layout_system` (CPU-side layout using `cosmic-text`, triggered by `YrsTextChanged`/`Added<Text>`, **caches results in `TextBufferCache`**). Text shaders and Vulkan layouts created. **Text rendering refactored:** `text_rendering_system` creates/updates per-entity `TextRenderData` components. `rendering_system` collects data from `TextRenderData` for drawing. **Text interaction implemented:** `interaction_system` performs hit detection on `EditableText` using overall bounding box + `cosmic_text::Buffer::hit()`, and manages the `Focus` component via `Commands`. **Cursor state components (`CursorState`, `CursorVisual`) added but not yet utilized.**
+- **Rendering Status**: Rendering triggered by `rendering_system` (in `GuiFrameworkCorePlugin`). `BufferManager` creates/updates Vulkan resources for **shapes and cursor visuals** using a **single unified pipeline and push constants for color**. **Text rendering uses per-entity Vulkan resources** (`TextRenderData` component) managed by `text_rendering_system`. `TextRenderingResources` holds the shared text pipeline and global atlas descriptor set. `GlyphAtlas` manages Vulkan texture for glyphs. `command_buffers` records draw calls for **shapes, cursor visuals, and text**. Synchronization and resize handling are corrected. **Depth testing is enabled.** **Visual output functional for shapes (with color), text, and cursor, correctly layered by Z-depth.** Optimizations needed: resource removal for despawned entities.
+- **Text Handling**: Foundation laid with `Text` component, `FontServer`, `GlyphAtlas`, `SwashCache` resource, and `text_layout_system` (CPU-side layout using `cosmic-text`, triggered by `YrsTextChanged`/`Added<Text>`, **caches results in `TextBufferCache`**). Text shaders and Vulkan layouts created. **Text rendering refactored:** `text_rendering_system` creates/updates per-entity `TextRenderData` components. `rendering_system` collects data from `TextRenderData` for drawing. **Text interaction implemented:** `interaction_system` performs hit detection on `EditableText`, manages the `Focus` component, and updates the `CursorState` component. **Visual cursor foundation implemented:** `manage_cursor_visual_system` spawns/despawns the `CursorVisual` entity (rendered via shape pipeline) as a child of the focused text entity; `update_cursor_transform_system` positions the cursor based on `CursorState` and layout runs.
 - **Yrs Integration**: Basic setup with `YrsDocResource` holding `yrs::Doc` and `Entity` -> `TextRef` mapping. `text_layout_system` reads content from Yrs.
 - **Shutdown**: Robust shutdown sequence implemented via `cleanup_trigger_system` (in `GuiFrameworkCorePlugin`) running on `AppExit` in the `Last` schedule, cleaning up per-entity text resources, **layout caches**, and then shared framework Vulkan resources.
-- **Features Active**: Bevy app structure, windowing, logging, reflection (partial), input handling (click, drag, hotkeys via plugins), ECS component/event usage, `bevy_transform`, core Vulkan setup (shape/text layouts, **depth buffer**, **debug messenger**), hotkey loading, ECS-driven Vulkan resource management (shapes with **push constant color**, **per-entity text resources**), dynamic vertex updates (shapes, text), corrected synchronization and resize handling, robust shutdown, dynamic background resizing (app-specific), text component definition, font loading, glyph atlas resource management, CPU-side text layout (event-driven, **caches results**), **refactored text rendering pipeline**, text shaders, **depth testing**, **working drag-and-drop (Y-axis fixed)**, **Yrs text storage**, **text hit detection (overall bbox + `buffer.hit()`)**, **ECS-based text focus management (`Focus` component)**, **cursor state components defined**.
-- Task 1-8 **Complete**. Task 8.5 (Shape Rendering Refactor) **Complete**. Task 9 (Hit Detection, Focus Management) **In Progress**. Legacy `event_bus` and `scene` modules **removed**.
+- **Features Active**: Bevy app structure, windowing, logging, reflection (partial), input handling (click, drag, hotkeys via plugins), ECS component/event usage, `bevy_transform`, `bevy_hierarchy`, core Vulkan setup (shape/text layouts, **depth buffer**, **debug messenger**), hotkey loading, ECS-driven Vulkan resource management (shapes/cursor with **push constant color**, **per-entity text resources**), dynamic vertex updates (shapes, text), corrected synchronization and resize handling, robust shutdown, dynamic background resizing (app-specific), text component definition, font loading, glyph atlas resource management, CPU-side text layout (event-driven, **caches results**), **refactored text rendering pipeline**, text shaders, **depth testing**, **working drag-and-drop (Y-axis fixed)**, **Yrs text storage**, **text hit detection (overall bbox + `buffer.hit()`)**, **ECS-based text focus management (`Focus` component)**, **visual cursor display and positioning**.
+- Task 1-8 **Complete**. Task 8.5 (Shape Rendering Refactor) **Complete**. Task 9 **Partially Complete (Cursor Foundation)**. Legacy `event_bus` and `scene` modules **removed**.
 
 ## Module Structure
 Studio_Whip/
@@ -63,11 +63,10 @@ Studio_Whip/
             lib.rs
             main.rs
         shaders/
-            shape.frag # NEW
-            shape.vert # NEW
+            shape.frag
+            shape.vert
             text.frag
             text.vert
-            # REMOVED: background.*, square.*, triangle.*
         user/
             hotkeys.toml
         Documentation/
@@ -88,13 +87,13 @@ Studio_Whip/
 - **Key Structs**:
     - `Vertex { position: [f32; 2] }` (Derives `Reflect`)
     - `TextVertex { position: [f32; 2], uv: [f32; 2] }` (Derives `Debug`, `Clone`, `Copy`)
-    - `RenderCommandData { entity_id: Entity, transform_matrix: Mat4, vertices: Arc<Vec<Vertex>>, color: Color, depth: f32, vertices_changed: bool }` (**Updated**: added `color`, removed shader paths)
-    - `PreparedDrawData { pipeline: vk::Pipeline, vertex_buffer: vk::Buffer, vertex_count: u32, descriptor_set: vk::DescriptorSet, color: [f32; 4] }` (**Updated**: added `color`)
-    - `PreparedTextDrawData { pipeline: vk::Pipeline, vertex_buffer: vk::Buffer, vertex_count: u32, projection_descriptor_set: vk::DescriptorSet, atlas_descriptor_set: vk::DescriptorSet }` (Derives `Debug`, `Clone`) - Holds handles to per-entity vertex buffer and Set 0 descriptor set, and shared pipeline/atlas set.
-    - `YrsDocResource { doc: Arc<yrs::Doc>, text_map: Arc<Mutex<HashMap<Entity, TextRef>>> }` (Derives `Resource`) - Holds shared Yrs document and entity mapping.
+    - `RenderCommandData { entity_id: Entity, transform_matrix: Mat4, vertices: Arc<Vec<Vertex>>, color: Color, depth: f32, vertices_changed: bool }`
+    - `PreparedDrawData { pipeline: vk::Pipeline, vertex_buffer: vk::Buffer, vertex_count: u32, descriptor_set: vk::DescriptorSet, color: [f32; 4] }`
+    - `PreparedTextDrawData { pipeline: vk::Pipeline, vertex_buffer: vk::Buffer, vertex_count: u32, projection_descriptor_set: vk::DescriptorSet, atlas_descriptor_set: vk::DescriptorSet }` (Derives `Debug`, `Clone`)
+    - `YrsDocResource { doc: Arc<yrs::Doc>, text_map: Arc<Mutex<HashMap<Entity, TextRef>>> }` (Derives `Resource`)
     - `GlobalProjectionUboResource { buffer: vk::Buffer, allocation: vk_mem::Allocation, descriptor_set: vk::DescriptorSet }` (Derives `Resource`)
-    - `TextRenderingResources { pipeline: vk::Pipeline, atlas_descriptor_set: vk::DescriptorSet }` (Derives `Resource`) - Holds shared text Vulkan resources (**Updated**: removed shared vertex buffer fields).
-    - `PreparedTextDrawsResource(pub Vec<PreparedTextDrawData>)` (Derives `Resource`, `Default`) - Deprecated/unused? (Check `core.rs`)
+    - `TextRenderingResources { pipeline: vk::Pipeline, atlas_descriptor_set: vk::DescriptorSet }` (Derives `Resource`)
+    - `PreparedTextDrawsResource(pub Vec<PreparedTextDrawData>)` (Derives `Resource`, `Default`) - Deprecated/unused?
     - `VulkanContextResource(pub Arc<Mutex<VulkanContext>>)` (Derives `Resource`, `Clone`)
     - `RendererResource(pub Arc<Mutex<Renderer>>)` (Derives `Resource`, `Clone`)
     - `HotkeyResource(pub HotkeyConfig)` (Derives `Resource`, `Debug`, `Clone`, `Default`, `Reflect`)
@@ -104,14 +103,14 @@ Studio_Whip/
 - **Notes**: Uses `ash::vk`, `bevy_ecs::Entity`, `bevy_math::Mat4`, `std::sync::Arc`, `bevy_reflect::Reflect`, `cosmic_text::SwashCache`, `yrs`, `bevy_color::Color`. Resources defined here for easy import across app and plugins.
 
 ### `src/main.rs`
-- **Purpose**: Entry point; sets up `bevy_app::App`, core Bevy plugins, framework plugins (`GuiFrameworkCorePlugin`, etc.), inserts initial `VulkanContextResource`, `YrsDocResource`, and defines/schedules **application-specific** systems (`setup_scene_ecs`, `background_resize_system`).
+- **Purpose**: Entry point; sets up `bevy_app::App`, core Bevy plugins (including `HierarchyPlugin`), framework plugins (`GuiFrameworkCorePlugin`, etc.), inserts initial `VulkanContextResource`, `YrsDocResource`, and defines/schedules **application-specific** systems (`setup_scene_ecs`, `background_resize_system`).
 - **Key Structs (Defined In `main.rs`)**:
     - `BackgroundQuad` (Derives `Component`, marker struct)
 - **Key Methods (Bevy Systems)**:
     - `main() -> ()`
     - `setup_scene_ecs(...) -> ()`: Spawns initial application-specific ECS entities (background, shapes with **color**, sample text with `EditableText`), populates `YrsDocResource`. Runs after `CoreSet::CreateTextResources` and `InteractionSet::LoadHotkeys`.
     - `background_resize_system(...) -> ()`: Reads `WindowResized`, updates background `ShapeData.vertices`. (App-specific update logic).
-- **Notes**: Relies on plugins for framework setup, rendering, input, text handling, and cleanup. Defines application structure and specific scene/behavior. Imports `Text`, `TextAlignment`, `Color`, `EditableText`.
+- **Notes**: Relies on plugins for framework setup, rendering, input, text handling, and cleanup. Defines application structure and specific scene/behavior. Imports `Text`, `TextAlignment`, `Color`, `EditableText`. Adds `HierarchyPlugin`.
 
 ### `src/gui_framework/mod.rs`
 - **Purpose**: Declares and re-exports framework modules (`components`, `context`, `events`, `interaction`, `plugins`, `rendering`).
@@ -123,8 +122,8 @@ Studio_Whip/
 - **Exports**: `ShapeData`, `Visibility`, `Interaction`, `Text`, `FontId`, `TextAlignment`, `EditableText`, `Focus`, **`CursorState`**, **`CursorVisual`**, `TextLayoutOutput`, `PositionedGlyph`, `TextRenderData`, **`TextBufferCache`**.
 
 ### `src/gui_framework/components/shape_data.rs`
-- **Purpose**: Defines the visual shape data for an entity.
-- **Key Structs**: `ShapeData { vertices: Arc<Vec<Vertex>>, color: Color }` (Derives `Component`, `Debug`, `Clone`, `Reflect`, `Default`). (**Updated**: added `color`, removed shader paths).
+- **Purpose**: Defines the visual shape data for an entity (used for shapes and cursor).
+- **Key Structs**: `ShapeData { vertices: Arc<Vec<Vertex>>, color: Color }` (Derives `Component`, `Debug`, `Clone`, `Reflect`, `Default`).
 - **Notes**: Used by `rendering_system` (core plugin) and `background_resize_system` (main.rs). Registered by `GuiFrameworkCorePlugin`. Depth handled by `Transform`. Default color is Magenta.
 
 ### `src/gui_framework/components/visibility.rs`
@@ -146,9 +145,9 @@ Studio_Whip/
     - `Text { size: f32, color: Color, alignment: TextAlignment, bounds: Option<Vec2> }` (Derives `Component`, `Debug`, `Clone`, `Reflect`, `Default`). **Note: `content` removed, fetched from `YrsDocResource`.**
     - `EditableText` (Derives `Component`, `Debug`, `Clone`, `Copy`, `Default`, `Reflect`) - Marker for editable text.
     - `Focus` (Derives `Component`, `Debug`, `Clone`, `Copy`, `Default`, `Reflect`) - Marker for focused text.
-    - **`CursorState { position: usize }`** (Derives `Component`, `Debug`, `Clone`, `Copy`, `Default`, `Reflect`) - Stores logical cursor byte offset.
+    - **`CursorState { position: usize, line: usize }`** (Derives `Component`, `Debug`, `Clone`, `Copy`, `Default`, `Reflect`) - Stores logical cursor byte offset and line index. (**Updated**)
     - **`CursorVisual`** (Derives `Component`, `Debug`, `Clone`, `Copy`, `Default`, `Reflect`) - Marker for the visual cursor entity.
-- **Notes**: `Text` used by `text_layout_system` (core plugin). `EditableText`, `Focus` used by `interaction_system` (interaction plugin). `CursorState`, `CursorVisual` used by future cursor management/editing systems. Registered by respective plugins. Uses `bevy_color::Color`.
+- **Notes**: `Text` used by `text_layout_system` (core plugin). `EditableText`, `Focus` used by `interaction_system` (interaction plugin). `CursorState`, `CursorVisual` used by cursor management systems. Registered by respective plugins. Uses `bevy_color::Color`.
 
 ### `src/gui_framework/components/text_layout.rs`
 - **Purpose**: Defines intermediate and output data structures for text layout results, per-entity text rendering resources, and cached layout buffers.
@@ -157,7 +156,7 @@ Studio_Whip/
     - `TextLayoutOutput { glyphs: Vec<PositionedGlyph> }` (Derives `Component`, `Debug`, `Clone`, `Default`). Contains non-reflectable `PositionedGlyph`.
     - `TextRenderData { vertex_count: u32, vertex_buffer: vk::Buffer, vertex_alloc: vk_mem::Allocation, transform_ubo: vk::Buffer, transform_alloc: vk_mem::Allocation, descriptor_set_0: vk::DescriptorSet }` (Derives `Component`). Holds per-entity Vulkan resources for text. Not Reflectable.
     - **`TextBufferCache { buffer: Option<cosmic_text::Buffer> }`** (Derives `Component`). Caches the `cosmic_text::Buffer` used for layout. Not Reflectable.
-- **Notes**: `TextLayoutOutput` written by `text_layout_system`, read by `text_rendering_system` and `interaction_system`. `TextRenderData` written by `text_rendering_system`, read by `rendering_system` and `cleanup_trigger_system`. `TextBufferCache` written by `text_layout_system`, read by `interaction_system` and future cursor positioning system, cleaned by `cleanup_trigger_system`.
+- **Notes**: `TextLayoutOutput` written by `text_layout_system`, read by `text_rendering_system` and `interaction_system`. `TextRenderData` written by `text_rendering_system`, read by `rendering_system` and `cleanup_trigger_system`. `TextBufferCache` written by `text_layout_system`, read by `interaction_system` and `update_cursor_transform_system`, cleaned by `cleanup_trigger_system`.
 
 ### `src/gui_framework/context/mod.rs`
 - **Purpose**: Re-exports Vulkan context modules.
@@ -165,7 +164,7 @@ Studio_Whip/
 
 ### `src/gui_framework/context/vulkan_context.rs`
 - **Purpose**: Holds core Vulkan resources and related state.
-- **Key Structs**: `VulkanContext { ... shape_pipeline_layout: Option<vk::PipelineLayout>, text_pipeline_layout: Option<vk::PipelineLayout>, ... depth_image: Option<vk::Image>, depth_image_view: Option<vk::ImageView>, depth_format: Option<vk::Format>, ... debug_utils_loader: Option<debug_utils::Instance>, debug_messenger: Option<vk::DebugUtilsMessengerEXT>, ... }`. (Includes pipeline layouts, depth, and debug fields).
+- **Key Structs**: `VulkanContext { ... shape_pipeline_layout: Option<vk::PipelineLayout>, text_pipeline_layout: Option<vk::PipelineLayout>, ... depth_image: Option<vk::Image>, depth_image_view: Option<vk::ImageView>, depth_format: Option<vk::Format>, ... debug_utils_loader: Option<debug_utils::Instance>, debug_messenger: Option<vk::DebugUtilsMessengerEXT>, ... }`.
 - **Key Methods**: `new() -> Self`.
 - **Notes**: Managed via `VulkanContextResource`. Holds `Arc<Allocator>`.
 
@@ -204,20 +203,20 @@ Studio_Whip/
 - **Modules**: `core.rs`, `interaction.rs`, `movement.rs`, `bindings.rs`.
 
 ### `src/gui_framework/plugins/core.rs`
-- **Purpose**: Plugin for core Vulkan setup, rendering (shapes & text), text foundation (setup, layout triggered by `YrsTextChanged`/`Added<Text>`, atlas upload, **layout caching**), **text resource management (shared & per-entity)**, resize handling, and cleanup.
-- **Key Structs**: `GuiFrameworkCorePlugin`, `CoreSet` (enum SystemSet: `SetupVulkan`, `CreateRenderer`, `CreateGlyphAtlas`, `CreateFontServer`, `CreateSwashCache`, `CreateGlobalUbo`, `CreateTextResources`, `HandleResize`, `TextLayout`, `TextRendering`, `Render`, `Cleanup`).
-- **Key Methods (Bevy Systems)**: `setup_vulkan_system() -> ()`, `create_renderer_system() -> ()`, `create_glyph_atlas_system() -> ()`, `create_font_server_system() -> ()`, `create_swash_cache_system() -> ()`, `create_global_ubo_system() -> ()`, `create_text_rendering_resources_system() -> ()`, `handle_resize_system(...) -> ()`, `text_layout_system(...) -> ()`, `text_rendering_system(...) -> ()`, `rendering_system(...) -> ()`, `cleanup_trigger_system(world: &mut World) -> ()`.
-- **Notes**: Adds systems to `Startup`, `Update`, `Last` schedules. Configures `CoreSet` ordering. Registers core types (**including `CursorState`, `CursorVisual`**). Inserts `RendererResource`, `GlyphAtlasResource`, `FontServerResource`, `SwashCacheResource`, `GlobalProjectionUboResource`, `TextRenderingResources`. `text_layout_system` performs CPU layout, reads from `YrsDocResource`, **writes `TextBufferCache`**. `text_rendering_system` creates/updates per-entity `TextRenderData` components. `rendering_system` prepares shape data (including **color**), collects text data from `TextRenderData`, and calls `Renderer::render`. `cleanup_trigger_system` cleans per-entity `TextRenderData`, **`TextBufferCache`**, and then shared Vulkan resources. `create_text_rendering_resources_system` no longer creates shared text vertex buffer.
+- **Purpose**: Plugin for core Vulkan setup, rendering (shapes, cursor, text), text foundation (setup, layout, atlas, caching), **visual cursor management**, **text resource management**, resize handling, and cleanup. (**Updated**)
+- **Key Structs**: `GuiFrameworkCorePlugin`, `CoreSet` (enum SystemSet: `SetupVulkan`, `CreateRenderer`, `CreateGlyphAtlas`, `CreateFontServer`, `CreateSwashCache`, `CreateGlobalUbo`, `CreateTextResources`, **`UpdateCursorTransform`**, **`ManageCursorVisual`**, `TextLayout`, `TextRendering`, `HandleResize`, `Render`, `Cleanup`). (**Updated**)
+- **Key Methods (Bevy Systems)**: `setup_vulkan_system() -> ()`, `create_renderer_system() -> ()`, `create_glyph_atlas_system() -> ()`, `create_font_server_system() -> ()`, `create_swash_cache_system() -> ()`, `create_global_ubo_system() -> ()`, `create_text_rendering_resources_system() -> ()`, `handle_resize_system(...) -> ()`, `text_layout_system(...) -> ()`, `text_rendering_system(...) -> ()`, **`manage_cursor_visual_system(...) -> ()`**, **`update_cursor_transform_system(...) -> ()`**, `rendering_system(...) -> ()`, `cleanup_trigger_system(world: &mut World) -> ()`. (**Updated**)
+- **Notes**: Adds systems to `Startup`, `Update`, `Last` schedules. Configures `CoreSet` ordering (**updated order for cursor systems**). Registers core types (including `CursorState`, `CursorVisual`). Inserts framework resources. `text_layout_system` performs CPU layout, reads from `YrsDocResource`, writes `TextBufferCache`. `text_rendering_system` creates/updates per-entity `TextRenderData`. `manage_cursor_visual_system` spawns/despawns `CursorVisual` based on `Focus`. `update_cursor_transform_system` positions `CursorVisual` based on `CursorState` and `TextBufferCache`. `rendering_system` prepares shape/cursor/text data and calls `Renderer::render`. `cleanup_trigger_system` cleans per-entity resources and shared Vulkan resources.
 
 ### `src/gui_framework/plugins/interaction.rs`
-- **Purpose**: Plugin for input processing (mouse, keyboard), hotkey loading/dispatch, window close requests, and **ECS-based text focus management**.
+- **Purpose**: Plugin for input processing (mouse, keyboard), hotkey loading/dispatch, window close requests, and **ECS-based text focus and cursor state management**. (**Updated**)
 - **Key Structs**: `GuiFrameworkInteractionPlugin`, `InteractionSet` (enum SystemSet).
 - **Key Methods (Bevy Systems)**:
     - `load_hotkeys_system(mut commands: Commands) -> ()`
-    - `interaction_system(..., focus_query: Query<Entity, With<Focus>>, ..., mut commands: Commands) -> ()`: Processes mouse clicks/drags for shapes and `EditableText`. Performs hit detection on text using overall bounding box and `cosmic_text::Buffer::hit()`. Manages the `Focus` component via `Commands`. Sends `EntityClicked`, `EntityDragged`, `TextFocusChanged` events.
+    - `interaction_system(...) -> ()`: Processes mouse clicks/drags for shapes and `EditableText`. Performs hit detection on text using `cosmic_text::Buffer::hit()`. Manages the `Focus` component via `Commands`. **Updates the `CursorState` component (position and line) on click.** Sends `EntityClicked`, `EntityDragged`, `TextFocusChanged` events. (**Updated**)
     - `hotkey_system(...) -> ()`
     - `handle_close_request(...) -> ()`
-- **Notes**: Adds systems to `Startup`, `Update` schedules. Configures `InteractionSet`. Registers `Interaction`, `HotkeyResource`, `HotkeyConfig`, `EditableText`, `Focus`, interaction events (`EntityClicked`, `EntityDragged`, `HotkeyActionTriggered`, `TextFocusChanged`). Inserts `HotkeyResource`.
+- **Notes**: Adds systems to `Startup`, `Update` schedules. Configures `InteractionSet`. Registers `Interaction`, `HotkeyResource`, `HotkeyConfig`, `EditableText`, `Focus`, interaction events. Inserts `HotkeyResource`.
 
 ### `src/gui_framework/plugins/movement.rs`
 - **Purpose**: Optional plugin providing default entity movement based on `EntityDragged` events.
@@ -237,15 +236,15 @@ Studio_Whip/
 - **Exports**: `Renderer`, `GlyphAtlas`, `GlyphAtlasResource`, `GlyphInfo`, `FontServer`, `FontServerResource`.
 
 ### `src/gui_framework/rendering/command_buffers.rs`
-- **Purpose**: Records Vulkan command buffers for drawing shapes and text. Sets dynamic viewport/scissor. Clears color and depth buffers. **Uses push constants for shape color.**
+- **Purpose**: Records Vulkan command buffers for drawing shapes, cursor visuals, and text. Sets dynamic viewport/scissor. Clears color and depth buffers. **Uses push constants for shape/cursor color.** (**Updated**)
 - **Key Methods**: `record_command_buffers(platform: &mut VulkanContext, prepared_shape_draws: &[PreparedDrawData], prepared_text_draws: &[PreparedTextDrawData], extent: vk::Extent2D) -> ()`.
-- **Notes**: Called by `render_engine.rs`. Binds shape resources per entity, pushes color constant. Iterates through `PreparedTextDrawData`, binding text pipeline, per-entity vertex buffer (offset 0), per-entity descriptor set 0 (projection/transform), and global atlas descriptor set 1 for each text draw.
+- **Notes**: Called by `render_engine.rs`. Binds shape resources per entity, pushes color constant. Iterates through `PreparedTextDrawData`, binding text pipeline, per-entity vertex buffer, per-entity descriptor set 0, and global atlas descriptor set 1 for each text draw.
 
 ### `src/gui_framework/rendering/render_engine.rs`
-- **Purpose**: Orchestrates custom Vulkan rendering per frame. Manages `BufferManager` (shapes) and sync objects. Handles resize via `ResizeHandler`. Integrates shape and text rendering paths using prepared data. Manages internal locking for Vulkan context access.
+- **Purpose**: Orchestrates custom Vulkan rendering per frame. Manages `BufferManager` (shapes/cursor) and sync objects. Handles resize via `ResizeHandler`. Integrates shape, cursor, and text rendering paths using prepared data. Manages internal locking for Vulkan context access. (**Updated**)
 - **Key Structs**: `Renderer { buffer_manager: BufferManager, descriptor_pool: vk::DescriptorPool, descriptor_set_layout: vk::DescriptorSetLayout, text_descriptor_set_layout: vk::DescriptorSetLayout }`.
 - **Key Methods**: `new(platform: &mut VulkanContext, extent: vk::Extent2D) -> Self`, `resize_renderer(vk_context_res: &VulkanContextResource, width: u32, height: u32, global_ubo_res: &GlobalProjectionUboResource) -> ()`, `render(vk_context_res: &VulkanContextResource, shape_commands: &[RenderCommandData], prepared_text_draws: &[PreparedTextDrawData], global_ubo_res: &GlobalProjectionUboResource) -> ()`, `cleanup(platform: &mut VulkanContext) -> ()`.
-- **Notes**: Managed via `RendererResource`. Called by `rendering_system` (core plugin). `render` method now accepts `VulkanContextResource` and prepared draw data (including per-entity text handles), handles internal locking, calls `BufferManager::prepare_frame_resources` and `record_command_buffers`. `resize_renderer` accepts `VulkanContextResource`.
+- **Notes**: Managed via `RendererResource`. Called by `rendering_system` (core plugin). `render` method now accepts `VulkanContextResource` and prepared draw data, handles internal locking, calls `BufferManager::prepare_frame_resources` and `record_command_buffers`. `resize_renderer` accepts `VulkanContextResource`.
 
 ### `src/gui_framework/rendering/pipeline_manager.rs`
 - **Purpose**: **Initialization helper.** Creates Vulkan `PipelineLayout`s (shape, text), `DescriptorSetLayout`s (per-entity, atlas), and a shared `DescriptorPool`. **Shape layout includes push constant range for color.**
@@ -254,9 +253,9 @@ Studio_Whip/
 - **Notes**: Provides layouts/pool to `Renderer` and `VulkanContext` during initialization.
 
 ### `src/gui_framework/rendering/buffer_manager.rs`
-- **Purpose**: Manages per-entity Vulkan resources (vertex buffers, transform UBOs, descriptor sets) **for shapes only**. **Caches the single shape pipeline.** Updates vertex buffers based on `RenderCommandData.vertices_changed`. Updates transform UBOs and descriptor sets every frame.
-- **Key Structs**: `EntityRenderResources`, `PipelineCacheKey`, `BufferManager`. (**Updated**: Removed `ShaderCacheKey`).
-- **Key Methods**: `new(_platform: &mut VulkanContext, per_entity_layout: vk::DescriptorSetLayout, descriptor_pool: vk::DescriptorPool) -> Self`, `prepare_frame_resources(platform: &mut VulkanContext, render_commands: &[RenderCommandData], global_ubo_res: &GlobalProjectionUboResource) -> Vec<PreparedDrawData>`, `cleanup(platform: &mut VulkanContext) -> ()`. (**Updated**: `render_commands` type, `PreparedDrawData` return type).
+- **Purpose**: Manages per-entity Vulkan resources (vertex buffers, transform UBOs, descriptor sets) **for shapes and cursor visuals**. **Caches the single shape pipeline.** Updates vertex buffers based on `RenderCommandData.vertices_changed`. Updates transform UBOs and descriptor sets every frame. (**Updated**)
+- **Key Structs**: `EntityRenderResources`, `PipelineCacheKey`, `BufferManager`.
+- **Key Methods**: `new(_platform: &mut VulkanContext, per_entity_layout: vk::DescriptorSetLayout, descriptor_pool: vk::DescriptorPool) -> Self`, `prepare_frame_resources(platform: &mut VulkanContext, render_commands: &[RenderCommandData], global_ubo_res: &GlobalProjectionUboResource) -> Vec<PreparedDrawData>`, `cleanup(platform: &mut VulkanContext) -> ()`.
 - **Notes**: Creates/updates resources based on `RenderCommandData`. Uses persistently mapped pointers. Uses `shape_pipeline_layout` (with push constants). Includes depth state in pipeline creation. **Lacks resource removal for despawned entities.** Does not handle text vertices/pipelines/descriptors.
 
 ### `src/gui_framework/rendering/resize_handler.rs`
@@ -296,11 +295,11 @@ Studio_Whip/
 
 ## Shaders
 - **Location**: `shaders/` (Source GLSL), compiled `.spv` copied to `target/<profile>/shaders/` by `build.rs`.
-- **Shape Files**: `shape.vert`, `shape.frag`. (**Updated**)
-- **Shape Roles**: Single pipeline for all shapes. Support orthographic projection (Set 0, Binding 0), object transform matrix (Set 0, Binding 1). Use vertex position (location 0). **Color passed via push constant in `shape.frag`.** Loaded by `BufferManager`. (**Updated**)
+- **Shape Files**: `shape.vert`, `shape.frag`.
+- **Shape Roles**: Single pipeline for all shapes **and cursor visuals**. Support orthographic projection (Set 0, Binding 0), object transform matrix (Set 0, Binding 1). Use vertex position (location 0). **Color passed via push constant in `shape.frag`.** Loaded by `BufferManager`. (**Updated**)
 - **Text Files**: `text.vert`, `text.frag`.
 - **Text Roles**: `text.vert` uses projection UBO (Set 0, Binding 0) and transform UBO (Set 0, Binding 1). `text.frag` uses glyph atlas sampler (Set 1, Binding 0). Input attributes: position (loc 0), UV (loc 1). Loaded by `create_text_rendering_resources_system`.
 
 ## Dependencies
-- `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, `bevy_app = "0.15"`, `bevy_core = "0.15"`, `bevy_ecs = "0.15"`, `bevy_log = "0.15"`, `bevy_utils = "0.15"`, `bevy_window = "0.15"`, `bevy_winit = "0.15"`, `bevy_reflect = "0.15"`, `bevy_input = "0.15"`, `bevy_time = "0.15"`, `bevy_diagnostic = "0.15"`, `bevy_a11y = "0.15"`, `bevy_math = "0.15"`, `bevy_transform = "0.15"`, `bevy_color = "0.15"`, `winit = "0.30.9"`, `cosmic-text = "0.14"`, `fontdb = "0.23"`, `swash = "0.2"`, `rectangle-pack = "0.4"`, `yrs = "0.23"`.
+- `ash = "0.38"`, `vk-mem = "0.4"`, `ash-window = "0.13"`, `raw-window-handle = "0.6"`, `toml = "0.8"`, `thiserror = "2.0"`, `bevy_app = "0.15"`, `bevy_core = "0.15"`, `bevy_ecs = "0.15"`, `bevy_log = "0.15"`, `bevy_utils = "0.15"`, `bevy_window = "0.15"`, `bevy_winit = "0.15"`, `bevy_reflect = "0.15"`, `bevy_input = "0.15"`, `bevy_time = "0.15"`, `bevy_diagnostic = "0.15"`, `bevy_a11y = "0.15"`, `bevy_math = "0.15"`, `bevy_transform = "0.15"`, `bevy_color = "0.15"`, **`bevy_hierarchy = "0.15"`**, `winit = "0.30.9"`, `cosmic-text = "0.14"`, `fontdb = "0.23"`, `swash = "0.2"`, `rectangle-pack = "0.4"`, `yrs = "0.23"`. (**Updated**)
 - **Build Dependencies**: `walkdir = "2"`.

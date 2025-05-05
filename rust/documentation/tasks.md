@@ -141,7 +141,7 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
 
 ## Task 9: Text Handling - Editing, Selection, Highlighting & Clipboard
 - **Goal**: Integrate `yrs` for data storage. Implement mouse/keyboard editing for `EditableText` entities, including cursor management, text selection (click, drag, double-click, keyboard), visual highlighting, and clipboard (cut/copy/paste) integration.
-- **Status**: **In Progress** (Yrs integration, hit detection, focus management, basic cache/state components complete)
+- **Status**: **In Progress** (Yrs integration, hit detection, focus management, basic cache/state components, Cursor Foundation complete)
 - **Affected Components/Systems/Resources**:
     - Modified Component: `Text` (removed `content`).
     - New Components: `EditableText`, `Focus`, `CursorState`, `CursorVisual`, `TextBufferCache`, `TextSelection { start: usize, end: usize }`, `HighlightVisual` (marker).
@@ -158,7 +158,7 @@ These tasks enhance `gui_framework` towards a modular, reusable Bevy plugin stru
     4.  **Implement Text Hit Detection & Focus Management:** Modify `interaction_system` to manage `Focus` component via `Commands` based on `cosmic_text::Buffer::hit()` results and send `TextFocusChanged`. - **Complete.**
     5.  **Implement Yrs Change Observation:** Modify `text_layout_system` to trigger on `YrsTextChanged` or `Added<Text>`. - **Complete.**
     6.  **Add Cursor State & Cache Components:** Define `CursorState`, `CursorVisual`, `TextBufferCache`. Modify `text_layout_system` to populate `TextBufferCache`. Modify cleanup to remove cache. Register components. - **Complete.**
-    7.  **Phase 1: Cursor Foundation** (Next Step)
+    7.  **Phase 1: Cursor Foundation** **Complete**
         *   Implement `manage_cursor_visual_system` (spawns/despawns `CursorVisual`, adds/removes `CursorState`).
         *   Implement `update_cursor_transform_system` (positions `CursorVisual` via `layout_cursor`).
         *   Create `cursor.vert`/`.frag` shaders, update `build.rs`.

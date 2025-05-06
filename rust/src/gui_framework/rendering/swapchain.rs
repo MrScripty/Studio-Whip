@@ -1,6 +1,6 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use bevy_log::{info, error};
+use bevy_log::{info, error, warn};
 use vk_mem::{Alloc, AllocationCreateInfo}; // For depth image allocation
 
 // Helper to find supported depth format
@@ -282,7 +282,44 @@ pub fn create_framebuffers(platform: &mut VulkanContext, surface_format: vk::Sur
         };
         unsafe { device.create_framebuffer(&framebuffer_info, None) }.expect("Failed to create framebuffer")
     }).collect();
+    info!("[Swapchain::create_framebuffers] Created {} framebuffers.", platform.framebuffers.len()); // Log framebuffer count
+
+    // --- Allocate Command Buffers (one per framebuffer/swapchain image) ---
+    // Ensure command pool exists
+    let command_pool = platform.command_pool.expect("Command pool not available for command buffer allocation");
+
+    // Free old command buffers if they exist
+    if !platform.command_buffers.is_empty() {
+        unsafe {
+            device.free_command_buffers(command_pool, &platform.command_buffers);
+        }
+        platform.command_buffers.clear();
+        info!("[Swapchain::create_framebuffers] Freed old command buffers.");
+    }
+
+    if platform.framebuffers.is_empty() {
+        warn!("[Swapchain::create_framebuffers] No framebuffers created, skipping command buffer allocation.");
+        // Ensure command_buffers is empty if no framebuffers
+        platform.command_buffers = Vec::new(); 
+    } else {
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo {
+            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+            p_next: std::ptr::null(),
+            command_pool,
+            level: vk::CommandBufferLevel::PRIMARY,
+            command_buffer_count: platform.framebuffers.len() as u32,
+            _marker: std::marker::PhantomData,
+        };
+
+        platform.command_buffers = unsafe {
+            device
+                .allocate_command_buffers(&command_buffer_allocate_info)
+                .expect("Failed to allocate command buffers")
+        };
+        info!("[Swapchain::create_framebuffers] Allocated {} command buffers.", platform.command_buffers.len());
+    }
 }
+
 
 /// Cleans up swapchain-related resources (ImageViews, Framebuffers, RenderPass, Swapchain itself).
 /// Assumes device is idle.

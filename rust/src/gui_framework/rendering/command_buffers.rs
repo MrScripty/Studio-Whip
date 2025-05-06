@@ -1,6 +1,7 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::{PreparedDrawData, PreparedTextDrawData};
+use bevy_log::info;
 
 pub fn record_command_buffers(
     platform: &mut VulkanContext,
@@ -8,6 +9,7 @@ pub fn record_command_buffers(
     prepared_text_draws: &[PreparedTextDrawData],
     extent: vk::Extent2D,
 ) {
+    info!("[record_command_buffers] Entered. Shape draws: {}, Text draws: {}", prepared_shape_draws.len(), prepared_text_draws.len());
     let device = platform.device.as_ref().expect("Device not available for command buffer recording");
     let command_pool = platform.command_pool.expect("Command pool missing for recording");
 
@@ -98,14 +100,25 @@ pub fn record_command_buffers(
 
         // --- Draw Text ---
         if !prepared_text_draws.is_empty() {
+            info!("[record_command_buffers] Processing {} text draws.", prepared_text_draws.len());
             let text_pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing");
             let mut current_text_pipeline = vk::Pipeline::null();
 
-            for text_draw in prepared_text_draws {
+            for (i, text_draw) in prepared_text_draws.iter().enumerate() { // Iterate with index and reference
                 if text_draw.vertex_count > 0 {
+                    info!("[record_command_buffers] Text Draw Index {}: Attempting to bind resources. VB: {:?}, Vertices: {}, DS0: {:?}, DS1: {:?}",
+                        i,
+                        text_draw.vertex_buffer,
+                        text_draw.vertex_count,
+                        text_draw.projection_descriptor_set,
+                        text_draw.atlas_descriptor_set
+                    );
                     if text_draw.pipeline != current_text_pipeline {
                         device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, text_draw.pipeline);
+                        info!("[record_command_buffers] Text Draw Index {}: Bound NEW pipeline.", i);
                         current_text_pipeline = text_draw.pipeline;
+                    } else {
+                        info!("[record_command_buffers] Text Draw Index {}: Reusing current pipeline.", i);
                     }
                     device.cmd_bind_descriptor_sets(
                         command_buffer, vk::PipelineBindPoint::GRAPHICS, text_pipeline_layout,
@@ -115,6 +128,7 @@ pub fn record_command_buffers(
                     );
                     let offsets = [0];
                     device.cmd_bind_vertex_buffers(command_buffer, 0, &[text_draw.vertex_buffer], &offsets);
+                    info!("[record_command_buffers] Text Draw Index {}: Bound vertex buffer.", i);
                     device.cmd_draw(
                         command_buffer,
                         text_draw.vertex_count,
@@ -122,6 +136,7 @@ pub fn record_command_buffers(
                         0, // firstVertex
                         0, // firstInstance
                     );
+                    info!("[record_command_buffers] Text Draw Index {}: Draw call executed.", i);
                 }
             }
         }
@@ -131,4 +146,5 @@ pub fn record_command_buffers(
         // End command buffer recording
         device.end_command_buffer(command_buffer).expect("Failed to end command buffer recording");
     }
+    info!("[record_command_buffers] Exited successfully.");
 }

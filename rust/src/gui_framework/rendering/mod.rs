@@ -7,7 +7,9 @@ pub mod swapchain;
 pub mod command_buffers;
 pub mod glyph_atlas;
 pub mod font_server;
+pub mod text_renderer;
 
 pub use render_engine::Renderer;
 pub use glyph_atlas::{GlyphAtlas, GlyphAtlasResource, GlyphInfo};
 pub use font_server::{FontServer, FontServerResource}; 
+pub use text_renderer::TextRenderer;

@@ -18,6 +18,7 @@ use cosmic_text::Cursor;
 use crate::gui_framework::components::{CursorState, TextSelection};
 use crate::{HotkeyResource, FontServerResource};
 use crate::gui_framework::interaction::utils::get_cursor_at_position;
+use crate::gui_framework::interaction::text_drag::text_drag_selection_system;
 
 // Import types from the crate root (lib.rs)
 // (No specific types needed directly from lib.rs for this plugin)
@@ -37,7 +38,7 @@ use super::core::CoreSet;
 
 /// Enum describing the current high-level mouse interaction state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum MouseContextType {
+pub(crate) enum MouseContextType {
     #[default]
     Idle, // Not interacting with anything specific
     DraggingShape, // Dragging a non-text entity
@@ -45,9 +46,9 @@ enum MouseContextType {
 }
 
 /// Resource holding the current mouse context.
-#[derive(Resource, Default)]
-struct MouseContext {
-    context: MouseContextType,
+#[derive(Resource, Default, Debug)]
+pub(crate) struct MouseContext { // Make fields pub(crate) for access from text_drag
+    pub(crate) context: MouseContextType,
 }
 
 // --- System Sets ---
@@ -100,7 +101,8 @@ impl Plugin for GuiFrameworkInteractionPlugin {
             ))
             .add_systems(Update,
                 (
-                    (interaction_system, hotkey_system).in_set(InteractionSet::InputHandling),
+                    // interaction_system sets the context, text_drag_selection_system reads it
+                    (interaction_system, hotkey_system, text_drag_selection_system).chain().in_set(InteractionSet::InputHandling),
                     handle_close_request.in_set(InteractionSet::WindowClose),
                 )
             );
@@ -160,9 +162,10 @@ fn load_hotkeys_system(mut commands: Commands) {
 }
 
 
-// Update system: Processes mouse input for clicks, drags, and text focus.
-pub fn interaction_system(
+// Processes mouse input for clicks, drags, and text focus.
+pub(crate) fn interaction_system(
     // Input resources
+    mut yrs_text_changed_writer: EventWriter<YrsTextChanged>,
     mut mouse_button_input_events: EventReader<MouseButtonInput>,
     mut cursor_moved_events: EventReader<CursorMoved>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -182,11 +185,16 @@ pub fn interaction_system(
     mut dragged_entity: Local<Option<Entity>>,
     // Commands for adding/removing components
     mut commands: Commands,
-    // Query for modifying TextSelection
-    mut text_selection_query: Query<&mut TextSelection>,
+    // Use ParamSet to handle conflicting queries on TextSelection
+    mut selection_param_set: ParamSet<(
+        Query<&mut TextSelection>, // p0: Mutable access
+        Query<&TextSelection>,     // p1: Immutable access
+    )>,
 ) {
     let Ok(primary_window) = windows.get_single() else { return; };
     let window_height = primary_window.height();
+    // Get cursor position once before processing events for this frame
+    let cursor_pos_window_opt = primary_window.cursor_position();
 
     // --- Process Mouse Button Events ---
     for event in mouse_button_input_events.read() {
@@ -194,12 +202,13 @@ pub fn interaction_system(
             match event.state {
                 ButtonState::Pressed => {
                     // --- Handle Click Down (Potential Drag Start or Focus Change) ---
-                    if let Some(cursor_pos_window) = primary_window.cursor_position() {
+                    // Only proceed if we have a valid cursor position from the window
+                    if let Some(cursor_pos_window) = cursor_pos_window_opt {
+                        // Calculate world coordinates ONCE for this press event
                         let cursor_pos_world = Vec2::new(cursor_pos_window.x, window_height - cursor_pos_window.y);
 
-                        // Reset context at the start of a press
-                        mouse_context.context = MouseContextType::Idle;
-
+                        // Don't reset context here, reset it based on what is hit
+                        // mouse_context.context = MouseContextType::Idle;
                         let mut clicked_on_something = false;
                         let mut clicked_on_text_entity: Option<Entity> = None;
                         let mut text_hit_details: Option<(Entity, Cursor)> = None;
@@ -278,6 +287,7 @@ pub fn interaction_system(
                                         info!("Hit text entity {:?} at cursor: {:?}", entity, hit_cursor);
                                         clicked_on_text_entity = Some(entity);
                                         text_hit_details = Some((entity, hit_cursor)); // Store hit_cursor
+                                        info!("Setting MouseContext to TextInteraction for entity {:?}", entity);
                                         // Set context now that we know we hit text
                                         mouse_context.context = MouseContextType::TextInteraction;
                                         clicked_on_something = true;
@@ -318,6 +328,7 @@ pub fn interaction_system(
                                 if draggable {
                                     *drag_start_position = Some(cursor_pos_world);
                                     *dragged_entity = Some(entity);
+                                    info!("Setting MouseContext to DraggingShape for entity {:?}", entity);
                                     mouse_context.context = MouseContextType::DraggingShape;
                                 }
                             }
@@ -325,65 +336,85 @@ pub fn interaction_system(
 
 
                         // --- 3. Handle Focus Change using Focus Component ---
-                        let mut focus_event_to_send: Option<Option<Entity>> = None; // Track if event needs sending
+                        let mut focus_event_to_send: Option<Option<Entity>> = None;
                         let mut entity_to_unfocus: Option<Entity> = None;
 
-                        // Determine which entity currently has focus, if any
                         for current_focus_entity in focus_query.iter() {
                             entity_to_unfocus = Some(current_focus_entity);
-                            break; // Should only be one
+                            break;
                         }
 
-                        // Update CursorState and TextSelection based on text_hit_details
                         if let Some((target_text_entity, hit_cursor)) = text_hit_details {
-                            let new_cursor_pos = hit_cursor.index; // Get byte offset
-                            let new_cursor_line = hit_cursor.line; // Get line index
+                            let new_cursor_pos = hit_cursor.index;
+                            let new_cursor_line = hit_cursor.line;
 
                             // --- Handle Focus Change ---
                             if entity_to_unfocus != Some(target_text_entity) {
-                                // Focus is changing TO this text entity
                                 if let Some(old_focus) = entity_to_unfocus {
                                     commands.entity(old_focus).remove::<Focus>();
-                                    commands.entity(old_focus).remove::<TextSelection>(); // Remove selection from old entity
+                                    commands.entity(old_focus).remove::<TextSelection>();
                                     info!("Focus lost: {:?}", old_focus);
                                 }
                                 commands.entity(target_text_entity).insert(Focus);
-                                // CursorState is added by manage_cursor_visual_system, update it here
-                                commands.entity(target_text_entity).insert(CursorState { position: new_cursor_pos, line: new_cursor_line });
-                                // Insert new collapsed selection
-                                commands.entity(target_text_entity).insert(TextSelection { start: new_cursor_pos, end: new_cursor_pos });
+                                commands.entity(target_text_entity).insert(CursorState {
+                                    position: new_cursor_pos,
+                                    line: new_cursor_line,
+                                });
+                                commands.entity(target_text_entity).insert(TextSelection {
+                                    start: new_cursor_pos,
+                                    end: new_cursor_pos,
+                                });
                                 info!("Focus gained: {:?}, CursorState set: pos {}, line {}. Selection set: [{}, {}]", target_text_entity, new_cursor_pos, new_cursor_line, new_cursor_pos, new_cursor_pos);
                                 focus_event_to_send = Some(Some(target_text_entity));
+
+                                // Trigger text layout update
+                                yrs_text_changed_writer.send(YrsTextChanged { entity: target_text_entity });
                             } else {
-                                // Clicked on already focused text entity
-                                // Update CursorState
-                                commands.entity(target_text_entity).insert(CursorState { position: new_cursor_pos, line: new_cursor_line });
-                                // Update selection to collapsed range at click position
-                                if let Ok(mut selection) = text_selection_query.get_mut(target_text_entity) {
+                                let mut clear_existing_selection = false;
+                                if let Ok(existing_selection) = selection_param_set.p1().get(target_text_entity) {
+                                    if existing_selection.start != existing_selection.end {
+                                        clear_existing_selection = true;
+                                        info!("Clicked on focused entity {:?} with active selection [{}, {}]. Clearing selection.", target_text_entity, existing_selection.start, existing_selection.end);
+                                    }
+                                }
+
+                                commands.entity(target_text_entity).insert(CursorState {
+                                    position: new_cursor_pos,
+                                    line: new_cursor_line,
+                                });
+
+                                if let Ok(mut selection) = selection_param_set.p0().get_mut(target_text_entity) {
                                     selection.start = new_cursor_pos;
                                     selection.end = new_cursor_pos;
-                                    info!("Focus maintained: {:?}, CursorState updated: pos {}, line {}. Selection updated: [{}, {}]", target_text_entity, new_cursor_pos, new_cursor_line, new_cursor_pos, new_cursor_pos);
+                                    info!("Focus maintained: {:?}, CursorState updated: pos {}, line {}. Selection updated/cleared: [{}, {}]", target_text_entity, new_cursor_pos, new_cursor_line, new_cursor_pos, new_cursor_pos);
                                 } else {
-                                    // Selection component might not exist if focus was just gained, insert it
-                                    commands.entity(target_text_entity).insert(TextSelection { start: new_cursor_pos, end: new_cursor_pos });
-                                     info!("Focus maintained: {:?}, CursorState updated: pos {}, line {}. Selection inserted: [{}, {}]", target_text_entity, new_cursor_pos, new_cursor_line, new_cursor_pos, new_cursor_pos);
+                                    commands.entity(target_text_entity).insert(TextSelection {
+                                        start: new_cursor_pos,
+                                        end: new_cursor_pos,
+                                    });
+                                    info!("Focus maintained: {:?}, CursorState updated: pos {}, line {}. Selection inserted: [{}, {}]", target_text_entity, new_cursor_pos, new_cursor_line, new_cursor_pos, new_cursor_pos);
                                 }
-                                // No focus change event needed here
+
+                                // Trigger text layout update to ensure buffer is ready
+                                yrs_text_changed_writer.send(YrsTextChanged { entity: target_text_entity });
                             }
                         } else {
-                            // Clicked on non-text or empty space
                             if let Some(old_focus) = entity_to_unfocus {
                                 commands.entity(old_focus).remove::<Focus>();
-                                commands.entity(old_focus).remove::<TextSelection>(); // Remove selection on focus loss
-                                // CursorState is removed automatically by manage_cursor_visual_system
+                                commands.entity(old_focus).remove::<TextSelection>();
                                 info!("Focus lost: {:?}", old_focus);
                                 focus_event_to_send = Some(None);
                             }
+                            if !clicked_on_something {
+                                mouse_context.context = MouseContextType::Idle;
+                                info!("Clicked empty space. Setting MouseContext to Idle.");
+                            }
                         }
-                        // Send the event if focus actually changed state
+
                         if let Some(event_data) = focus_event_to_send {
                             text_focus_writer.send(TextFocusChanged { entity: event_data });
                         }
+                                            
 
                         // Clear shape drag state if not clicking on a draggable shape
                         if mouse_context.context != MouseContextType::DraggingShape {
@@ -391,14 +422,23 @@ pub fn interaction_system(
                             *dragged_entity = None;
                         }
                         // Note: TextInteraction context is set, but drag state isn't initiated yet.
-                        // drag_start_position and dragged_entity remain None for text clicks here.
-
                     }
                 }
                 ButtonState::Released => {
-                    // --- Handle Click Release (Potential Drag End) ---
-                    *drag_start_position = None;
-                    *dragged_entity = None;
+                    // --- Handle Click Release ---
+                    // If dragging a shape, stop the drag
+                    if mouse_context.context == MouseContextType::DraggingShape {
+                        *drag_start_position = None;
+                        *dragged_entity = None;
+                        info!("Shape drag released. Setting MouseContext to Idle.");
+                        mouse_context.context = MouseContextType::Idle;
+                    }
+                    // If interacting with text, keep the selection active but reset context
+                    else if mouse_context.context == MouseContextType::TextInteraction {
+                        info!("Text interaction released. Keeping selection, setting MouseContext to Idle.");
+                        mouse_context.context = MouseContextType::Idle;
+                    }
+                    // Otherwise, context should already be Idle
                 }
             }
         }

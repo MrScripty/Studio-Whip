@@ -17,7 +17,7 @@ use yrs::{Transact, GetString, TextRef};
 use crate::gui_framework::components::{CursorState, CursorVisual};
 use bevy_hierarchy::{BuildChildren, DespawnRecursiveExt, Children, Parent};
 use bevy_core::Name;
-
+use crate::gui_framework::plugins::interaction::InteractionSet;
 
 // Import types from the crate root (lib.rs)
 use crate::{
@@ -56,10 +56,13 @@ pub enum CoreSet {
 
     // Update sequence
     HandleResize,           // Handle window resize events, update global UBO
+    ApplyInputCommands,     // Apply commands from input/focus/cursor systems before layout/positioning
     TextLayout,             // Perform text layout using cosmic-text
-    TextRendering,   // Prepare text vertex data and Vulkan resources
+    TextRendering,          // Prepare text vertex data and Vulkan resources
     ManageCursorVisual,     // Spawn/despawn cursor visual based on Focus
     UpdateCursorTransform,  // Update cursor visual position based on state/layout
+    ApplyUpdateCommands,    // Apply commands from layout/cursor systems before rendering
+
 
     // Last sequence
     Render,                 // Perform rendering using prepared data
@@ -120,40 +123,39 @@ impl Plugin for GuiFrameworkCorePlugin {
                 create_swash_cache_system.in_set(CoreSet::CreateSwashCache),
                 create_global_ubo_system.in_set(CoreSet::CreateGlobalUbo),
                 create_text_rendering_resources_system.in_set(CoreSet::CreateTextResources),
-            )) 
+        )) 
             // Initialize the PreparedTextDrawsResource
-            .init_resource::<crate::PreparedTextDrawsResource>()
+            .init_resource::<crate::PreparedTextDrawsResource>();
 
             // == Update Systems ==
             // Define the desired execution order for Update systems
-            .configure_sets(Update, (
-                // Run cursor update first, using last frame's layout state
-                CoreSet::UpdateCursorTransform,
-                // Then manage the visual (spawn/despawn)
-                CoreSet::ManageCursorVisual.after(CoreSet::UpdateCursorTransform),
-                // Then perform text layout for the *next* frame
-                CoreSet::TextLayout.after(CoreSet::ManageCursorVisual),
-                // Then prepare text rendering resources based on the new layout
-                CoreSet::TextRendering.after(CoreSet::TextLayout),
-                // Finally, handle resize *after* all layout/rendering prep
+            app.configure_sets(Update, (
+                InteractionSet::InputHandling,
+                CoreSet::TextLayout.after(InteractionSet::InputHandling), // Move TextLayout earlier
+                CoreSet::ManageCursorVisual.after(CoreSet::TextLayout),
+                CoreSet::UpdateCursorTransform.after(CoreSet::ManageCursorVisual),
+                CoreSet::TextRendering.after(CoreSet::UpdateCursorTransform),
                 CoreSet::HandleResize.after(CoreSet::TextRendering),
-        ).chain()) // Chain these sets to enforce the order
+                CoreSet::ApplyUpdateCommands.after(CoreSet::HandleResize)
+            ).chain())
             .add_systems(Update, (
                 handle_resize_system.in_set(CoreSet::HandleResize),
                 text_layout_system.in_set(CoreSet::TextLayout),
                 text_rendering_system.in_set(CoreSet::TextRendering),
                 manage_cursor_visual_system.in_set(CoreSet::ManageCursorVisual),
                 update_cursor_transform_system.in_set(CoreSet::UpdateCursorTransform),
+                apply_deferred.in_set(CoreSet::ApplyUpdateCommands),
         ))
-            .configure_sets(Last, (
-                // Ensure Render runs after TextLayout and TextRendering
-                CoreSet::Render.after(CoreSet::TextLayout).after(CoreSet::TextRendering),
-                CoreSet::Cleanup.after(CoreSet::Render), // Ensure cleanup runs last
+        // Configure the relationship between the Render and Cleanup sets in the Last schedule
+        .configure_sets(Last, (
+            CoreSet::Render,
+            CoreSet::Cleanup.after(CoreSet::Render), // Cleanup runs after Render
         ))
             // == Rendering System (runs late) ==
             .add_systems(Last, (
+                // Remove apply_deferred from here
                 rendering_system.run_if(not(on_event::<AppExit>)).in_set(CoreSet::Render),
-                cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup).after(CoreSet::Render),
+                cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup),
         ));
     }
 }
@@ -499,61 +501,54 @@ fn handle_resize_system(
 /// Adds/Removes `CursorState` from the focused entity.
 fn manage_cursor_visual_system(
     mut commands: Commands,
-    // Query for entities that just gained focus this frame
-    focus_added_query: Query<(Entity, &Transform), Added<Focus>>,
-    // Query for entities that lost focus this frame
+    focus_added_query: Query<(Entity, &Transform), (Added<Focus>, Without<CursorVisual>)>,
     mut focus_removed_query: RemovedComponents<Focus>,
-    // Query for existing cursor visuals to despawn/update them
-    mut cursor_visual_query: Query<(Entity, &Parent, &mut Visibility), With<CursorVisual>>, // Query Visibility mutably
-    // Query TextSelection to determine cursor visibility
+    mut cursor_visual_query: Query<(Entity, &Parent, &mut Visibility), With<CursorVisual>>,
     text_selection_query: Query<&TextSelection>,
-    // Query for focused entities to update existing cursors
-    focused_query: Query<Entity, With<Focus>>, // Add query for focused entities
-    // Query for children to find the cursor entity
-    children_query: Query<&Children>, // Add query for children
+    focused_query: Query<Entity, With<Focus>>,
+    children_query: Query<&Children>,
 ) {
     // --- Handle Focus Gained ---
     for (focused_entity, text_transform) in focus_added_query.iter() {
         info!("Focus gained by {:?}, spawning cursor visual.", focused_entity);
 
-        // 1. Add CursorState component to the focused text entity
-        commands.entity(focused_entity).insert(CursorState::default());
+        // CursorState is already added by interaction_system, no need to add it here
 
-        // 2. Determine initial visibility based on selection state (if available)
-        let initial_visibility = if let Ok(selection) = text_selection_query.get(focused_entity) {
-            selection.start == selection.end // Visible only if selection is collapsed
-        } else {
-            true // Assume visible if selection component doesn't exist yet
-        };
+        // Set initial visibility to true (cursor should be visible for collapsed selection)
+        let initial_visibility = true;
 
-        // 3. Spawn the visual cursor entity as a child
-        let cursor_z = text_transform.translation.z - 0.1; // Slightly in front of text
+        // Spawn the visual cursor entity as a child
+        let cursor_z = text_transform.translation.z - 0.1;
         let cursor_entity = commands.spawn((
-            CursorVisual, // Marker component
-            ShapeData { // Define a thin rectangle for the cursor
-                vertices: Arc::new(vec![ Vertex { position: [-0.5, -8.0] }, Vertex { position: [-0.5, 8.0] }, Vertex { position: [0.5, -8.0] }, Vertex { position: [0.5, -8.0] }, Vertex { position: [-0.5, 8.0] }, Vertex { position: [0.5, 8.0] }, ]),
-                color: Color::BLACK, // Cursor color
+            CursorVisual,
+            ShapeData {
+                vertices: Arc::new(vec![
+                    Vertex { position: [-0.5, -8.0] },
+                    Vertex { position: [-0.5, 8.0] },
+                    Vertex { position: [0.5, -8.0] },
+                    Vertex { position: [0.5, -8.0] },
+                    Vertex { position: [-0.5, 8.0] },
+                    Vertex { position: [0.5, 8.0] },
+                ]),
+                color: Color::BLACK,
             },
-            Transform::from_xyz(0.0, 0.0, -0.1), // Relative Z offset
-            Visibility(initial_visibility), // Set initial visibility
-            Interaction::default(), // Not interactive itself
+            Transform::from_xyz(0.0, 0.0, -0.1),
+            Visibility(initial_visibility),
+            Interaction::default(),
             Name::new("CursorVisual"),
         )).id();
 
-        // 4. Add the cursor as a child of the focused text entity
         commands.entity(focused_entity).add_child(cursor_entity);
     }
 
-    // --- Update Visibility for Existing Cursors based on Selection ---
-    // This handles cases where selection changes while focus is maintained
+    // --- Update Visibility for Existing Cursors ---
     for focused_entity in focused_query.iter() {
         if let Ok(selection) = text_selection_query.get(focused_entity) {
-            // Find the child cursor visual
             if let Ok(children) = children_query.get(focused_entity) {
                 for &child in children.iter() {
                     if let Ok((_cursor_entity, _parent, mut visibility)) = cursor_visual_query.get_mut(child) {
-                        visibility.0 = selection.start == selection.end; // Update visibility
-                        break; // Found the cursor for this parent
+                        visibility.0 = selection.start == selection.end;
+                        break;
                     }
                 }
             }
@@ -561,21 +556,17 @@ fn manage_cursor_visual_system(
     }
 
     // --- Handle Focus Lost ---
-    // Iterate over RemovedComponents directly
     for lost_focus_entity in focus_removed_query.read() {
-        // Start of Edit - Use the correct loop variable 'lost_focus_entity'
         info!("Focus lost by {:?}, despawning cursor visual.", lost_focus_entity);
 
-        // 1. Remove CursorState from the entity that lost focus
+        // Remove CursorState
         commands.entity(lost_focus_entity).remove::<CursorState>();
-        // End of Edit
 
-        // 2. Find and despawn the child CursorVisual entity
-        // Iterate mutably to access Visibility component if needed, though we just despawn here.
+        // Despawn CursorVisual
         for (cursor_entity, parent, _visibility) in cursor_visual_query.iter() {
             if parent.get() == lost_focus_entity {
                 commands.entity(cursor_entity).despawn_recursive();
-                break; // Found and despawned the cursor for this parent
+                break;
             }
         }
     }
@@ -583,20 +574,12 @@ fn manage_cursor_visual_system(
 
 /// System to update the visual cursor's position based on `CursorState` and `TextBufferCache`.
 fn update_cursor_transform_system(
-    mut focused_query: Query<(Entity, &CursorState, &TextBufferCache), With<Focus>>,
-    mut cursor_visual_query: Query<&mut Transform, With<CursorVisual>>,
+    mut focused_query: Query<(Entity, &CursorState, &TextBufferCache, &Transform), With<Focus>>, // Add Transform
+    mut cursor_visual_query: Query<&mut Transform, (With<CursorVisual>, Without<Focus>)>,
     children_query: Query<&Children>,
     font_server_res: Res<FontServerResource>,
 ) {
-    // Start of Edit - Correct buffer binding
-    if let Ok((focused_entity, cursor_state, text_cache)) = focused_query.get_single() {
-        // Bind buffer immutably here. It's valid for the rest of this block.
-        let Some(buffer) = text_cache.buffer.as_ref() else {
-            // If buffer isn't ready yet (e.g., first frame), skip positioning
-            return;
-        };
-    // End of Edit
-
+    if let Ok((focused_entity, cursor_state, text_cache, text_transform)) = focused_query.get_single() {
         // Find the child cursor entity
         let mut target_cursor_entity: Option<Entity> = None;
         if let Ok(children) = children_query.get(focused_entity) {
@@ -610,119 +593,96 @@ fn update_cursor_transform_system(
 
         if let Some(cursor_entity) = target_cursor_entity {
             if let Ok(mut cursor_transform) = cursor_visual_query.get_mut(cursor_entity) {
-                let Ok(mut font_server) = font_server_res.0.lock() else { // Lock immutably is fine now
-                    error!("Failed to lock FontServer in update_cursor_transform_system");
-                    return;
-                };
-                // Use stored line index and byte offset from CursorState
-                let line_index = cursor_state.line;
-                let byte_offset = cursor_state.position;
+                // Try to use the buffer for precise positioning
+                if let Some(buffer) = text_cache.buffer.as_ref() {
+                    let Ok(mut font_server) = font_server_res.0.lock() else {
+                        error!("Failed to lock FontServer in update_cursor_transform_system");
+                        return;
+                    };
+                    let line_index = cursor_state.line;
+                    let byte_offset = cursor_state.position;
 
-                let mut position_found = false;
-                let mut current_logical_line = 0; // Track which logical line the visual run corresponds to
+                    let mut position_found = false;
+                    let mut current_logical_line = 0;
 
-                // Use the 'buffer' variable bound above
-                for run in buffer.layout_runs() {
-                    // TODO: Improve mapping from logical line index to visual run index, especially with wrapping.
-                    // This simple check assumes one logical line per visual run for now.
-                    if current_logical_line == line_index {
-                        let mut current_x = 0.0; // Default to start of line
-                        let mut found_glyph_pos = false;
+                    for run in buffer.layout_runs() {
+                        if current_logical_line == line_index {
+                            let mut current_x = 0.0;
+                            let mut found_glyph_pos = false;
 
-                        let mut max_scaled_ascent = 0.0f32;
-                        let mut max_scaled_descent = 0.0f32; // Should be negative or zero
+                            let mut max_scaled_ascent = 0.0f32;
+                            let mut max_scaled_descent = 0.0f32;
 
-                        // Calculate max ascent/descent for vertical positioning later
-                        for glyph_layout in run.glyphs.iter() {
-                             if let Some(font) = font_server.font_system.get_font(glyph_layout.font_id) {
-                                let metrics = font.as_swash().metrics(&[]);
-                                if metrics.units_per_em > 0 {
-                                    let scale = glyph_layout.font_size / metrics.units_per_em as f32;
-                                    max_scaled_ascent = max_scaled_ascent.max(metrics.ascent * scale);
-                                    max_scaled_descent = max_scaled_descent.min(metrics.descent * scale); // Use min for descent
+                            for glyph_layout in run.glyphs.iter() {
+                                if let Some(font) = font_server.font_system.get_font(glyph_layout.font_id) {
+                                    let metrics = font.as_swash().metrics(&[]);
+                                    if metrics.units_per_em > 0 {
+                                        let scale = glyph_layout.font_size / metrics.units_per_em as f32;
+                                        max_scaled_ascent = max_scaled_ascent.max(metrics.ascent * scale);
+                                        max_scaled_descent = max_scaled_descent.min(metrics.descent * scale);
+                                    }
                                 }
                             }
-                        }
-                        // If line is empty, use default font metrics? For now, defaults to 0.
 
-                        // Iterate glyphs again for horizontal position
-                        for (i, glyph_layout) in run.glyphs.iter().enumerate() {
-                            if byte_offset >= glyph_layout.start && byte_offset < glyph_layout.end {
-                                // Cursor is within this glyph, position at its leading edge (x)
-                                current_x = glyph_layout.x;
-                                found_glyph_pos = true;
-                                break;
+                            for (i, glyph_layout) in run.glyphs.iter().enumerate() {
+                                if byte_offset >= glyph_layout.start && byte_offset < glyph_layout.end {
+                                    current_x = glyph_layout.x;
+                                    found_glyph_pos = true;
+                                    break;
+                                }
+                                if byte_offset == glyph_layout.end {
+                                    if let Some(next_glyph) = run.glyphs.get(i + 1) {
+                                        current_x = next_glyph.x;
+                                    } else {
+                                        current_x = run.line_w;
+                                    }
+                                    found_glyph_pos = true;
+                                    break;
+                                }
+                                if byte_offset < glyph_layout.start {
+                                    current_x = glyph_layout.x;
+                                    found_glyph_pos = true;
+                                    break;
+                                }
                             }
-                            if byte_offset == glyph_layout.end {
-                                // Cursor is exactly at the end of this glyph.
-                                // Position it at the start of the *next* glyph's x, or end of line width.
-                                if let Some(next_glyph) = run.glyphs.get(i + 1) {
-                                    current_x = next_glyph.x;
-                                } else {
-                                    // This was the last glyph, position at end of line width
+
+                            if !found_glyph_pos {
+                                if run.glyphs.is_empty() || byte_offset == 0 {
+                                    current_x = 0.0;
+                                    found_glyph_pos = true;
+                                } else if byte_offset >= run.glyphs.last().unwrap().end {
                                     current_x = run.line_w;
+                                    found_glyph_pos = true;
                                 }
-                                found_glyph_pos = true;
-                                break;
                             }
-                             if byte_offset < glyph_layout.start {
-                                // Cursor is before this glyph starts (should only happen for first glyph).
-                                current_x = glyph_layout.x;
-                                found_glyph_pos = true;
-                                break;
+
+                            if found_glyph_pos {
+                                let local_x = current_x;
+                                let vertical_center_offset = (max_scaled_ascent + max_scaled_descent) / 2.0;
+                                let baseline_y_down = run.line_y;
+                                let descent_y_up = max_scaled_descent;
+                                let local_y_up = -baseline_y_down + descent_y_up + 8.0;
+
+                                cursor_transform.translation.x = local_x;
+                                cursor_transform.translation.y = local_y_up;
+                                position_found = true;
                             }
+                            break;
                         }
-
-                        // Handle cases where the offset is before the first glyph or the line is empty
-                        if !found_glyph_pos {
-                            if run.glyphs.is_empty() || byte_offset == 0 {
-                                // Empty line or cursor at the very beginning
-                                current_x = 0.0;
-                                found_glyph_pos = true;
-                            } else if byte_offset >= run.glyphs.last().unwrap().end {
-                                // After the last glyph (this case should be handled by byte_offset == end logic above)
-                                // But as a fallback, position at end of line width
-                                current_x = run.line_w;
-                                found_glyph_pos = true;
-                            }
-                        }
-
-                        // If we determined a position on this line
-                        if found_glyph_pos {
-                            let local_x = current_x;
-
-                            // Calculate vertical center based on ascent/descent
-                            // Descent is negative, Ascent is positive relative to baseline
-                            let vertical_center_offset = (max_scaled_ascent + max_scaled_descent) / 2.0;
-
-                            // Baseline Y (down is positive in cosmic-text)
-                            let baseline_y_down = run.line_y;
-                            let descent_y_up = max_scaled_descent;
-                            // Final Y position in Bevy's Y-up system
-                            let local_y_up = -baseline_y_down + descent_y_up + 8.0;
-
-                            cursor_transform.translation.x = local_x;
-                            cursor_transform.translation.y = local_y_up;
-                            position_found = true;
-                            break; // Exit run loop
-                        }
+                        current_logical_line += 1;
                     }
-                    // Increment logical line counter (still approximate with wrapping)
-                    current_logical_line += 1;
-                }
 
-                // Fallback if no position was found (e.g., line_index out of bounds)
-                if !position_found {
-                    warn!("Could not determine cursor position from runs for line {}, offset {}. Falling back.", line_index, byte_offset);
-                    // Use the 'buffer' variable bound above
-                    if let Some(last_run) = buffer.layout_runs().last() {
-                        cursor_transform.translation.x = last_run.line_w;
-                        cursor_transform.translation.y = -last_run.line_y;
-                    } else {
-                        // No runs at all, place at origin
+                    // Fallback if no position was found
+                    if !position_found {
+                        warn!("Could not determine cursor position for line {}, offset {}. Using fallback.", line_index, byte_offset);
                         cursor_transform.translation.x = 0.0;
                         cursor_transform.translation.y = 0.0;
                     }
+                } else {
+                    // Fallback when buffer is not yet available
+                    warn!("TextBufferCache.buffer not available for cursor positioning. Using text entity origin.");
+                    cursor_transform.translation.x = 0.0;
+                    cursor_transform.translation.y = 0.0;
                 }
             }
         }
@@ -732,15 +692,12 @@ fn update_cursor_transform_system(
 // Update system: Prepares text rendering data (per-entity vertex buffer, UBO, descriptor set)
 //                only for entities whose layout has changed this frame.
 fn text_rendering_system(
-    mut commands: Commands, // Use commands to insert/update TextRenderData
-    // Query for entities whose layout changed
+    mut commands: Commands,
     query: Query<
         (Entity, &GlobalTransform, &TextLayoutOutput, &Visibility),
         Changed<TextLayoutOutput>
     >,
-    // Query existing render data mutably
     mut render_data_query: Query<&mut TextRenderData>,
-    // Access global resources
     global_ubo_res: Res<GlobalProjectionUboResource>,
     vk_context_res: Res<VulkanContextResource>,
     renderer_res: Res<RendererResource>,
@@ -749,37 +706,38 @@ fn text_rendering_system(
     let Ok(vk_ctx) = vk_context_res.0.lock() else { warn!("[text_render] Could not lock VulkanContext."); return; };
     let Ok(renderer) = renderer_res.0.lock() else { warn!("[text_render] Could not lock RendererResource."); return; };
     let Some(device) = vk_ctx.device.as_ref() else { warn!("[text_render] Vulkan device not available."); return; };
-    let Some(allocator_arc) = vk_ctx.allocator.clone() else { warn!("[text_render] Vulkan allocator not available."); return; }; // Clone Arc
+    let Some(allocator_arc) = vk_ctx.allocator.clone() else { warn!("[text_render] Vulkan allocator not available."); return; };
     let descriptor_pool = renderer.descriptor_pool;
     let per_entity_layout = renderer.descriptor_set_layout;
+    
+    // --- Wait for device to be idle to ensure no pending command buffers ---
+    unsafe {
+        if let Err(e) = device.device_wait_idle() {
+            error!("[text_render] Failed to wait for device idle: {:?}", e);
+            return;
+        }
+    }
+    
     drop(vk_ctx); // Drop locks
     drop(renderer);
     // --- End Handle Acquisition ---
 
-
     for (entity, global_transform, text_layout, visibility) in query.iter() {
-
         // --- Handle Invisibility ---
         if !visibility.is_visible() {
             if let Ok(mut render_data) = render_data_query.get_mut(entity) {
-                 warn!("[text_render] Cleaning up TextRenderData for invisible entity {:?}", entity);
-                 // TODO: Implement proper cleanup (needs device, allocator, pool access - tricky here)
-                 // For now, just remove the component. Resource leak will occur!
-                 // Need to destroy buffers and free descriptor set before removing component.
-                 unsafe {
-                     allocator_arc.destroy_buffer(render_data.transform_ubo, &mut render_data.transform_alloc);
-                     allocator_arc.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc);
-                     // Freeing descriptor set requires device & pool, maybe defer this?
-                 }
-                 commands.entity(entity).remove::<TextRenderData>();
+                warn!("[text_render] Cleaning up TextRenderData for invisible entity {:?}", entity);
+                unsafe {
+                    allocator_arc.destroy_buffer(render_data.transform_ubo, &mut render_data.transform_alloc);
+                    allocator_arc.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc);
+                }
+                commands.entity(entity).remove::<TextRenderData>();
             }
-            continue; // Skip processing if invisible
+            continue;
         }
 
         // --- 1. Calculate Relative Vertices ---
         let mut relative_vertices: Vec<TextVertex> = Vec::with_capacity(text_layout.glyphs.len() * 6);
-
-        // ... (Vertex calculation logic remains the same) ...
         for positioned_glyph in &text_layout.glyphs {
             let tl_rel = positioned_glyph.vertices[0]; let tr_rel = positioned_glyph.vertices[1];
             let br_rel = positioned_glyph.vertices[2]; let bl_rel = positioned_glyph.vertices[3];
@@ -795,14 +753,13 @@ fn text_rendering_system(
         let vertex_count = relative_vertices.len() as u32;
 
         if vertex_count == 0 {
-             if let Ok(mut render_data) = render_data_query.get_mut(entity) {
-                 // TODO: Implement proper cleanup
-                 unsafe {
-                     allocator_arc.destroy_buffer(render_data.transform_ubo, &mut render_data.transform_alloc);
-                     allocator_arc.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc);
-                 }
-                 commands.entity(entity).remove::<TextRenderData>();
-             }
+            if let Ok(mut render_data) = render_data_query.get_mut(entity) {
+                unsafe {
+                    allocator_arc.destroy_buffer(render_data.transform_ubo, &mut render_data.transform_alloc);
+                    allocator_arc.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc);
+                }
+                commands.entity(entity).remove::<TextRenderData>();
+            }
             continue;
         }
 
@@ -818,59 +775,51 @@ fn text_rendering_system(
                 if !info.mapped_data.is_null() {
                     info.mapped_data.cast::<f32>().copy_from_nonoverlapping(transform_matrix.to_cols_array().as_ptr(), 16);
                     if let Err(e) = allocator_arc.flush_allocation(&render_data.transform_alloc, 0, vk::WHOLE_SIZE) {
-                         error!("[text_render] Failed to flush transform UBO alloc for {:?}: {:?}", entity, e);
+                        error!("[text_render] Failed to flush transform UBO alloc for {:?}: {:?}", entity, e);
                     }
                 } else { error!("[text_render] Transform UBO not mapped for update {:?}!", entity); }
             }
 
             // b. Update Vertex Buffer (Recreate if size changed)
             let mut vertex_buffer_recreated = false;
-            // Check if vertex count requires recreating the buffer
             let current_capacity = (allocator_arc.get_allocation_info(&render_data.vertex_alloc).size / std::mem::size_of::<TextVertex>() as u64) as u32;
             if vertex_count > current_capacity {
                 warn!("[text_render] Vertex count ({}) exceeds capacity ({}) for {:?}. Recreating vertex buffer.", vertex_count, current_capacity, entity);
-                // Destroy old buffer/allocation
                 unsafe { allocator_arc.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc); }
-                // Allocate slightly larger buffer to reduce future reallocations
-                let new_capacity = (vertex_count as f32 * 1.2).ceil() as u32; // Example: 20% larger
+                let new_capacity = (vertex_count as f32 * 1.2).ceil() as u32;
                 let new_size_bytes = (std::mem::size_of::<TextVertex>() * new_capacity as usize) as u64;
                 let (new_buffer, new_alloc) = unsafe {
                     let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: new_size_bytes, usage: vk::BufferUsageFlags::VERTEX_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
                     let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
                     allocator_arc.create_buffer(&buffer_info, &allocation_info).expect("Failed to recreate text vertex buffer")
                 };
-                // Update fields directly on the mutable reference
                 render_data.vertex_buffer = new_buffer;
                 render_data.vertex_alloc = new_alloc;
                 render_data.vertex_count = vertex_count;
                 vertex_buffer_recreated = true;
             }
-            // Copy data to vertex buffer (always, as layout changed)
             unsafe {
-                let info = allocator_arc.get_allocation_info(&render_data.vertex_alloc); // Use potentially new allocation
+                let info = allocator_arc.get_allocation_info(&render_data.vertex_alloc);
                 if !info.mapped_data.is_null() {
                     info.mapped_data.cast::<TextVertex>().copy_from_nonoverlapping(relative_vertices.as_ptr(), vertex_count as usize);
                 } else { error!("[text_render] Vertex buffer not mapped for update {:?}!", entity); }
             }
 
-            // c. Update Descriptor Set (only needed if UBO handle changed, but update anyway for simplicity)
+            // c. Update Descriptor Set
             let transform_buffer_info = vk::DescriptorBufferInfo { buffer: render_data.transform_ubo, offset: 0, range: std::mem::size_of::<Mat4>() as u64 };
             let global_buffer_info = vk::DescriptorBufferInfo { buffer: global_ubo_res.buffer, offset: 0, range: std::mem::size_of::<Mat4>() as u64 };
             let writes = [
                 vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: render_data.descriptor_set_0, dst_binding: 0, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &global_buffer_info, ..Default::default() },
                 vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: render_data.descriptor_set_0, dst_binding: 1, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &transform_buffer_info, ..Default::default() },
             ];
-            // Re-lock context briefly to get device handle for descriptor update
             if let Ok(vk_ctx_guard) = vk_context_res.0.lock() {
                 if let Some(dev) = vk_ctx_guard.device.as_ref() {
                     unsafe { dev.update_descriptor_sets(&writes, &[]); }
                 } else { error!("[text_render] Device unavailable for descriptor update."); }
             } else { error!("[text_render] Could not lock context for descriptor update."); }
-
         } else {
             // --- Create New Entity ---
             // a. Create Vertex Buffer
-            // Allocate with some initial capacity
             let initial_capacity = (vertex_count as f32 * 1.2).ceil() as u32;
             let vertex_buffer_size = (std::mem::size_of::<TextVertex>() * initial_capacity as usize) as u64;
             let (vertex_buffer, vertex_alloc) = unsafe {
@@ -893,21 +842,20 @@ fn text_rendering_system(
                 let info = allocator_arc.get_allocation_info(&transform_alloc); assert!(!info.mapped_data.is_null());
                 info.mapped_data.cast::<f32>().copy_from_nonoverlapping(transform_matrix.to_cols_array().as_ptr(), 16);
                 if let Err(e) = allocator_arc.flush_allocation(&transform_alloc, 0, vk::WHOLE_SIZE) {
-                     error!("[text_render] Failed to flush new transform UBO alloc for {:?}: {:?}", entity, e);
+                    error!("[text_render] Failed to flush new transform UBO alloc for {:?}: {:?}", entity, e);
                 }
             }
 
             // c. Allocate Descriptor Set (Set 0)
             let set_layouts = [per_entity_layout];
             let alloc_info = vk::DescriptorSetAllocateInfo { s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO, descriptor_pool, descriptor_set_count: 1, p_set_layouts: set_layouts.as_ptr(), ..Default::default() };
-            // Need device handle again
             let descriptor_set_0 = if let Ok(vk_ctx_guard) = vk_context_res.0.lock() {
-                 if let Some(dev) = vk_ctx_guard.device.as_ref() {
-                     unsafe { dev.allocate_descriptor_sets(&alloc_info).expect("Failed to allocate text descriptor set 0").remove(0) }
-                 } else { error!("[text_render] Device unavailable for descriptor alloc."); vk::DescriptorSet::null() }
-             } else { error!("[text_render] Could not lock context for descriptor alloc."); vk::DescriptorSet::null() };
+                if let Some(dev) = vk_ctx_guard.device.as_ref() {
+                    unsafe { dev.allocate_descriptor_sets(&alloc_info).expect("Failed to allocate text descriptor set 0").remove(0) }
+                } else { error!("[text_render] Device unavailable for descriptor alloc."); vk::DescriptorSet::null() }
+            } else { error!("[text_render] Could not lock context for descriptor alloc."); vk::DescriptorSet::null() };
 
-            if descriptor_set_0 == vk::DescriptorSet::null() { continue; } // Skip insertion if alloc failed
+            if descriptor_set_0 == vk::DescriptorSet::null() { continue; }
 
             // d. Update Descriptor Set (Set 0)
             let transform_buffer_info = vk::DescriptorBufferInfo { buffer: transform_ubo, offset: 0, range: std::mem::size_of::<Mat4>() as u64 };
@@ -916,17 +864,17 @@ fn text_rendering_system(
                 vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: descriptor_set_0, dst_binding: 0, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &global_buffer_info, ..Default::default() },
                 vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: descriptor_set_0, dst_binding: 1, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &transform_buffer_info, ..Default::default() },
             ];
-             if let Ok(vk_ctx_guard) = vk_context_res.0.lock() {
-                 if let Some(dev) = vk_ctx_guard.device.as_ref() {
-                     unsafe { dev.update_descriptor_sets(&writes, &[]); }
-                 } else { error!("[text_render] Device unavailable for descriptor update."); }
-             } else { error!("[text_render] Could not lock context for descriptor update."); }
+            if let Ok(vk_ctx_guard) = vk_context_res.0.lock() {
+                if let Some(dev) = vk_ctx_guard.device.as_ref() {
+                    unsafe { dev.update_descriptor_sets(&writes, &[]); }
+                } else { error!("[text_render] Device unavailable for descriptor update."); }
+            } else { error!("[text_render] Could not lock context for descriptor update."); }
 
             // e. Insert TextRenderData Component
             commands.entity(entity).insert(TextRenderData {
                 vertex_count,
-                vertex_buffer, // Store per-entity buffer
-                vertex_alloc,  // Store per-entity alloc
+                vertex_buffer,
+                vertex_alloc,
                 transform_ubo,
                 transform_alloc,
                 descriptor_set_0,

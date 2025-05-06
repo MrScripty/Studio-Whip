@@ -58,7 +58,6 @@ pub enum CoreSet {
     HandleResize,           // Handle window resize events, update global UBO
     ApplyInputCommands,     // Apply commands from input/focus/cursor systems before layout/positioning
     TextLayout,             // Perform text layout using cosmic-text
-    TextRendering,          // Prepare text vertex data and Vulkan resources
     ManageCursorVisual,     // Spawn/despawn cursor visual based on Focus
     UpdateCursorTransform,  // Update cursor visual position based on state/layout
     ApplyUpdateCommands,    // Apply commands from layout/cursor systems before rendering
@@ -78,43 +77,31 @@ impl Plugin for GuiFrameworkCorePlugin {
         app.register_type::<ShapeData>();
         app.register_type::<Visibility>();
         app.register_type::<Vertex>();
-        // Note: Resources like GlyphAtlasResource don't need registration if they derive Resource
-        // Register new Text component and related types
         app.register_type::<Text>();
         app.register_type::<FontId>();
         app.register_type::<TextAlignment>();
         app.register_type::<Color>();
-        // Register math types used in reflection
         app.register_type::<Vec2>();
         app.register_type::<IVec2>();
         app.register_type::<crate::gui_framework::components::CursorState>();
         app.register_type::<crate::gui_framework::components::CursorVisual>();
-        // TextBufferCache is not registered as it contains non-reflectable Buffer
-
 
         // --- System Setup ---
         app
             // == Startup Systems ==
             .configure_sets(Startup,(
                 CoreSet::SetupVulkan,
-                CoreSet::CreateRenderer,        // Depends on SetupVulkan
-                CoreSet::CreateGlyphAtlas,      // Depends on SetupVulkan
-                CoreSet::CreateFontServer,      
-                CoreSet::CreateSwashCache,      
+                CoreSet::CreateRenderer,
+                CoreSet::CreateGlyphAtlas,
+                CoreSet::CreateFontServer,
+                CoreSet::CreateSwashCache,
             ).chain())
-
-            // Configure sets that have specific dependencies *after* the chain is defined
             .configure_sets(Startup, (
-                // CreateGlobalUbo must run after CreateRenderer because it needs RendererResource
                 CoreSet::CreateGlobalUbo.after(CoreSet::CreateRenderer),
-                // CreateTextResources must run after CreateRenderer (needs layouts/pool)
-                // and after CreateGlyphAtlas (needs atlas resource for descriptor set)
                 CoreSet::CreateTextResources
                     .after(CoreSet::CreateRenderer)
                     .after(CoreSet::CreateGlyphAtlas),
-        ))
-            // Add the systems to the Startup schedule and assign them to their respective sets.
-            // Rely on the configure_sets calls above to establish the execution order.
+            ))
             .add_systems(Startup, (
                 setup_vulkan_system.in_set(CoreSet::SetupVulkan),
                 create_renderer_system.in_set(CoreSet::CreateRenderer),
@@ -123,40 +110,41 @@ impl Plugin for GuiFrameworkCorePlugin {
                 create_swash_cache_system.in_set(CoreSet::CreateSwashCache),
                 create_global_ubo_system.in_set(CoreSet::CreateGlobalUbo),
                 create_text_rendering_resources_system.in_set(CoreSet::CreateTextResources),
-        )) 
-            // Initialize the PreparedTextDrawsResource
-            .init_resource::<crate::PreparedTextDrawsResource>();
+            ))
+            .init_resource::<crate::PreparedTextDrawsResource>(); // Keep this initialization
 
             // == Update Systems ==
-            // Define the desired execution order for Update systems
-            app.configure_sets(Update, (
-                InteractionSet::InputHandling,
-                CoreSet::TextLayout.after(InteractionSet::InputHandling), // Move TextLayout earlier
-                CoreSet::ManageCursorVisual.after(CoreSet::TextLayout),
-                CoreSet::UpdateCursorTransform.after(CoreSet::ManageCursorVisual),
-                CoreSet::TextRendering.after(CoreSet::UpdateCursorTransform),
-                CoreSet::HandleResize.after(CoreSet::TextRendering),
-                CoreSet::ApplyUpdateCommands.after(CoreSet::HandleResize)
-            ).chain())
-            .add_systems(Update, (
+            // Define Update schedule ordering (TextRendering system removed)
+            app.configure_sets(Update, ( // Ensure 'app' is used here
+                // InteractionSet::InputHandling runs first (defined in interaction plugin)
+                CoreSet::ManageCursorVisual.after(InteractionSet::InputHandling), // Ensure this runs after input
+                CoreSet::ApplyInputCommands.after(CoreSet::ManageCursorVisual),
+                CoreSet::TextLayout.after(CoreSet::ApplyInputCommands),
+                CoreSet::UpdateCursorTransform.after(CoreSet::TextLayout),
+                // Handle resize last in the main chain
+                CoreSet::HandleResize.after(CoreSet::UpdateCursorTransform), // Should run after cursor transform
+            ).chain()) // Chain these sets to enforce the order
+            .add_systems(Update, ( // Ensure 'app' is used here
                 handle_resize_system.in_set(CoreSet::HandleResize),
                 text_layout_system.in_set(CoreSet::TextLayout),
-                text_rendering_system.in_set(CoreSet::TextRendering),
+                // text_rendering_system removed
                 manage_cursor_visual_system.in_set(CoreSet::ManageCursorVisual),
                 update_cursor_transform_system.in_set(CoreSet::UpdateCursorTransform),
-                apply_deferred.in_set(CoreSet::ApplyUpdateCommands),
-        ))
-        // Configure the relationship between the Render and Cleanup sets in the Last schedule
-        .configure_sets(Last, (
-            CoreSet::Render,
-            CoreSet::Cleanup.after(CoreSet::Render), // Cleanup runs after Render
-        ))
-            // == Rendering System (runs late) ==
-            .add_systems(Last, (
-                // Remove apply_deferred from here
+                // Add apply_deferred to run in the ApplyInputCommands set
+                apply_deferred.in_set(CoreSet::ApplyInputCommands),
+            )); // Semicolon needed after add_systems
+
+            // == Last Schedule Systems ==
+            // Configure the relationship between the Render and Cleanup sets in the Last schedule
+            app.configure_sets(Last, ( // Ensure 'app' is used here
+                CoreSet::Render,
+                CoreSet::Cleanup.after(CoreSet::Render), // Cleanup runs after Render
+            ))
+            // Add Rendering System (runs late)
+            .add_systems(Last, ( // Ensure 'app' is used here
                 rendering_system.run_if(not(on_event::<AppExit>)).in_set(CoreSet::Render),
                 cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup),
-        ));
+            )); // Semicolon needed after add_systems
     }
 }
 
@@ -689,200 +677,6 @@ fn update_cursor_transform_system(
     }
 }
 
-// Update system: Prepares text rendering data (per-entity vertex buffer, UBO, descriptor set)
-//                only for entities whose layout has changed this frame.
-fn text_rendering_system(
-    mut commands: Commands,
-    query: Query<
-        (Entity, &GlobalTransform, &TextLayoutOutput, &Visibility),
-        Changed<TextLayoutOutput>
-    >,
-    mut render_data_query: Query<&mut TextRenderData>,
-    global_ubo_res: Res<GlobalProjectionUboResource>,
-    vk_context_res: Res<VulkanContextResource>,
-    renderer_res: Res<RendererResource>,
-) {
-    // --- Get Vulkan Handles (Lock briefly) ---
-    let Ok(vk_ctx) = vk_context_res.0.lock() else { warn!("[text_render] Could not lock VulkanContext."); return; };
-    let Ok(renderer) = renderer_res.0.lock() else { warn!("[text_render] Could not lock RendererResource."); return; };
-    let Some(device) = vk_ctx.device.as_ref() else { warn!("[text_render] Vulkan device not available."); return; };
-    let Some(allocator_arc) = vk_ctx.allocator.clone() else { warn!("[text_render] Vulkan allocator not available."); return; };
-    let descriptor_pool = renderer.descriptor_pool;
-    let per_entity_layout = renderer.descriptor_set_layout;
-    
-    // --- Wait for device to be idle to ensure no pending command buffers ---
-    unsafe {
-        if let Err(e) = device.device_wait_idle() {
-            error!("[text_render] Failed to wait for device idle: {:?}", e);
-            return;
-        }
-    }
-    
-    drop(vk_ctx); // Drop locks
-    drop(renderer);
-    // --- End Handle Acquisition ---
-
-    for (entity, global_transform, text_layout, visibility) in query.iter() {
-        // --- Handle Invisibility ---
-        if !visibility.is_visible() {
-            if let Ok(mut render_data) = render_data_query.get_mut(entity) {
-                warn!("[text_render] Cleaning up TextRenderData for invisible entity {:?}", entity);
-                unsafe {
-                    allocator_arc.destroy_buffer(render_data.transform_ubo, &mut render_data.transform_alloc);
-                    allocator_arc.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc);
-                }
-                commands.entity(entity).remove::<TextRenderData>();
-            }
-            continue;
-        }
-
-        // --- 1. Calculate Relative Vertices ---
-        let mut relative_vertices: Vec<TextVertex> = Vec::with_capacity(text_layout.glyphs.len() * 6);
-        for positioned_glyph in &text_layout.glyphs {
-            let tl_rel = positioned_glyph.vertices[0]; let tr_rel = positioned_glyph.vertices[1];
-            let br_rel = positioned_glyph.vertices[2]; let bl_rel = positioned_glyph.vertices[3];
-            let uv_min = positioned_glyph.glyph_info.uv_min; let uv_max = positioned_glyph.glyph_info.uv_max;
-            relative_vertices.push(TextVertex { position: tl_rel.into(), uv: [uv_min[0], uv_min[1]] });
-            relative_vertices.push(TextVertex { position: bl_rel.into(), uv: [uv_min[0], uv_max[1]] });
-            relative_vertices.push(TextVertex { position: br_rel.into(), uv: [uv_max[0], uv_max[1]] });
-            relative_vertices.push(TextVertex { position: tl_rel.into(), uv: [uv_min[0], uv_min[1]] });
-            relative_vertices.push(TextVertex { position: br_rel.into(), uv: [uv_max[0], uv_max[1]] });
-            relative_vertices.push(TextVertex { position: tr_rel.into(), uv: [uv_max[0], uv_min[1]] });
-        }
-        
-        let vertex_count = relative_vertices.len() as u32;
-
-        if vertex_count == 0 {
-            if let Ok(mut render_data) = render_data_query.get_mut(entity) {
-                unsafe {
-                    allocator_arc.destroy_buffer(render_data.transform_ubo, &mut render_data.transform_alloc);
-                    allocator_arc.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc);
-                }
-                commands.entity(entity).remove::<TextRenderData>();
-            }
-            continue;
-        }
-
-        // --- 2. Get Transform Matrix ---
-        let transform_matrix = global_transform.compute_matrix();
-
-        // --- 3. Create or Update Vulkan Resources ---
-        if let Ok(mut render_data) = render_data_query.get_mut(entity) {
-            // --- Update Existing Entity ---
-            // a. Update Transform UBO
-            unsafe {
-                let info = allocator_arc.get_allocation_info(&render_data.transform_alloc);
-                if !info.mapped_data.is_null() {
-                    info.mapped_data.cast::<f32>().copy_from_nonoverlapping(transform_matrix.to_cols_array().as_ptr(), 16);
-                    if let Err(e) = allocator_arc.flush_allocation(&render_data.transform_alloc, 0, vk::WHOLE_SIZE) {
-                        error!("[text_render] Failed to flush transform UBO alloc for {:?}: {:?}", entity, e);
-                    }
-                } else { error!("[text_render] Transform UBO not mapped for update {:?}!", entity); }
-            }
-
-            // b. Update Vertex Buffer (Recreate if size changed)
-            let mut vertex_buffer_recreated = false;
-            let current_capacity = (allocator_arc.get_allocation_info(&render_data.vertex_alloc).size / std::mem::size_of::<TextVertex>() as u64) as u32;
-            if vertex_count > current_capacity {
-                warn!("[text_render] Vertex count ({}) exceeds capacity ({}) for {:?}. Recreating vertex buffer.", vertex_count, current_capacity, entity);
-                unsafe { allocator_arc.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc); }
-                let new_capacity = (vertex_count as f32 * 1.2).ceil() as u32;
-                let new_size_bytes = (std::mem::size_of::<TextVertex>() * new_capacity as usize) as u64;
-                let (new_buffer, new_alloc) = unsafe {
-                    let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: new_size_bytes, usage: vk::BufferUsageFlags::VERTEX_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
-                    let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
-                    allocator_arc.create_buffer(&buffer_info, &allocation_info).expect("Failed to recreate text vertex buffer")
-                };
-                render_data.vertex_buffer = new_buffer;
-                render_data.vertex_alloc = new_alloc;
-                render_data.vertex_count = vertex_count;
-                vertex_buffer_recreated = true;
-            }
-            unsafe {
-                let info = allocator_arc.get_allocation_info(&render_data.vertex_alloc);
-                if !info.mapped_data.is_null() {
-                    info.mapped_data.cast::<TextVertex>().copy_from_nonoverlapping(relative_vertices.as_ptr(), vertex_count as usize);
-                } else { error!("[text_render] Vertex buffer not mapped for update {:?}!", entity); }
-            }
-
-            // c. Update Descriptor Set
-            let transform_buffer_info = vk::DescriptorBufferInfo { buffer: render_data.transform_ubo, offset: 0, range: std::mem::size_of::<Mat4>() as u64 };
-            let global_buffer_info = vk::DescriptorBufferInfo { buffer: global_ubo_res.buffer, offset: 0, range: std::mem::size_of::<Mat4>() as u64 };
-            let writes = [
-                vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: render_data.descriptor_set_0, dst_binding: 0, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &global_buffer_info, ..Default::default() },
-                vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: render_data.descriptor_set_0, dst_binding: 1, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &transform_buffer_info, ..Default::default() },
-            ];
-            if let Ok(vk_ctx_guard) = vk_context_res.0.lock() {
-                if let Some(dev) = vk_ctx_guard.device.as_ref() {
-                    unsafe { dev.update_descriptor_sets(&writes, &[]); }
-                } else { error!("[text_render] Device unavailable for descriptor update."); }
-            } else { error!("[text_render] Could not lock context for descriptor update."); }
-        } else {
-            // --- Create New Entity ---
-            // a. Create Vertex Buffer
-            let initial_capacity = (vertex_count as f32 * 1.2).ceil() as u32;
-            let vertex_buffer_size = (std::mem::size_of::<TextVertex>() * initial_capacity as usize) as u64;
-            let (vertex_buffer, vertex_alloc) = unsafe {
-                let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: vertex_buffer_size, usage: vk::BufferUsageFlags::VERTEX_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
-                let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
-                allocator_arc.create_buffer(&buffer_info, &allocation_info).expect("Failed to create text vertex buffer")
-            };
-            unsafe {
-                let info = allocator_arc.get_allocation_info(&vertex_alloc); assert!(!info.mapped_data.is_null());
-                info.mapped_data.cast::<TextVertex>().copy_from_nonoverlapping(relative_vertices.as_ptr(), vertex_count as usize);
-            }
-
-            // b. Create Transform UBO
-            let (transform_ubo, transform_alloc) = unsafe {
-                let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: std::mem::size_of::<Mat4>() as u64, usage: vk::BufferUsageFlags::UNIFORM_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
-                let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
-                allocator_arc.create_buffer(&buffer_info, &allocation_info).expect("Failed to create text transform UBO")
-            };
-            unsafe {
-                let info = allocator_arc.get_allocation_info(&transform_alloc); assert!(!info.mapped_data.is_null());
-                info.mapped_data.cast::<f32>().copy_from_nonoverlapping(transform_matrix.to_cols_array().as_ptr(), 16);
-                if let Err(e) = allocator_arc.flush_allocation(&transform_alloc, 0, vk::WHOLE_SIZE) {
-                    error!("[text_render] Failed to flush new transform UBO alloc for {:?}: {:?}", entity, e);
-                }
-            }
-
-            // c. Allocate Descriptor Set (Set 0)
-            let set_layouts = [per_entity_layout];
-            let alloc_info = vk::DescriptorSetAllocateInfo { s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO, descriptor_pool, descriptor_set_count: 1, p_set_layouts: set_layouts.as_ptr(), ..Default::default() };
-            let descriptor_set_0 = if let Ok(vk_ctx_guard) = vk_context_res.0.lock() {
-                if let Some(dev) = vk_ctx_guard.device.as_ref() {
-                    unsafe { dev.allocate_descriptor_sets(&alloc_info).expect("Failed to allocate text descriptor set 0").remove(0) }
-                } else { error!("[text_render] Device unavailable for descriptor alloc."); vk::DescriptorSet::null() }
-            } else { error!("[text_render] Could not lock context for descriptor alloc."); vk::DescriptorSet::null() };
-
-            if descriptor_set_0 == vk::DescriptorSet::null() { continue; }
-
-            // d. Update Descriptor Set (Set 0)
-            let transform_buffer_info = vk::DescriptorBufferInfo { buffer: transform_ubo, offset: 0, range: std::mem::size_of::<Mat4>() as u64 };
-            let global_buffer_info = vk::DescriptorBufferInfo { buffer: global_ubo_res.buffer, offset: 0, range: std::mem::size_of::<Mat4>() as u64 };
-            let writes = [
-                vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: descriptor_set_0, dst_binding: 0, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &global_buffer_info, ..Default::default() },
-                vk::WriteDescriptorSet { s_type: vk::StructureType::WRITE_DESCRIPTOR_SET, dst_set: descriptor_set_0, dst_binding: 1, descriptor_count: 1, descriptor_type: vk::DescriptorType::UNIFORM_BUFFER, p_buffer_info: &transform_buffer_info, ..Default::default() },
-            ];
-            if let Ok(vk_ctx_guard) = vk_context_res.0.lock() {
-                if let Some(dev) = vk_ctx_guard.device.as_ref() {
-                    unsafe { dev.update_descriptor_sets(&writes, &[]); }
-                } else { error!("[text_render] Device unavailable for descriptor update."); }
-            } else { error!("[text_render] Could not lock context for descriptor update."); }
-
-            // e. Insert TextRenderData Component
-            commands.entity(entity).insert(TextRenderData {
-                vertex_count,
-                vertex_buffer,
-                vertex_alloc,
-                transform_ubo,
-                transform_alloc,
-                descriptor_set_0,
-            });
-        }
-    }
-}
-
 fn create_swash_cache_system(mut commands: Commands) {
     let swash_cache = SwashCache::new(); // SwashCache::new() is available
     commands.insert_resource(SwashCacheResource(Mutex::new(swash_cache)));
@@ -1085,19 +879,27 @@ fn text_layout_system(
     }
 }
 
-// Last system: Collects shape/text render data and triggers rendering via the custom Vulkan Renderer.
+// Define a helper struct to pass text layout info to the renderer
+#[derive(Clone)]
+pub struct TextLayoutInfo {
+    pub entity: Entity, // Make fields public
+    pub transform: GlobalTransform,
+    pub layout: Arc<TextLayoutOutput>,
+    pub visibility: Visibility,
+}
+
 fn rendering_system(
     // Resources needed for rendering
     renderer_res_opt: Option<ResMut<RendererResource>>,
     vk_context_res_opt: Option<Res<VulkanContextResource>>,
     global_ubo_res_opt: Option<Res<GlobalProjectionUboResource>>,
-    text_res_opt: Option<Res<TextRenderingResources>>, // Need global text resources (pipeline, atlas set)
+    text_res_opt: Option<Res<TextRenderingResources>>, // Still need pipeline/atlas set
 
     // Queries for scene data
-    shape_query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility), (Without<TextRenderData>, Or<(With<ShapeData>, With<CursorVisual>)>)>, // Include CursorVisual
+    shape_query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility), (Without<TextLayoutOutput>, Or<(With<ShapeData>, With<CursorVisual>)>)>, // Query shapes/cursors without TextLayoutOutput
     shape_change_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
-    // Query for text entities that have render data prepared
-    text_query: Query<(&TextRenderData, &Visibility, &GlobalTransform)>,
+    // Query for text entities that have layout output ready
+    text_layout_query: Query<(Entity, &GlobalTransform, &TextLayoutOutput, &Visibility)>, // Query layout output
 ) {
     // Ensure all required resources are available
     let (
@@ -1130,55 +932,30 @@ fn rendering_system(
     // Sort shapes by depth (optional, but good practice)
     shape_render_commands.sort_unstable_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
 
-    // --- Collect Prepared Text Draw Data ---
-    let mut prepared_text_draws: Vec<PreparedTextDrawData> = Vec::new();
-    for (render_data, visibility, global_transform) in text_query.iter() {
+    // --- Collect Text Layout Info ---
+    // Collect layout data for visible text entities. Renderer will handle resource creation/update.
+    let mut text_layout_infos: Vec<TextLayoutInfo> = Vec::new();
+    for (entity, transform, layout_output, visibility) in text_layout_query.iter() {
         if visibility.is_visible() {
-            // --- Update Transform UBO for Text (if transform changed) ---
-            // We need mutable access to TextRenderData's allocation here.
-            // This is tricky because rendering_system ideally shouldn't modify component data.
-            // Option 1: Add Changed<GlobalTransform> filter to text_query and update UBO here.
-            // Option 2: Create a separate system that runs before rendering_system to update text UBOs based on Changed<GlobalTransform>. (Cleaner)
-            // Let's go with Option 1 for now for simplicity, but Option 2 is better design.
-
-            // --- TEMPORARY: Update UBO directly here (less ideal) ---
-            // Need allocator access
-            if let Ok(vk_ctx) = vk_context_res.0.lock() { // Lock briefly
-                if let Some(allocator) = vk_ctx.allocator.as_ref() {
-                    unsafe {
-                        let info = allocator.get_allocation_info(&render_data.transform_alloc);
-                        if !info.mapped_data.is_null() {
-                            let transform_matrix = global_transform.compute_matrix(); // Get current matrix
-                            info.mapped_data.cast::<f32>().copy_from_nonoverlapping(transform_matrix.to_cols_array().as_ptr(), 16);
-                            // Optional flush
-                            if let Err(e) = allocator.flush_allocation(&render_data.transform_alloc, 0, vk::WHOLE_SIZE) {
-                                 error!("[rendering_system] Failed to flush text transform UBO alloc: {:?}", e);
-                            }
-                        } else { error!("[rendering_system] Text transform UBO not mapped for update!"); }
-                    }
-                }
-            }
-
-
-            prepared_text_draws.push(PreparedTextDrawData {
-                pipeline: text_res.pipeline, // Shared text pipeline
-                vertex_buffer: render_data.vertex_buffer, // Per-entity vertex buffer
-                vertex_count: render_data.vertex_count,
-                projection_descriptor_set: render_data.descriptor_set_0, // Assign per-entity set 0
-                atlas_descriptor_set: text_res.atlas_descriptor_set, // Global atlas set 1
+            text_layout_infos.push(TextLayoutInfo {
+                entity,
+                transform: *transform, // Copy GlobalTransform
+                layout: Arc::new(layout_output.clone()), // Clone layout into an Arc
+                visibility: *visibility, // Copy Visibility
             });
         }
     }
-    // TODO: Sort text draws by depth if needed
+    // TODO: Sort text layouts by depth if needed (using transform.translation().z)
 
     // --- Call Custom Renderer ---
     let renderer_guard_opt = renderer_res.0.lock().ok(); // Bind Option<Guard> to variable first
     if let Some(mut renderer_guard) = renderer_guard_opt {
         renderer_guard.render(
             &vk_context_res,
-            &shape_render_commands,
-            &prepared_text_draws, // Pass the locally collected Vec
+            &shape_render_commands, // Pass slice directly
+            &text_layout_infos,
             &global_ubo_res,
+            &text_res,
         );
         // Guard dropped here
     } else {
@@ -1231,58 +1008,6 @@ fn cleanup_trigger_system(world: &mut World) {
                 // Get handles needed within this scope
                 let device_ref_opt = vk_ctx_guard.device.as_ref(); // Reference to device inside guard
                 let allocator_arc_opt = vk_ctx_guard.allocator.clone(); // Clone Arc<Allocator>
-
-                // --- 1. Cleanup Per-Entity TextRenderData ---
-                // This needs the device and the descriptor pool handle from earlier
-                if let (Some(device), Some(descriptor_pool)) = (device_ref_opt, descriptor_pool_opt) {
-                    info!("[Cleanup] Cleaning up TextRenderData resources...");
-                    let mut text_render_query = world.query::<(Entity, &mut TextRenderData)>(); // Query Mutably
-                    let mut sets_to_free: Vec<vk::DescriptorSet> = Vec::new();
-                    let entity_count = text_render_query.iter(world).count();
-                    info!("[Cleanup] Found {} entities with TextRenderData.", entity_count);
-                    // Also remove TextBufferCache components during cleanup
-                    let mut text_cache_query = world.query_filtered::<Entity, With<TextBufferCache>>(); // Use imported type
-                    let cache_entities: Vec<Entity> = text_cache_query.iter(world).collect();
-                    for entity in cache_entities {
-                        world.entity_mut(entity).remove::<TextBufferCache>();
-                    }
-                    info!("[Cleanup] Removed TextBufferCache components.");
-
-                    // Need allocator temporarily here as well
-                    if let Some(allocator) = allocator_arc_opt.as_ref() {
-                         for (entity, mut render_data) in text_render_query.iter_mut(world) {
-                            unsafe {
-                                if render_data.transform_ubo != vk::Buffer::null() {
-                                     allocator.destroy_buffer(render_data.transform_ubo, &mut render_data.transform_alloc);
-                                }
-                                if render_data.vertex_buffer != vk::Buffer::null() {
-                                     allocator.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc);
-                                }
-                                if render_data.descriptor_set_0 != vk::DescriptorSet::null() {
-                                     sets_to_free.push(render_data.descriptor_set_0);
-                                     // Nullify handle after adding to free list to prevent double free attempt
-                                     render_data.descriptor_set_0 = vk::DescriptorSet::null();
-                                }
-                            }
-                        }
-                    } else { error!("[Cleanup] Allocator unavailable for TextRenderData destroy."); }
-
-
-                    // Free descriptor sets NOW before Renderer::cleanup destroys the pool
-                    if !sets_to_free.is_empty() {
-                        unsafe {
-                            if let Err(e) = device.free_descriptor_sets(descriptor_pool, &sets_to_free) {
-                                error!("[Cleanup] Failed to free text descriptor sets: {:?}", e);
-                            } else {
-                                info!("[Cleanup] Freed {} text descriptor sets.", sets_to_free.len());
-                            }
-                        }
-                    }
-                    info!("[Cleanup] Finished cleaning TextRenderData resources.");
-                } else {
-                     error!("[Cleanup] Could not get device or descriptor pool handle for TextRenderData cleanup.");
-                }
-                // --- End TextRenderData Cleanup ---
 
                 // --- 2. Cleanup Renderer (Destroys Pool, Shape Buffers, etc.) ---
                 if let Some(renderer_res) = renderer_res_opt { // Use the Option removed earlier

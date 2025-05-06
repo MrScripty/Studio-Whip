@@ -4,34 +4,16 @@ use crate::{PreparedDrawData, PreparedTextDrawData};
 use bevy_log::info;
 
 pub fn record_command_buffers(
-    platform: &mut VulkanContext,
+    platform: &VulkanContext,
     prepared_shape_draws: &[PreparedDrawData],
     prepared_text_draws: &[PreparedTextDrawData],
     extent: vk::Extent2D,
 ) {
     info!("[record_command_buffers] Entered. Shape draws: {}, Text draws: {}", prepared_shape_draws.len(), prepared_text_draws.len());
-    let device = platform.device.as_ref().expect("Device not available for command buffer recording");
-    let command_pool = platform.command_pool.expect("Command pool missing for recording");
-
-    // --- Reset Command Pool ---
-    unsafe {
-        device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
-            .expect("Failed to reset command pool");
-    }
-
-    // --- Allocate Command Buffers (If needed) ---
-    if platform.command_buffers.is_empty() || platform.command_buffers.len() != platform.framebuffers.len() {
-        if !platform.command_buffers.is_empty() {
-             unsafe { device.free_command_buffers(command_pool, &platform.command_buffers); }
-             platform.command_buffers.clear();
-        }
-        platform.command_buffers = {
-            let alloc_info = vk::CommandBufferAllocateInfo { s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO, command_pool, level: vk::CommandBufferLevel::PRIMARY, command_buffer_count: platform.framebuffers.len() as u32, ..Default::default() };
-            unsafe { device.allocate_command_buffers(&alloc_info) }.expect("Failed to allocate command buffers")
-        };
-    }
 
     // --- Command Buffer Recording Loop ---
+    let device = platform.device.as_ref().expect("Device not available for command buffer recording");
+    // Get the specific command buffer for the current image; it's already reset by the Renderer
     let command_buffer = platform.command_buffers[platform.current_image];
     let begin_info = vk::CommandBufferBeginInfo { s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO, flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, ..Default::default() };
     let clear_values = [ vk::ClearValue { color: vk::ClearColorValue { float32: [0.1, 0.1, 0.1, 1.0] } }, vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } }, ];

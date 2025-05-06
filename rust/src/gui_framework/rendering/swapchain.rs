@@ -127,6 +127,42 @@ pub fn create_swapchain(platform: &mut VulkanContext, extent: vk::Extent2D) -> v
         };
         unsafe { device.create_image_view(&view_info, None) }.expect("Failed to create image view")
     }).collect();
+    info!("[Swapchain::create_framebuffers] Created {} framebuffers.", platform.framebuffers.len()); // Log framebuffer count
+
+    // --- Allocate Command Buffers (one per framebuffer/swapchain image) ---
+    // Ensure command pool exists
+    let command_pool = platform.command_pool.expect("Command pool not available for command buffer allocation");
+
+    // Free old command buffers if they exist
+    if !platform.command_buffers.is_empty() {
+        unsafe {
+            device.free_command_buffers(command_pool, &platform.command_buffers);
+        }
+        platform.command_buffers.clear();
+        info!("[Swapchain::create_framebuffers] Freed old command buffers.");
+    }
+
+    if platform.framebuffers.is_empty() {
+        warn!("[Swapchain::create_framebuffers] No framebuffers created, skipping command buffer allocation.");
+        // Ensure command_buffers is empty if no framebuffers
+        platform.command_buffers = Vec::new();
+    } else {
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo {
+            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+            p_next: std::ptr::null(),
+            command_pool,
+            level: vk::CommandBufferLevel::PRIMARY,
+            command_buffer_count: platform.framebuffers.len() as u32,
+            _marker: std::marker::PhantomData,
+        };
+
+        platform.command_buffers = unsafe {
+            device
+                .allocate_command_buffers(&command_buffer_allocate_info)
+                .expect("Failed to allocate command buffers")
+        };
+        info!("[Swapchain::create_framebuffers] Allocated {} command buffers.", platform.command_buffers.len());
+    }
 
     // --- Create Depth Resources ---
     let depth_format = find_supported_format(
@@ -341,6 +377,22 @@ pub fn cleanup_swapchain_resources(platform: &mut VulkanContext) {
     };
 
     unsafe {
+        // Free Command Buffers (must be done before destroying the pool they came from)
+        // The command pool itself is cleaned up by Renderer::cleanup or VulkanContext::cleanup
+        if let Some(pool) = platform.command_pool { // Check if pool exists
+            if !platform.command_buffers.is_empty() {
+                device.free_command_buffers(pool, &platform.command_buffers);
+                platform.command_buffers.clear();
+                info!("[cleanup_swapchain_resources] Freed command buffers.");
+            }
+        } else {
+            // If pool is None, command buffers should also be empty or were never allocated.
+            if !platform.command_buffers.is_empty() {
+                warn!("[cleanup_swapchain_resources] Command buffers exist but command pool is None. Buffers not freed.");
+                platform.command_buffers.clear(); // Still clear the vec to avoid dangling refs
+            }
+        }
+
         // Destroy Framebuffers
         for fb in platform.framebuffers.drain(..) {
             device.destroy_framebuffer(fb, None);

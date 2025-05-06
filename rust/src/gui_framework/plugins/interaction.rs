@@ -7,12 +7,11 @@ use bevy_input::{
     keyboard::KeyCode, 
     ButtonInput,
     ButtonState,
-    mouse::{MouseButton, MouseButtonInput, MouseMotion},
+    mouse::{MouseButton, MouseButtonInput},
 };
 use bevy_math::{Vec2, Rect, Affine3A};
 use std::path::PathBuf;
 use std::env;
-use std::sync::{Arc, Mutex};
 use swash::Metrics as SwashMetrics;
 use cosmic_text::Cursor;
 use crate::gui_framework::components::{CursorState, TextSelection};
@@ -26,7 +25,7 @@ use crate::gui_framework::interaction::text_drag::text_drag_selection_system;
 // Import types/functions from the gui_framework
 use crate::gui_framework::{
     interaction::hotkeys::{HotkeyConfig, HotkeyError},
-    components::{Interaction, ShapeData, Visibility, Focus, EditableText, TextLayoutOutput, TextBufferCache},
+    components::{Interaction, Visibility, Focus, EditableText, TextBufferCache},
     events::{EntityClicked, EntityDragged, HotkeyActionTriggered, YrsTextChanged, TextFocusChanged},
 };
 
@@ -210,8 +209,7 @@ pub(crate) fn interaction_system(
                         // Don't reset context here, reset it based on what is hit
                         // mouse_context.context = MouseContextType::Idle;
                         let mut clicked_on_something = false;
-                        let mut clicked_on_text_entity: Option<Entity> = None;
-                        let mut text_hit_details: Option<(Entity, Cursor)> = None;
+                        let text_hit_details: Option<(Entity, Cursor)> = None;
 
                         // --- 1. Check Editable Text Hit Detection (Overall BBox + buffer.hit()) ---
                         let Ok(mut font_server_guard) = font_server_res.0.lock() else {
@@ -285,8 +283,6 @@ pub(crate) fn interaction_system(
                                     // Use the utility function here
                                     if let Some(hit_cursor) = get_cursor_at_position(buffer, cursor_pos_local_ydown) {
                                         info!("Hit text entity {:?} at cursor: {:?}", entity, hit_cursor);
-                                        clicked_on_text_entity = Some(entity);
-                                        text_hit_details = Some((entity, hit_cursor)); // Store hit_cursor
                                         info!("Setting MouseContext to TextInteraction for entity {:?}", entity);
                                         // Set context now that we know we hit text
                                         mouse_context.context = MouseContextType::TextInteraction;
@@ -370,10 +366,8 @@ pub(crate) fn interaction_system(
                                 // Trigger text layout update
                                 yrs_text_changed_writer.send(YrsTextChanged { entity: target_text_entity });
                             } else {
-                                let mut clear_existing_selection = false;
                                 if let Ok(existing_selection) = selection_param_set.p1().get(target_text_entity) {
                                     if existing_selection.start != existing_selection.end {
-                                        clear_existing_selection = true;
                                         info!("Clicked on focused entity {:?} with active selection [{}, {}]. Clearing selection.", target_text_entity, existing_selection.start, existing_selection.end);
                                     }
                                 }

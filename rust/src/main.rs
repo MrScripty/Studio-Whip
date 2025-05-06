@@ -1,7 +1,7 @@
 use bevy_app::{App, Startup, Update};
 use bevy_ecs::prelude::*;
 use bevy_log::{info, error, warn, LogPlugin, Level};
-use bevy_utils::{default, HashMap};
+use bevy_utils::default;
 use bevy_input::InputPlugin;
 use bevy_window::{
     PrimaryWindow, Window, WindowPlugin, PresentMode,
@@ -32,9 +32,7 @@ use bevy_color::Color;
 // Import Yrs types needed for resource initialization
 use yrs::{Doc, Text as YrsText}; // Alias YrsText to avoid conflict
 use rusty_whip::YrsDocResource; // Import the new resource type
-use yrs::TextRef;
 use yrs::Transact;
-use bevy_hierarchy::{BuildChildren, DespawnRecursiveExt, Children, Parent};
 use bevy_hierarchy::HierarchyPlugin;
 
 #[derive(Component)]
@@ -103,7 +101,7 @@ fn main() {
 fn setup_scene_ecs(
     mut commands: Commands,
     primary_window_q: Query<&Window, With<PrimaryWindow>>,
-    mut yrs_res: ResMut<YrsDocResource>,
+    yrs_res: ResMut<YrsDocResource>,
 ) {
     info!("Running setup_scene_ecs...");
     // --- Spawn Initial Entities ---

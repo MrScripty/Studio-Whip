@@ -1,9 +1,7 @@
 use bevy_ecs::prelude::*;
 use bevy_window::{PrimaryWindow, Window, CursorMoved};
-use bevy_input::mouse::MouseButtonInput;
 use bevy_transform::prelude::GlobalTransform;
 use bevy_math::{Vec2, Affine3A};
-use bevy_log::{info, error};
 
 use crate::gui_framework::{
     components::{Focus, TextSelection, TextBufferCache},
@@ -48,12 +46,10 @@ pub(crate) fn text_drag_selection_system(
             // Clone necessary data because we can't hold the immutable borrow from p0
             // while trying to get a mutable borrow from p1 later.
             let focused_entity_id = focused_entity; // Clone Entity ID
-            let transform_affine = transform.affine(); // Get affine transform
             let buffer_option = text_cache.buffer.clone(); // Clone the Option<Buffer> Arc if needed, or just check existence
 
             let Some(buffer) = buffer_option.as_ref() else { return; }; // Need the buffer cache
             // Transform cursor world position to entity's local space (Y-up) using cloned transform
-            let inverse_transform: Affine3A = transform_affine.inverse();
             let inverse_transform: Affine3A = transform.affine().inverse();
             let cursor_pos_local_yup = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
 

@@ -35,9 +35,7 @@ fn movement_system(
     mut query: Query<&mut Transform>,
 ) {
     // Check if the system is running at all
-    let mut ran = false;
     for ev in drag_evr.read() {
-        ran = true; // Mark that we entered the loop
         info!("[MovementSystem] Received EntityDragged: Entity={:?}, Delta={:?}", ev.entity, ev.delta);
 
         info!("[MovementSystem] Attempting to get Transform for {:?}", ev.entity);

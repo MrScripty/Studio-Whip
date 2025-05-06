@@ -22,7 +22,6 @@ use crate::gui_framework::plugins::interaction::InteractionSet;
 // Import types from the crate root (lib.rs)
 use crate::{
     Vertex, RenderCommandData, TextVertex,
-    PreparedTextDrawData, // <-- Add this import
     GlobalProjectionUboResource,
     TextRenderingResources, // Keep this if cleanup needs it, otherwise remove
     YrsDocResource,
@@ -35,7 +34,7 @@ use crate::gui_framework::{
     rendering::render_engine::Renderer,
     rendering::glyph_atlas::GlyphAtlas,
     rendering::font_server::FontServer,
-    components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph, TextRenderData, TextBufferCache, TextSelection, Focus, Interaction},
+    components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph, TextBufferCache, TextSelection, Focus, Interaction},
     rendering::shader_utils,
 };
 
@@ -475,7 +474,6 @@ fn handle_resize_system(
                     &vk_context_res, // Pass the resource itself
                     event.width as u32,
                     event.height as u32,
-                    &global_ubo_res
                 );
                 // Renderer lock released when guard goes out of scope here
             } else {
@@ -497,7 +495,7 @@ fn manage_cursor_visual_system(
     children_query: Query<&Children>,
 ) {
     // --- Handle Focus Gained ---
-    for (focused_entity, text_transform) in focus_added_query.iter() {
+    for (focused_entity, _text_transform) in focus_added_query.iter() {
         info!("Focus gained by {:?}, spawning cursor visual.", focused_entity);
 
         // CursorState is already added by interaction_system, no need to add it here
@@ -506,7 +504,6 @@ fn manage_cursor_visual_system(
         let initial_visibility = true;
 
         // Spawn the visual cursor entity as a child
-        let cursor_z = text_transform.translation.z - 0.1;
         let cursor_entity = commands.spawn((
             CursorVisual,
             ShapeData {
@@ -562,12 +559,12 @@ fn manage_cursor_visual_system(
 
 /// System to update the visual cursor's position based on `CursorState` and `TextBufferCache`.
 fn update_cursor_transform_system(
-    mut focused_query: Query<(Entity, &CursorState, &TextBufferCache, &Transform), With<Focus>>, // Add Transform
+    focused_query: Query<(Entity, &CursorState, &TextBufferCache, &Transform), With<Focus>>, // Add Transform
     mut cursor_visual_query: Query<&mut Transform, (With<CursorVisual>, Without<Focus>)>,
     children_query: Query<&Children>,
     font_server_res: Res<FontServerResource>,
 ) {
-    if let Ok((focused_entity, cursor_state, text_cache, text_transform)) = focused_query.get_single() {
+    if let Ok((focused_entity, cursor_state, text_cache, _text_transform)) = focused_query.get_single() {
         // Find the child cursor entity
         let mut target_cursor_entity: Option<Entity> = None;
         if let Ok(children) = children_query.get(focused_entity) {
@@ -646,7 +643,6 @@ fn update_cursor_transform_system(
 
                             if found_glyph_pos {
                                 let local_x = current_x;
-                                let vertical_center_offset = (max_scaled_ascent + max_scaled_descent) / 2.0;
                                 let baseline_y_down = run.line_y;
                                 let descent_y_up = max_scaled_descent;
                                 let local_y_up = -baseline_y_down + descent_y_up + 8.0;
@@ -732,7 +728,7 @@ fn text_layout_system(
     // --- Loop through Entities with Text that has been updated ---
     for entity in entities_to_process {
         // Get the components for the specific entity
-        let Ok((text, transform, visibility)) = text_component_query.get(entity) else { // <-- Use renamed parameter
+        let Ok((text, _transform, visibility)) = text_component_query.get(entity) else { // <-- Use renamed parameter
             warn!("[text_layout_system] Could not find components for entity {:?} signaled for update.", entity);
             continue;
         };
@@ -831,10 +827,6 @@ fn text_layout_system(
                         let units_per_em = swash_metrics.units_per_em as f32;
 
                         if units_per_em == 0.0 { warn!("Units per em is 0 for font ID {:?}.", layout_glyph.font_id); continue; }
-
-                        let scale_factor = layout_glyph.font_size / units_per_em;
-                        // let ascent = swash_metrics.ascent * scale_factor; // Not needed for vertex calc
-                        // let descent = swash_metrics.descent * scale_factor; // Not needed for vertex calc
 
                         let relative_left_x = layout_glyph.x;
                         let relative_right_x = relative_left_x + width;
@@ -984,11 +976,6 @@ fn cleanup_trigger_system(world: &mut World) {
     }
     // --- <<< END WAIT IDLE >>> ---
 
-    // --- Get pool handle needed for cleanup BEFORE removing resources ---
-    let descriptor_pool_opt = world.get_resource::<RendererResource>()
-        .and_then(|res| res.0.lock().ok())
-        .map(|guard| guard.descriptor_pool);
-
     // --- Take ownership of resources by removing them from the world ---
     // These are now the actual Options containing the resources
     let renderer_res_opt: Option<RendererResource> = world.remove_resource::<RendererResource>();
@@ -1004,10 +991,6 @@ fn cleanup_trigger_system(world: &mut World) {
         match vk_context_res.0.lock() {
             Ok(mut vk_ctx_guard) => {
                 info!("Successfully locked VulkanContext Mutex (Core Plugin).");
-
-                // Get handles needed within this scope
-                let device_ref_opt = vk_ctx_guard.device.as_ref(); // Reference to device inside guard
-                let allocator_arc_opt = vk_ctx_guard.allocator.clone(); // Clone Arc<Allocator>
 
                 // --- 2. Cleanup Renderer (Destroys Pool, Shape Buffers, etc.) ---
                 if let Some(renderer_res) = renderer_res_opt { // Use the Option removed earlier

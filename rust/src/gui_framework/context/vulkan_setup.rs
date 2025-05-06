@@ -8,12 +8,12 @@ use std::sync::Arc;
 use vk_mem::Allocator;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use bevy_log::{error, warn, info}; // Use bevy logging for callback
+use bevy_log::{error, warn, info};
 
 // --- Debug Callback Function ---
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    _message_type: vk::DebugUtilsMessageTypeFlagsEXT,
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut c_void,
 ) -> vk::Bool32 {
@@ -110,7 +110,7 @@ pub fn setup_vulkan(app: &mut VulkanContext, window: &winit::window::Window) {
     // --- Create Debug Messenger (after instance, before device) ---
     #[cfg(debug_assertions)]
     {
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT {
+        let _debug_info = vk::DebugUtilsMessengerCreateInfoEXT {
             s_type: vk::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
             p_next: std::ptr::null(),
             flags: vk::DebugUtilsMessengerCreateFlagsEXT::empty(),

@@ -8,9 +8,8 @@ use crate::gui_framework::rendering::buffer_manager::BufferManager;
 use crate::gui_framework::rendering::resize_handler::ResizeHandler;
 use bevy_log::{warn, error, info};
 use crate::{RenderCommandData, VulkanContextResource, TextVertex, TextRenderingResources}; 
-use crate::gui_framework::components::{TextRenderData, TextLayoutOutput};
+use crate::gui_framework::components::{TextRenderData};
 use crate::gui_framework::plugins::core::TextLayoutInfo;
-use std::sync::Arc;
 use std::collections::HashMap;
 use bevy_ecs::entity::Entity;
 use bevy_math::Mat4;
@@ -100,7 +99,6 @@ impl Renderer {
         vk_context_res: &VulkanContextResource, // <-- Accept the resource
         width: u32,
         height: u32,
-        global_ubo_res: &GlobalProjectionUboResource,
     ) {
         // Prevent resizing to 0x0 which causes Vulkan errors
         if width == 0 || height == 0 {
@@ -380,7 +378,7 @@ impl Renderer {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 warn!("[Renderer::render] Swapchain out of date during acquire. Triggering resize.");
                 // Trigger resize explicitly - pass the resource
-                self.resize_renderer(vk_context_res, current_extent.width, current_extent.height, global_ubo_res);
+                self.resize_renderer(vk_context_res, current_extent.width, current_extent.height);
                 return; // Skip rest of the frame, resize will handle recreation
             }
             Err(e) => panic!("Failed to acquire swapchain image: {:?}", e),
@@ -393,8 +391,6 @@ impl Renderer {
         };
 
         // Update current_image
-        let width = platform_guard.current_swap_extent.width; // Get width/height for resize call below
-        let height = platform_guard.current_swap_extent.height;
         platform_guard.current_image = image_index as usize;
 
         // --- Re-Record Command Buffer for the acquired image index ---
@@ -456,13 +452,13 @@ impl Renderer {
                 if suboptimal {
                     warn!("[Renderer::render] Swapchain suboptimal during present.");
                     // Trigger resize explicitly - pass the resource
-                    self.resize_renderer(vk_context_res, current_extent.width, current_extent.height, global_ubo_res);
+                    self.resize_renderer(vk_context_res, current_extent.width, current_extent.height);
                 }
             }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 warn!("[Renderer::render] Swapchain out of date during present. Triggering resize.");
                 // Trigger resize explicitly - pass the resource
-                self.resize_renderer(vk_context_res, current_extent.width, current_extent.height, global_ubo_res);
+                self.resize_renderer(vk_context_res, current_extent.width, current_extent.height);
             }
             Err(e) => panic!("Failed to present swapchain image: {:?}", e),
         }

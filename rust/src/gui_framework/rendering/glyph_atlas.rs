@@ -33,9 +33,9 @@ pub struct GlyphAtlas {
     pub extent: vk::Extent2D,
     pub format: vk::Format,
     target_bins: BTreeMap<u32, TargetBin>,
-    padding: u32, // Padding between glyphs
+    _padding: u32, // Padding between glyphs
     glyph_cache: HashMap<CacheKey, GlyphInfo>, // Maps glyph key to its info
-    scale_context: ScaleContext,
+    _scale_context: ScaleContext,
 }
 
 impl GlyphAtlas {
@@ -120,7 +120,7 @@ impl GlyphAtlas {
         }.map_err(|e| format!("Failed to create glyph atlas sampler: {:?}", e))?;
 
         // Initialize swash scale context
-        let scale_context = ScaleContext::new();
+        let _scale_context = ScaleContext::new();
         // Initialize the target bin map
         let mut target_bins = BTreeMap::new();
         target_bins.insert(0, TargetBin::new(initial_extent.width, initial_extent.height, 1)); // Bin ID 0
@@ -135,9 +135,9 @@ impl GlyphAtlas {
             extent: initial_extent,
             format,
             target_bins,
-            padding: padding,
+            _padding: padding,
             glyph_cache: HashMap::new(),
-            scale_context,
+            _scale_context,
         })
     }
 
@@ -192,9 +192,6 @@ impl GlyphAtlas {
            Ok(pack_result) => {
                // packed_locations maps RectId (CacheKey) -> (BinId, PackedLocation)
                if let Some((_bin_id, packed_location)) = pack_result.packed_locations().get(&cache_key) {
-                    // Successfully packed! Get coordinates directly from PackedLocation methods.
-                    let packed_x_i32 = packed_location.x();
-                    let packed_y_i32 = packed_location.y();
                     // Log the raw coordinates returned by the packer
                     let pixel_x = packed_location.x() as u32;
                     let pixel_y = packed_location.y() as u32;

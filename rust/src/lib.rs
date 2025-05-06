@@ -1,4 +1,4 @@
-use bevy_ecs::prelude::{Entity, Resource};
+use bevy_ecs::prelude::Entity;
 use std::sync::{Arc, Mutex};
 use ash::vk;
 use bevy_reflect::Reflect;

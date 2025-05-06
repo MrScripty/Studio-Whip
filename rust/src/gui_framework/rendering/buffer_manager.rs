@@ -9,7 +9,6 @@ use crate::{Vertex, Color}; // Import Vertex and Color
 use crate::{PreparedDrawData, RenderCommandData}; // Import command/prepared data structs
 use crate::GlobalProjectionUboResource;
 use crate::gui_framework::rendering::shader_utils; // Keep shader_utils for loading the single shader set
-use std::mem; // Import mem for size_of
 use bevy_color::ColorToComponents;
 
 // Struct holding Vulkan resources specific to one entity

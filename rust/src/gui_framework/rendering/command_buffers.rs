@@ -1,12 +1,11 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::{PreparedDrawData, PreparedTextDrawData};
-use bevy_log::info; // Added for logging
 
 pub fn record_command_buffers(
     platform: &mut VulkanContext,
     prepared_shape_draws: &[PreparedDrawData],
-    prepared_text_draws: &[PreparedTextDrawData], // Use new prepared text data
+    prepared_text_draws: &[PreparedTextDrawData],
     extent: vk::Extent2D,
 ) {
     let device = platform.device.as_ref().expect("Device not available for command buffer recording");

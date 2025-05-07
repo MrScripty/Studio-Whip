@@ -4,6 +4,8 @@ use bevy_log::{error, info, warn};
 use bevy_math::Mat4;
 use std::{collections::HashMap, sync::Arc}; // Added Arc here
 use vk_mem::Alloc; // Corrected Alloc import
+use crate::gui_framework::context::vulkan_setup::set_debug_object_name;
+use ash::ext::debug_utils;
 
 use crate::{
     gui_framework::{
@@ -36,7 +38,8 @@ impl TextRenderer {
     pub fn prepare_text_draws(
         &mut self,
         device: &ash::Device,
-        allocator: &Arc<vk_mem::Allocator>, // Use Arc here
+        allocator: &Arc<vk_mem::Allocator>,
+        debug_device_ext: Option<&debug_utils::Device>,
         text_layout_infos: &[TextLayoutInfo],
         global_ubo_res: &GlobalProjectionUboResource,
         text_global_res: &TextRenderingResources,
@@ -176,6 +179,12 @@ impl TextRenderer {
                     let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
                     allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to create text vertex buffer")
                 };
+                #[cfg(debug_assertions)]
+                if let Some(debug_device_ext) = debug_device_ext { // Rename parameter for clarity
+                    let mem_handle = allocator.get_allocation_info(&vertex_alloc).device_memory;
+                    set_debug_object_name(debug_device_ext, vertex_buffer, vk::ObjectType::BUFFER, &format!("TextVertexBuffer_Entity{:?}", entity));
+                    set_debug_object_name(debug_device_ext, mem_handle, vk::ObjectType::DEVICE_MEMORY, &format!("TextVertexBuffer_Entity{:?}_Mem", entity));
+                }
                 unsafe {
                     let info = allocator.get_allocation_info(&vertex_alloc);
                     if info.mapped_data.is_null() { // Check if mapped_data is null
@@ -185,11 +194,17 @@ impl TextRenderer {
                     }
                 }
 
+                let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: std::mem::size_of::<Mat4>() as u64, usage: vk::BufferUsageFlags::UNIFORM_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
+                let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
                 let (transform_ubo, transform_alloc) = unsafe {
-                    let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: std::mem::size_of::<Mat4>() as u64, usage: vk::BufferUsageFlags::UNIFORM_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
-                    let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
-                    allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to create text transform UBO")
-                };
+                     allocator.create_buffer(&buffer_info, &allocation_info)
+                }.expect("Failed to create text transform UBO");
+                #[cfg(debug_assertions)]
+                if let Some(debug_device_ext) = debug_device_ext { // Rename parameter for clarity
+                    let mem_handle = allocator.get_allocation_info(&transform_alloc).device_memory;
+                    set_debug_object_name(debug_device_ext, transform_ubo, vk::ObjectType::BUFFER, &format!("TextTransformUBO_Entity{:?}", entity));
+                    set_debug_object_name(debug_device_ext, mem_handle, vk::ObjectType::DEVICE_MEMORY, &format!("TextTransformUBO_Entity{:?}_Mem", entity));
+                }
                 unsafe {
                     let info = allocator.get_allocation_info(&transform_alloc);
                     if info.mapped_data.is_null() { // Check if mapped_data is null

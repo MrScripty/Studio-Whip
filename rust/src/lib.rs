@@ -54,9 +54,9 @@ pub struct GlobalProjectionUboResource {
 // Managed by a dedicated system in core plugin.
 #[derive(bevy_ecs::prelude::Resource)]
 pub struct TextRenderingResources {
-    pub vertex_buffer: vk::Buffer, // REMOVED - Now per-entity
-    pub vertex_allocation: vk_mem::Allocation, // REMOVED - Now per-entity
-    pub vertex_buffer_capacity: u32, // REMOVED - Now per-entity
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_allocation: vk_mem::Allocation,
+    pub vertex_buffer_capacity: u32,
     pub pipeline: vk::Pipeline,
     pub atlas_descriptor_set: vk::DescriptorSet, // Single set pointing to the atlas texture/sampler
 }

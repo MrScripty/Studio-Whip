@@ -10,6 +10,7 @@ use cosmic_text::CacheKey;
 use rectangle_pack::{RectToInsert, GroupedRectsToPlace, TargetBin, pack_rects, volume_heuristic, contains_smallest_box, RectanglePackError};
 use std::collections::BTreeMap;
 use swash::scale::ScaleContext;
+use crate::gui_framework::context::vulkan_setup::set_debug_object_name;
 
 // Represents the location and UV coordinates of a single glyph within the atlas
 #[derive(Debug, Clone, Copy, Reflect)]
@@ -75,6 +76,14 @@ impl GlyphAtlas {
         let (image, allocation) = unsafe {
             allocator.create_image(&image_create_info, &allocation_create_info)
         }.map_err(|e| format!("Failed to create glyph atlas image: {:?}", e))?;
+        // --- NAME Atlas Image & Memory ---
+        #[cfg(debug_assertions)]
+        if let Some(debug_device_ext) = vk_context.debug_utils_device.as_ref() { // Get Device ext
+            let mem_handle = allocator.get_allocation_info(&allocation).device_memory;
+            set_debug_object_name(debug_device_ext, image, vk::ObjectType::IMAGE, "GlyphAtlasImage"); // Pass ext
+            set_debug_object_name(debug_device_ext, mem_handle, vk::ObjectType::DEVICE_MEMORY, "GlyphAtlasImage_Mem"); // Pass ext
+        }
+        // --- END NAME ---
 
         // --- Create Image View ---
         let image_view_create_info = vk::ImageViewCreateInfo {
@@ -145,9 +154,12 @@ impl GlyphAtlas {
     // Takes the swash::Image which contains the key, data, and placement info.
     pub fn add_glyph(
         &mut self,
-        vk_context: &VulkanContext, // Needed for upload
-        cache_key: CacheKey, // Pass the key separately
-        swash_image: &swash::scale::image::Image, // Pass the image data
+        device: &ash::Device, // Specific handles instead of full context
+        queue: vk::Queue,
+        command_pool: vk::CommandPool,
+        allocator: &Arc<vk_mem::Allocator>,
+        cache_key: CacheKey,
+        swash_image: &swash::scale::image::Image,
     ) -> Result<&GlyphInfo, String> {
 
         // 1. Check cache using the passed-in key
@@ -198,7 +210,10 @@ impl GlyphAtlas {
 
                     // --- 4. Upload Bitmap ---
                     self.upload_glyph_bitmap(
-                        vk_context,
+                        device, // Pass specific handles
+                        queue,
+                        command_pool,
+                        allocator,
                         pixel_x,
                         pixel_y,
                         width,
@@ -251,197 +266,194 @@ impl GlyphAtlas {
 
     // Helper function to upload glyph data using a staging buffer
     fn upload_glyph_bitmap(
-        &self, // Needs self only for image handle and extent
-        vk_context: &VulkanContext,
+        &self, // Needs self only for image handle
+        device: &ash::Device,
+        queue: vk::Queue,
+        command_pool: vk::CommandPool,
+        allocator: &Arc<vk_mem::Allocator>,
         x: u32,
         y: u32,
         width: u32,
         height: u32,
         bitmap_data: &[u8],
     ) -> Result<(), String> {
-        let device = vk_context.device.as_ref().ok_or("Device not available for upload")?;
-        let allocator = vk_context.allocator.as_ref().ok_or("Allocator not available for upload")?;
-        let queue = vk_context.queue.ok_or("Queue not available for upload")?;
-        let command_pool = vk_context.command_pool.ok_or("Command pool not available for upload")?;
-
         let buffer_size = (width * height) as vk::DeviceSize;
-        if buffer_size == 0 { return Ok(()); } // Nothing to upload
+        if buffer_size == 0 { return Ok(()); }
 
         // --- Create Staging Buffer ---
         let staging_buffer_create_info = vk::BufferCreateInfo {
-            s_type: vk::StructureType::BUFFER_CREATE_INFO,
-            size: buffer_size,
-            usage: vk::BufferUsageFlags::TRANSFER_SRC,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            ..Default::default()
+             s_type: vk::StructureType::BUFFER_CREATE_INFO,
+             size: buffer_size,
+             usage: vk::BufferUsageFlags::TRANSFER_SRC,
+             sharing_mode: vk::SharingMode::EXCLUSIVE,
+             ..Default::default()
         };
         let staging_allocation_create_info = AllocationCreateInfo {
-            usage: vk_mem::MemoryUsage::AutoPreferHost, // Host visible for mapping
-            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, // Create mapped
+            usage: vk_mem::MemoryUsage::AutoPreferHost,
+            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED,
             ..Default::default()
         };
 
-        let (staging_buffer, mut staging_allocation) = unsafe {
-            allocator.create_buffer(&staging_buffer_create_info, &staging_allocation_create_info)
-        }.map_err(|e| format!("Failed to create staging buffer: {:?}", e))?;
+        // Use Option to hold resources that need cleanup
+        let mut staging_buffer_opt: Option<vk::Buffer> = None;
+        let mut staging_allocation_opt: Option<vk_mem::Allocation> = None;
+        let mut cmd_buffer_opt: Option<vk::CommandBuffer> = None;
+        let mut fence_opt: Option<vk::Fence> = None;
 
-        // --- Copy data to staging buffer ---
-        let allocation_info = allocator.get_allocation_info(&staging_allocation);
-        let mapped_data_ptr = allocation_info.mapped_data;
-        if !mapped_data_ptr.is_null() {
-            unsafe {
-                // Ensure data size matches buffer size
-                if bitmap_data.len() as vk::DeviceSize != buffer_size {
-                    // Cleanup before erroring
-                    allocator.destroy_buffer(staging_buffer, &mut staging_allocation);
-                    return Err(format!(
-                        "Bitmap data size ({}) does not match staging buffer size ({})",
-                        bitmap_data.len(), buffer_size
-                    ));
+        // Use a block to scope the main logic and ensure cleanup runs
+        let result: Result<(), String> = (|| { // Start of closure block
+            let (staging_buffer, staging_allocation) = match unsafe {
+                allocator.create_buffer(&staging_buffer_create_info, &staging_allocation_create_info)
+            } {
+                Ok(pair) => pair,
+                Err(e) => return Err(format!("Failed to create staging buffer: {:?}", e)),
+            };
+            // Store handles in Option for cleanup
+            staging_buffer_opt = Some(staging_buffer);
+            staging_allocation_opt = Some(staging_allocation); // Allocation moved here
+
+            // --- Copy data to staging buffer ---
+            // Need to get allocation back mutably for destroy_buffer later
+            // We get it from the Option just before use, ensuring it exists
+            let current_staging_allocation = staging_allocation_opt.as_mut().unwrap(); // Safe unwrap as we just set it
+            let allocation_info = allocator.get_allocation_info(current_staging_allocation);
+            let mapped_data_ptr = allocation_info.mapped_data;
+
+            if !mapped_data_ptr.is_null() {
+                unsafe {
+                    if bitmap_data.len() as vk::DeviceSize != buffer_size {
+                        return Err(format!( // Error before flush
+                            "Bitmap data size ({}) does not match staging buffer size ({})",
+                            bitmap_data.len(), buffer_size
+                        ));
+                    }
+                    std::ptr::copy_nonoverlapping(bitmap_data.as_ptr(), mapped_data_ptr as *mut u8, bitmap_data.len());
                 }
-                // Cast the void pointer to a byte pointer before copying
-                std::ptr::copy_nonoverlapping(bitmap_data.as_ptr(), mapped_data_ptr as *mut u8, bitmap_data.len());
+                // Use the mutable reference obtained above for flush
+                if let Err(e) = allocator.flush_allocation(current_staging_allocation, 0, vk::WHOLE_SIZE) {
+                    return Err(format!("Failed to flush staging buffer allocation: {:?}", e));
+                }
+            } else {
+                return Err("Failed to get mapped pointer for staging buffer".to_string());
             }
-            // No need to flush if using HOST_COHERENT memory, but VMA might not guarantee that with AutoPreferHost.
-            // Explicit flush is safer.
-            allocator.flush_allocation(&staging_allocation, 0, vk::WHOLE_SIZE)
-                .map_err(|e| format!("Failed to flush staging buffer allocation: {:?}", e))?;
-        } else {
-            // Cleanup before erroring
-            unsafe { allocator.destroy_buffer(staging_buffer, &mut staging_allocation); }
-            return Err("Failed to get mapped pointer for staging buffer".to_string());
-        }
 
-        // --- Record and Submit Command Buffer ---
-        let cmd_buffer = unsafe {
-            let alloc_info = vk::CommandBufferAllocateInfo {
-                s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-                command_pool,
-                level: vk::CommandBufferLevel::PRIMARY,
-                command_buffer_count: 1,
-                ..Default::default()
+            // --- Record and Submit Command Buffer ---
+            let cmd_buffer = match unsafe {
+                 let alloc_info = vk::CommandBufferAllocateInfo {
+                     s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+                     command_pool,
+                     level: vk::CommandBufferLevel::PRIMARY,
+                     command_buffer_count: 1,
+                     ..Default::default()
+                 };
+                 device.allocate_command_buffers(&alloc_info)
+            } {
+                Ok(mut buffers) => buffers.remove(0),
+                Err(e) => return Err(format!("Failed to allocate command buffer: {:?}", e)),
             };
-            device.allocate_command_buffers(&alloc_info)
-                .map_err(|e| format!("Failed to allocate command buffer: {:?}", e))?
-                .remove(0) // Get the first allocated buffer
-        };
+            cmd_buffer_opt = Some(cmd_buffer); // Store for cleanup
 
+            unsafe { // Keep unsafe block for Vulkan calls
+                let begin_info = vk::CommandBufferBeginInfo {
+                    s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+                    flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                    ..Default::default()
+                };
+                device.begin_command_buffer(cmd_buffer, &begin_info)
+                    .map_err(|e| format!("Failed to begin command buffer: {:?}", e))?;
+
+                // 1. Transition Image Layout: Undefined -> TransferDstOptimal
+                let barrier_undefined_to_dst = vk::ImageMemoryBarrier {
+                    s_type: vk::StructureType::IMAGE_MEMORY_BARRIER,
+                    src_access_mask: vk::AccessFlags::NONE,
+                    dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                    old_layout: vk::ImageLayout::UNDEFINED,
+                    new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    image: self.image, // Use image from GlyphAtlas instance
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1,
+                    },
+                    ..Default::default()
+                };
+                device.cmd_pipeline_barrier(cmd_buffer, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[barrier_undefined_to_dst]);
+
+                // 2. Copy Buffer to Image
+                let region = vk::BufferImageCopy {
+                    buffer_offset: 0, buffer_row_length: 0, buffer_image_height: 0,
+                    image_subresource: vk::ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1,
+                    },
+                    image_offset: vk::Offset3D { x: x as i32, y: y as i32, z: 0 },
+                    image_extent: vk::Extent3D { width, height, depth: 1 },
+                };
+                // Use staging_buffer from Option
+                device.cmd_copy_buffer_to_image(cmd_buffer, staging_buffer_opt.unwrap(), self.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
+
+                // 3. Transition Image Layout: TransferDstOptimal -> ShaderReadOnlyOptimal
+                let barrier_dst_to_shader = vk::ImageMemoryBarrier {
+                    s_type: vk::StructureType::IMAGE_MEMORY_BARRIER,
+                    src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                    dst_access_mask: vk::AccessFlags::SHADER_READ,
+                    old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    image: self.image, // Use image from GlyphAtlas instance
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1,
+                    },
+                    ..Default::default()
+                };
+                device.cmd_pipeline_barrier(cmd_buffer, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[barrier_dst_to_shader]);
+
+                device.end_command_buffer(cmd_buffer)
+                    .map_err(|e| format!("Failed to end command buffer: {:?}", e))?;
+
+                // --- Submit ---
+                let fence = device.create_fence(&vk::FenceCreateInfo::default(), None)
+                    .map_err(|e| format!("Failed to create fence: {:?}", e))?;
+                fence_opt = Some(fence); // Store for cleanup
+
+                let submit_info = vk::SubmitInfo {
+                    s_type: vk::StructureType::SUBMIT_INFO,
+                    command_buffer_count: 1,
+                    p_command_buffers: &cmd_buffer,
+                    ..Default::default()
+                };
+                device.queue_submit(queue, &[submit_info], fence)
+                    .map_err(|e| format!("Failed to submit command buffer: {:?}", e))?;
+
+                // --- Wait ---
+                // Use fence from Option
+                device.wait_for_fences(&[fence_opt.unwrap()], true, u64::MAX)
+                     .map_err(|e| format!("Failed to wait for fence: {:?}", e))?;
+            } // End unsafe block
+
+            Ok(()) // Success
+        })(); // End of closure block
+
+        // --- Cleanup Section (Always runs) ---
         unsafe {
-            let begin_info = vk::CommandBufferBeginInfo {
-                s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
-                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-                ..Default::default()
-            };
-            device.begin_command_buffer(cmd_buffer, &begin_info)
-                .map_err(|e| format!("Failed to begin command buffer: {:?}", e))?;
-
-            // 1. Transition Image Layout: Undefined -> TransferDstOptimal
-            let barrier_undefined_to_dst = vk::ImageMemoryBarrier {
-                s_type: vk::StructureType::IMAGE_MEMORY_BARRIER,
-                src_access_mask: vk::AccessFlags::NONE, // No access needed before
-                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE, // Write access needed for copy
-                old_layout: vk::ImageLayout::UNDEFINED,
-                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                image: self.image,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            };
-            device.cmd_pipeline_barrier(
-                cmd_buffer,
-                vk::PipelineStageFlags::TOP_OF_PIPE, // Before any operation
-                vk::PipelineStageFlags::TRANSFER,    // Before the transfer stage
-                vk::DependencyFlags::empty(),
-                &[], // No memory barriers
-                &[], // No buffer barriers
-                &[barrier_undefined_to_dst],
-            );
-
-            // 2. Copy Buffer to Image
-            let region = vk::BufferImageCopy {
-                buffer_offset: 0,
-                buffer_row_length: 0, // Tightly packed
-                buffer_image_height: 0, // Tightly packed
-                image_subresource: vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_level: 0,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                image_offset: vk::Offset3D { x: x as i32, y: y as i32, z: 0 },
-                image_extent: vk::Extent3D { width, height, depth: 1 },
-            };
-            device.cmd_copy_buffer_to_image(
-                cmd_buffer,
-                staging_buffer,
-                self.image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL, // Layout must match barrier dest
-                &[region],
-            );
-
-            // 3. Transition Image Layout: TransferDstOptimal -> ShaderReadOnlyOptimal
-            let barrier_dst_to_shader = vk::ImageMemoryBarrier {
-                s_type: vk::StructureType::IMAGE_MEMORY_BARRIER,
-                src_access_mask: vk::AccessFlags::TRANSFER_WRITE, // Write access needed before
-                dst_access_mask: vk::AccessFlags::SHADER_READ,    // Read access needed by shader
-                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // Ready for sampling
-                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                image: self.image,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            };
-            device.cmd_pipeline_barrier(
-                cmd_buffer,
-                vk::PipelineStageFlags::TRANSFER,          // After the transfer stage
-                vk::PipelineStageFlags::FRAGMENT_SHADER, // Before the fragment shader reads it
-                vk::DependencyFlags::empty(),
-                &[], // No memory barriers
-                &[], // No buffer barriers
-                &[barrier_dst_to_shader],
-            );
-
-            device.end_command_buffer(cmd_buffer)
-                .map_err(|e| format!("Failed to end command buffer: {:?}", e))?;
-
-            // Submit command buffer
-            let submit_info = vk::SubmitInfo {
-                s_type: vk::StructureType::SUBMIT_INFO,
-                command_buffer_count: 1,
-                p_command_buffers: &cmd_buffer,
-                ..Default::default()
-            };
-            // Use a fence to wait for completion
-            let fence = device.create_fence(&vk::FenceCreateInfo::default(), None)
-                .map_err(|e| format!("Failed to create fence: {:?}", e))?;
-
-            device.queue_submit(queue, &[submit_info], fence)
-                .map_err(|e| format!("Failed to submit command buffer: {:?}", e))?;
-
-            // Wait for the fence (blocking)
-            device.wait_for_fences(&[fence], true, u64::MAX)
-                .map_err(|e| format!("Failed to wait for fence: {:?}", e))?;
-
-            // Cleanup
-            device.destroy_fence(fence, None);
-            device.free_command_buffers(command_pool, &[cmd_buffer]);
-            allocator.destroy_buffer(staging_buffer, &mut staging_allocation);
+            if let Some(fence) = fence_opt {
+                device.destroy_fence(fence, None);
+            }
+            if let Some(cmd_buffer) = cmd_buffer_opt {
+                // Check if command_pool is valid before freeing
+                // (It was passed in, so should be valid unless app state is very wrong)
+                device.free_command_buffers(command_pool, &[cmd_buffer]);
+            }
+            // Use if let Some pattern to consume the Option and get mutable access
+            if let (Some(buffer), Some(mut allocation)) = (staging_buffer_opt.take(), staging_allocation_opt.take()) {
+                // Allocation was moved into Option, destroy it here
+                allocator.destroy_buffer(buffer, &mut allocation);
+            }
         }
-        Ok(())
+
+        result // Return the result from the closure block
     }
 
     // Cleanup Vulkan resources
@@ -461,7 +473,8 @@ impl GlyphAtlas {
             device.destroy_image_view(self.image_view, None);
             // Take ownership of allocation before destroying image
             if let Some(mut alloc) = self.allocation.take() {
-                allocator.destroy_image(self.image, &mut alloc); // Pass &mut alloc
+                //info!("[GlyphAtlas::cleanup] Destroying atlas image {:?} and allocation...", self.image);
+                allocator.destroy_image(self.image, &mut alloc); // Destroys image and frees memory via vk-mem
             } else {
                 error!("[GlyphAtlas::cleanup] Allocation was already taken or None!");
                 // Maybe destroy image anyway? Or just log?

@@ -1,6 +1,7 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
-use crate::gui_framework::rendering::swapchain::{create_swapchain, create_framebuffers};
+use crate::gui_framework::rendering::swapchain::create_swapchain;
+use crate::gui_framework::rendering::swapchain::create_framebuffers;
 // Removed direct import of cleanup_swapchain_resources, it's called by ResizeHandler
 use crate::gui_framework::rendering::command_buffers::record_command_buffers;
 use crate::gui_framework::rendering::text_renderer::TextRenderer;
@@ -56,12 +57,12 @@ impl Renderer {
         }
 
         // Create swapchain (populates VulkanContext swapchain fields)
-        let surface_format = create_swapchain(platform, extent);
+        let surface_format = create_swapchain(platform, extent); // We need surface_format now
         info!("[Renderer::new] Swapchain created.");
 
-        // Create framebuffers (populates VulkanContext framebuffer fields AND VulkanContext command buffer fields)
+        // Explicitly call create_framebuffers AFTER swapchain and its dependencies are set up
         create_framebuffers(platform, surface_format);
-        info!("[Renderer::new] Framebuffers and command buffers created. platform.command_buffers len: {}", platform.command_buffers.len());
+        info!("[Renderer::new] Framebuffers and command buffers created via explicit call.");
     
         // Create PipelineManager temporarily to get layout/pool
         let pipeline_mgr = PipelineManager::new(platform);
@@ -150,7 +151,7 @@ impl Renderer {
         shape_commands: &[RenderCommandData],
         text_layout_infos: &[TextLayoutInfo],
         global_ubo_res: &GlobalProjectionUboResource,
-        text_global_res: &TextRenderingResources,
+        text_global_res: Option<&TextRenderingResources>, // TEMP: Accept Option
     ) {
         // --- Get essential handles that are relatively stable or cloneable ---
         // These are fetched once to avoid repeated locking if possible.
@@ -238,13 +239,21 @@ impl Renderer {
             )
         }; // bm_guard dropped here
 
-        let prepared_text_draws = self.text_renderer.prepare_text_draws(
-            &device, // Pass cloned device
-            &allocator_arc, // Pass cloned allocator
-            text_layout_infos,
-            global_ubo_res,
-            text_global_res,
-        );
+        let prepared_text_draws = match text_global_res { // Match the Option<&...> directly
+            Some(text_res) => { // text_res is &TextRenderingResources here
+                // Get debug device extension struct reference from locked context guard
+                let debug_device_ext = platform_guard.debug_utils_device.as_ref(); // Get Option<&Device>
+                self.text_renderer.prepare_text_draws(
+                    &device, // Pass base device
+                    &allocator_arc,
+                    debug_device_ext, // Pass the Option<&Device>
+                    text_layout_infos,
+                    global_ubo_res,
+                    text_res, // Pass the unwrapped &TextRenderingResources
+                )
+            }
+            None => Vec::new(), // Return empty if no text resources
+        };
 
         // --- 5. Reset and Record Command Buffer ---
         let current_command_buffer = platform_guard.command_buffers[platform_guard.current_image];
@@ -261,13 +270,14 @@ impl Renderer {
         );
 
         // --- 6. Submit Queue ---
-        let wait_semaphores = [image_available_semaphore];
-        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let signal_semaphores = [render_finished_semaphore];
+        let wait_semaphores = [image_available_semaphore]; // Semaphore to wait on
+        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT]; // Stage to wait at
+        let signal_semaphores = [render_finished_semaphore]; // Semaphore to signal when done
         let submit_info = vk::SubmitInfo {
             s_type: vk::StructureType::SUBMIT_INFO,
-            p_wait_semaphores: wait_semaphores.as_ptr(),
-            p_wait_dst_stage_mask: wait_stages.as_ptr(),
+            wait_semaphore_count: wait_semaphores.len() as u32, // Set wait semaphore count
+            p_wait_semaphores: wait_semaphores.as_ptr(),        // Point to wait semaphore
+            p_wait_dst_stage_mask: wait_stages.as_ptr(),        // Point to wait stages
             command_buffer_count: 1,
             p_command_buffers: &current_command_buffer,
             signal_semaphore_count: signal_semaphores.len() as u32,
@@ -329,7 +339,7 @@ impl Renderer {
         // Ensure GPU is idle before destroying anything
         unsafe { device.device_wait_idle().unwrap(); }
 
-        // --- Cleanup TextRenderer (which cleans its cached resources) ---
+        // --- Cleanup TextRenderer
         let allocator_arc_for_text_cleanup = platform.allocator.clone().expect("Allocator missing for text renderer cleanup");
         self.text_renderer.cleanup(&device, &allocator_arc_for_text_cleanup);
         info!("[Renderer::cleanup] TextRenderer cleanup called.");

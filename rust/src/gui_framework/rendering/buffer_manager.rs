@@ -11,6 +11,7 @@ use crate::GlobalProjectionUboResource;
 use crate::gui_framework::rendering::shader_utils; // Keep shader_utils for loading the single shader set
 use bevy_color::ColorToComponents;
 use std::sync::Arc;
+use crate::gui_framework::context::vulkan_setup::set_debug_object_name;
 
 // Struct holding Vulkan resources specific to one entity
 struct EntityRenderResources {
@@ -84,18 +85,37 @@ impl BufferManager {
             if !self.entity_resources.contains_key(&entity_id) {
                 entity_existed = false;
                 let vertex_count = command.vertices.len();
-                let vertex_buffer_size = (std::mem::size_of::<Vertex>() * vertex_count) as u64;
+                let vertex_buffer_size = (std::mem::size_of::<Vertex>() * vertex_count) as u64; // Now used
 
                 // 1. Create Vertex Buffer & Copy Data
                 let (vertex_buffer, vertex_allocation) = unsafe {
-                    let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: vertex_buffer_size, usage: vk::BufferUsageFlags::VERTEX_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
-                    let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
+                    let buffer_info = vk::BufferCreateInfo {
+                        s_type: vk::StructureType::BUFFER_CREATE_INFO,
+                        size: vertex_buffer_size, // <-- Use correct size
+                        usage: vk::BufferUsageFlags::VERTEX_BUFFER, // <-- Use correct usage
+                        sharing_mode: vk::SharingMode::EXCLUSIVE,
+                        ..Default::default()
+                    };
+                    let allocation_info = vk_mem::AllocationCreateInfo {
+                        flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED,
+                        usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                        ..Default::default()
+                    };
                     allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to create vertex buffer")
                 };
+                // --- NAME Vertex Buffer & Memory ---
+                #[cfg(debug_assertions)]
+                if let Some(debug_device_ext) = platform.debug_utils_device.as_ref() { // Get Device ext
+                    let mem_handle = allocator.get_allocation_info(&vertex_allocation).device_memory;
+                    set_debug_object_name(debug_device_ext, vertex_buffer, vk::ObjectType::BUFFER, &format!("ShapeVertexBuffer_Entity{:?}", entity_id)); // Pass ext
+                    set_debug_object_name(debug_device_ext, mem_handle, vk::ObjectType::DEVICE_MEMORY, &format!("ShapeVertexBuffer_Entity{:?}_Mem", entity_id)); // Pass ext
+                }
+                // --- END NAME ---
                 unsafe {
                     let info = allocator.get_allocation_info(&vertex_allocation); assert!(!info.mapped_data.is_null(), "Vertex allocation should be mapped");
                     info.mapped_data.cast::<Vertex>().copy_from_nonoverlapping(command.vertices.as_ptr(), vertex_count);
                 }
+
 
                 // 2. Create Offset Uniform Buffer & Copy Data
                 let (offset_uniform, offset_allocation) = unsafe {
@@ -103,6 +123,15 @@ impl BufferManager {
                     let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
                     allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to create offset uniform buffer")
                 };
+                 // --- NAME Offset UBO & Memory ---
+                 #[cfg(debug_assertions)]
+                 if let Some(debug_device_ext) = platform.debug_utils_device.as_ref() { // Get Device ext
+                     let mem_handle = allocator.get_allocation_info(&offset_allocation).device_memory;
+                     set_debug_object_name(debug_device_ext, offset_uniform, vk::ObjectType::BUFFER, &format!("ShapeOffsetUBO_Entity{:?}", entity_id)); // Pass ext
+                     set_debug_object_name(debug_device_ext, mem_handle, vk::ObjectType::DEVICE_MEMORY, &format!("ShapeOffsetUBO_Entity{:?}_Mem", entity_id)); // Pass ext
+                 }
+ 
+                // --- END NAME ---
                 unsafe {
                     let info = allocator.get_allocation_info(&offset_allocation);
                     if !info.mapped_data.is_null() { info.mapped_data.cast::<f32>().copy_from_nonoverlapping(command.transform_matrix.to_cols_array().as_ptr(), 16); }

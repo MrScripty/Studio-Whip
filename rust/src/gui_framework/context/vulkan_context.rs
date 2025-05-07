@@ -42,6 +42,7 @@ pub struct VulkanContext {
     // --- Debug Messenger Fields ---
     pub debug_utils_loader: Option<debug_utils::Instance>,
     pub debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
+    pub debug_utils_device: Option<debug_utils::Device>,
 }
 
 impl VulkanContext {
@@ -82,6 +83,7 @@ impl VulkanContext {
             // --- Debug Messenger Fields ---
             debug_utils_loader: None,
             debug_messenger: None,
+            debug_utils_device: None,
         }
     }
 }

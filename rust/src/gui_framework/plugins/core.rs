@@ -18,6 +18,7 @@ use bevy_hierarchy::{BuildChildren, DespawnRecursiveExt, Children, Parent};
 use bevy_core::Name;
 use crate::gui_framework::plugins::interaction::InteractionSet;
 use crate::BufferManagerResource;
+use crate::gui_framework::context::vulkan_setup::set_debug_object_name;
 
 // Import types from the crate root (lib.rs)
 use crate::{
@@ -283,8 +284,16 @@ fn create_global_ubo_system(
             ..Default::default()
         };
         allocator.create_buffer(&buffer_info, &allocation_info)
-                 .expect("Global UBO buffer creation failed")
+        .expect("Global UBO buffer creation failed")
     };
+    // --- NAME Global UBO & Memory ---
+    #[cfg(debug_assertions)]
+    if let Some(debug_device_ext) = vk_ctx_guard.debug_utils_device.as_ref() { // Get Device ext
+        let mem_handle = allocator.get_allocation_info(&allocation).device_memory;
+        set_debug_object_name(debug_device_ext, buffer, vk::ObjectType::BUFFER, "GlobalProjectionUBO"); // Pass ext
+        set_debug_object_name(debug_device_ext, mem_handle, vk::ObjectType::DEVICE_MEMORY, "GlobalProjectionUBO_Mem"); // Pass ext
+    }
+    // --- END NAME ---
 
     // 2. Allocate Descriptor Set (using per-entity layout)
     let set_layouts = [renderer_guard.descriptor_set_layout]; // This is now per_entity_layout
@@ -401,8 +410,15 @@ fn create_text_rendering_resources_system(
         let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
         allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to create initial text vertex buffer")
     };
+    // --- NAME Shared Text VB & Memory ---
+    #[cfg(debug_assertions)]
+    if let Some(debug_device_ext) = vk_ctx_guard.debug_utils_device.as_ref() { // Get Device ext
+        let mem_handle = allocator.get_allocation_info(&vertex_allocation).device_memory;
+        set_debug_object_name(debug_device_ext, vertex_buffer, vk::ObjectType::BUFFER, "SharedTextVertexBuffer"); // Pass ext
+        set_debug_object_name(debug_device_ext, mem_handle, vk::ObjectType::DEVICE_MEMORY, "SharedTextVertexBuffer_Mem"); // Pass ext
+    }
+    // --- END NAME ---
     info!("[create_text_rendering_resources_system] Initial text vertex buffer created (Capacity: {} vertices, Size: {} bytes)", initial_text_capacity, buffer_size);
-
     // 2. Create Text Graphics Pipeline (Shared)
     let text_pipeline = unsafe {
         let render_pass = vk_ctx_guard.render_pass.expect("Render pass missing");
@@ -638,7 +654,7 @@ fn update_cursor_transform_system(
                 // Try to use the buffer for precise positioning
                 if let Some(buffer) = text_cache.buffer.as_ref() {
                     let Ok(mut font_server) = font_server_res.0.lock() else {
-                        error!("Failed to lock FontServer in update_cursor_transform_system");
+                        error!("[update_cursor_transform_system] Failed to lock FontServerResource. Skipping cursor update.");
                         return;
                     };
                     let line_index = cursor_state.line;
@@ -747,21 +763,49 @@ fn text_layout_system(
     swash_cache_res: Res<SwashCacheResource>,
     vk_context_res: Res<VulkanContextResource>,
 ) {
-    // Lock resources once at the beginning
+    // Lock non-Vulkan resources first
     let Ok(mut font_server) = font_server_res.0.lock() else {
-        error!("[text_layout_system] Failed to lock FontServerResource");
-        return;
-    };
-    let Ok(mut glyph_atlas) = glyph_atlas_res.0.lock() else {
-        error!("[text_layout_system] Failed to lock GlyphAtlasResource");
+        error!("[text_layout_system] Failed to lock FontServerResource. Skipping text layout.");
         return;
     };
     let Ok(mut swash_cache) = swash_cache_res.0.lock() else {
-        error!("[text_layout_system] Failed to lock SwashCacheResource");
+        error!("[text_layout_system] Failed to lock SwashCacheResource. Skipping text layout.");
         return;
     };
-    let Ok(vk_context) = vk_context_res.0.lock() else {
-        error!("[text_layout_system] Failed to lock VulkanContextResource");
+
+    // Determine which entities need processing (copied from original)
+    let mut entities_to_process: HashSet<Entity> = HashSet::new();
+    for event in event_reader.read() { entities_to_process.insert(event.entity); }
+    for entity in new_text_component_query.iter() { entities_to_process.insert(entity); }
+    if entities_to_process.is_empty() { return; }
+
+    // Now, if there are entities to process, get Vulkan handles.
+    // This lock is held only to get the handles.
+    let (device_clone, queue_opt, command_pool_opt, allocator_clone_opt) = {
+        match vk_context_res.0.lock() {
+            Ok(vk_guard) => (
+                vk_guard.device.as_ref().map(|d| d.clone()),
+                vk_guard.queue,
+                vk_guard.command_pool,
+                vk_guard.allocator.as_ref().map(|a| a.clone()),
+            ),
+            Err(_) => {
+                error!("[text_layout_system] Failed to lock VulkanContextResource to get handles. Skipping text layout.");
+                return;
+            }
+        }
+    };
+
+    // Ensure all necessary Vulkan handles were successfully retrieved
+    let (Some(device), Some(queue), Some(command_pool), Some(allocator)) =
+        (device_clone, queue_opt, command_pool_opt, allocator_clone_opt) else {
+        error!("[text_layout_system] One or more essential Vulkan handles (device, queue, command_pool, allocator) are None. Skipping text layout.");
+        return;
+    };
+
+    // Lock GlyphAtlas for the duration of processing entities that need glyphs
+    let Ok(mut glyph_atlas) = glyph_atlas_res.0.lock() else {
+        error!("[text_layout_system] Failed to lock GlyphAtlasResource. Skipping text layout.");
         return;
     };
 
@@ -865,7 +909,15 @@ fn text_layout_system(
                     continue;
                 };
 
-                let add_result = glyph_atlas.add_glyph(&vk_context, cache_key, &swash_image);
+                // Pass individual handles to add_glyph
+                let add_result = glyph_atlas.add_glyph(
+                    &device,
+                    queue,
+                    command_pool,
+                    &allocator,
+                    cache_key,
+                    &swash_image
+                );
 
                 match add_result {
                     Ok(glyph_info_ref) => {
@@ -951,16 +1003,14 @@ fn rendering_system(
     // Query for text entities that have layout output ready
     text_layout_query: Query<(Entity, &GlobalTransform, &TextLayoutOutput, &Visibility)>, // Query layout output
 ) {
-    // Ensure all required resources are available
+    // Ensure essential non-text resources are available
     let (
         Some(renderer_res),
         Some(vk_context_res),
         Some(buffer_manager_res),
         Some(global_ubo_res),
-        Some(text_res) // Get global text resources
-    ) = (renderer_res_opt, vk_context_res_opt, buffer_manager_res_opt, global_ubo_res_opt, text_res_opt) else {
-        // Warn if resources aren't ready yet (might happen briefly at startup/shutdown)
-        warn!("[rendering_system] Required resources not available. Skipping render.");
+    ) = (renderer_res_opt, vk_context_res_opt, buffer_manager_res_opt, global_ubo_res_opt) else {
+        warn!("[rendering_system] Required non-text resources not available. Skipping render.");
         return;
     };
 
@@ -1004,10 +1054,10 @@ fn rendering_system(
         renderer_guard.render(
             &vk_context_res,
             &buffer_manager_res,
-            &shape_render_commands, // Pass slice directly
-            &text_layout_infos,
+            &shape_render_commands,
+            &text_layout_infos, // Still empty if text_layout_system disabled
             &global_ubo_res,
-            &text_res,
+            text_res_opt.as_deref(), // Pass Option<&TextRenderingResources>
         );
         // Guard dropped here
     } else {
@@ -1084,33 +1134,55 @@ fn cleanup_trigger_system(world: &mut World) {
                 let allocator_arc_opt = vk_ctx_guard.allocator.clone();
 
                 if let (Some(device), Some(allocator)) = (device_ref_opt, allocator_arc_opt.as_ref()) {
-                    if let Some(text_res) = text_rendering_res_opt { // Removed mut
+                    // --- Cleanup TextRenderingResources ---
+                    if let Some(mut text_res) = text_rendering_res_opt {
+                        info!("[Cleanup] Cleaning up TextRenderingResources...");
                         unsafe {
                             if text_res.pipeline != vk::Pipeline::null() {
                                 device.destroy_pipeline(text_res.pipeline, None);
+                                info!("[Cleanup] Destroyed text pipeline.");
+                            } else {
+                                info!("[Cleanup] TextRenderingResources pipeline handle was null.");
                             }
-                            // Vertex buffer and allocation for TextRenderingResources were removed
-                            // as they are now per-entity in TextRenderer
+                            if text_res.vertex_buffer != vk::Buffer::null() {
+                                allocator.destroy_buffer(text_res.vertex_buffer, &mut text_res.vertex_allocation);
+                                info!("[Cleanup] Destroyed TextRenderingResources shared vertex buffer and allocation.");
+                            } else {
+                                info!("[Cleanup] TextRenderingResources vertex_buffer handle was null, skipping destroy.");
+                            }
                         }
-                    } else { info!("TextRenderingResources not found (Core Plugin)."); }
+                    } else { info!("[Cleanup] TextRenderingResources not found (Core Plugin)."); }
 
+                    // --- Cleanup GlobalProjectionUboResource (Processed ONCE) ---
                     if let Some(mut global_ubo_res) = global_ubo_res_opt {
-                        unsafe {
-                            allocator.destroy_buffer(global_ubo_res.buffer, &mut global_ubo_res.allocation);
+                         info!("[Cleanup] Cleaning up GlobalProjectionUboResource...");
+                        if global_ubo_res.buffer != vk::Buffer::null() {
+                            unsafe {
+                                allocator.destroy_buffer(global_ubo_res.buffer, &mut global_ubo_res.allocation);
+                                info!("[Cleanup] Destroyed global UBO buffer and allocation.");
+                            }
+                        } else {
+                             info!("[Cleanup] Global UBO buffer handle was null, skipping destroy.");
                         }
-                    } else { info!("GlobalProjectionUboResource not found (Core Plugin)."); }
+                    } else { info!("[Cleanup] GlobalProjectionUboResource not found (Core Plugin)."); }
 
+                    // --- Cleanup GlyphAtlasResource ---
                     if let Some(atlas_res) = glyph_atlas_res_opt {
                          match atlas_res.0.lock() {
                             Ok(mut atlas_guard) => {
                                 atlas_guard.cleanup(&vk_ctx_guard);
                             }
-                            Err(poisoned) => error!("GlyphAtlas Mutex poisoned: {:?}", poisoned),
+                            Err(poisoned) => error!("GlyphAtlas Mutex poisoned during cleanup: {:?}", poisoned),
                         }
-                    } else { info!("GlyphAtlas resource not found (Core Plugin)."); }
+                    } else { info!("[Cleanup] GlyphAtlas resource not found (Core Plugin)."); }
+                } else {
+                    // This case means device or allocator was not available from vk_ctx_guard
+                    error!("[Cleanup] Device or Allocator not available from VulkanContext for resource cleanup. Skipping dependent cleanups.");
+                    // Log if resources existed but couldn't be cleaned
+                    if text_rendering_res_opt.is_some() { info!("[Cleanup] TextRenderingResources existed but cannot be cleaned up due to missing Vulkan device/allocator."); }
+                    if global_ubo_res_opt.is_some() { info!("[Cleanup] GlobalProjectionUboResource existed but cannot be cleaned up due to missing Vulkan device/allocator."); }
+                    if glyph_atlas_res_opt.is_some() { info!("[Cleanup] GlyphAtlasResource existed but cannot be cleaned up due to missing Vulkan device/allocator."); }
                 }
-
-
                 // --- Cleanup Vulkan Context (Instance, Device, Allocator, etc.) ---
                 cleanup_vulkan(&mut vk_ctx_guard);
             }

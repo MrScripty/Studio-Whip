@@ -15,7 +15,8 @@ impl ResizeHandler {
         let device = vulkan_context.device.as_ref().expect("Device not available for resize").clone(); // Clone device handle
 
         // Wait for device to be idle before destroying/recreating resources
-        unsafe { device.device_wait_idle().unwrap(); }
+        unsafe { device.device_wait_idle().expect("Failed to wait for device idle during resize"); }
+
 
         // --- Perform operations requiring mutable access to vulkan_context ---
 

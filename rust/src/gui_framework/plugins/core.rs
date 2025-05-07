@@ -14,10 +14,10 @@ use cosmic_text::{Attrs, Shaping, SwashCache, Wrap, Color as CosmicColor, Font, 
 use swash::FontRef;
 use vk_mem::Alloc;
 use yrs::{Transact, GetString, TextRef};
-use crate::gui_framework::components::{CursorState, CursorVisual};
 use bevy_hierarchy::{BuildChildren, DespawnRecursiveExt, Children, Parent};
 use bevy_core::Name;
 use crate::gui_framework::plugins::interaction::InteractionSet;
+use crate::BufferManagerResource;
 
 // Import types from the crate root (lib.rs)
 use crate::{
@@ -34,7 +34,7 @@ use crate::gui_framework::{
     rendering::render_engine::Renderer,
     rendering::glyph_atlas::GlyphAtlas,
     rendering::font_server::FontServer,
-    components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph, TextBufferCache, TextSelection, Focus, Interaction},
+    components::{ShapeData, Visibility, Text, FontId, TextAlignment, TextLayoutOutput, PositionedGlyph, TextBufferCache, TextSelection, Focus, Interaction, CursorVisual, CursorState},
     rendering::shader_utils,
 };
 
@@ -54,15 +54,16 @@ pub enum CoreSet {
     CreateTextResources,    // Create text Vulkan resources (needs Renderer, Atlas)
 
     // Update sequence
+    ApplyUpdateCommands,    // Apply commands from layout/cursor systems before rendering
     HandleResize,           // Handle window resize events, update global UBO
     ApplyInputCommands,     // Apply commands from input/focus/cursor systems before layout/positioning
     TextLayout,             // Perform text layout using cosmic-text
     ManageCursorVisual,     // Spawn/despawn cursor visual based on Focus
     UpdateCursorTransform,  // Update cursor visual position based on state/layout
-    ApplyUpdateCommands,    // Apply commands from layout/cursor systems before rendering
 
 
     // Last sequence
+    PreRenderCleanup,       // New set for despawn cleanup before rendering
     Render,                 // Perform rendering using prepared data
     Cleanup,                // Cleanup resources on AppExit
 }
@@ -122,6 +123,7 @@ impl Plugin for GuiFrameworkCorePlugin {
                 CoreSet::UpdateCursorTransform.after(CoreSet::TextLayout),
                 // Handle resize last in the main chain
                 CoreSet::HandleResize.after(CoreSet::UpdateCursorTransform), // Should run after cursor transform
+                CoreSet::PreRenderCleanup.after(CoreSet::HandleResize),
             ).chain()) // Chain these sets to enforce the order
             .add_systems(Update, ( // Ensure 'app' is used here
                 handle_resize_system.in_set(CoreSet::HandleResize),
@@ -131,12 +133,13 @@ impl Plugin for GuiFrameworkCorePlugin {
                 update_cursor_transform_system.in_set(CoreSet::UpdateCursorTransform),
                 // Add apply_deferred to run in the ApplyInputCommands set
                 apply_deferred.in_set(CoreSet::ApplyInputCommands),
+                buffer_manager_despawn_cleanup_system.in_set(CoreSet::PreRenderCleanup),
             )); // Semicolon needed after add_systems
 
             // == Last Schedule Systems ==
             // Configure the relationship between the Render and Cleanup sets in the Last schedule
             app.configure_sets(Last, ( // Ensure 'app' is used here
-                CoreSet::Render,
+                CoreSet::Render.after(CoreSet::PreRenderCleanup), // Ensure Render is after PreRenderCleanup if it was in Update
                 CoreSet::Cleanup.after(CoreSet::Render), // Cleanup runs after Render
             ))
             // Add Rendering System (runs late)
@@ -177,10 +180,64 @@ fn create_renderer_system(
 
     let mut vk_ctx_guard = vk_context_res.0.lock().expect("Failed to lock VulkanContext for renderer creation");
 
-    let renderer_instance = Renderer::new(&mut vk_ctx_guard, extent);
+    let renderer_instance = Renderer::new(&mut commands, &mut vk_ctx_guard, extent);
 
     let renderer_arc = Arc::new(Mutex::new(renderer_instance));
     commands.insert_resource(RendererResource(renderer_arc.clone()));
+}
+
+fn buffer_manager_despawn_cleanup_system(
+    mut removed_shapes: RemovedComponents<ShapeData>,
+    mut removed_cursors: RemovedComponents<CursorVisual>,
+    buffer_manager_res_opt: Option<Res<BufferManagerResource>>,
+    vk_context_res_opt: Option<Res<VulkanContextResource>>,
+) {
+    let (Some(buffer_manager_res), Some(vk_context_res)) = (buffer_manager_res_opt, vk_context_res_opt) else {
+        // warn!("[BufferManagerCleanup] Missing BufferManagerResource or VulkanContextResource. Skipping cleanup.");
+        return;
+    };
+
+    let mut entities_to_cleanup: HashSet<Entity> = HashSet::new();
+    for entity in removed_shapes.read() { // Use .read() to get iterator
+        entities_to_cleanup.insert(entity); // The iterator yields Entity directly
+    }
+    for entity in removed_cursors.read() { // Use .read() to get iterator
+        // CursorVisual entities also use ShapeData, so their resources are managed by BufferManager
+        // if they were added to it. This ensures we catch cursors specifically.
+        entities_to_cleanup.insert(entity); // The iterator yields Entity directly
+    }
+
+    if entities_to_cleanup.is_empty() {
+        return;
+    }
+
+    let mut bm_guard = match buffer_manager_res.0.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            error!("[BufferManagerCleanup] Failed to lock BufferManagerResource.");
+            return;
+        }
+    };
+    let vk_guard = match vk_context_res.0.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            error!("[BufferManagerCleanup] Failed to lock VulkanContextResource.");
+            return;
+        }
+    };
+
+    let Some(device) = vk_guard.device.as_ref() else {
+        error!("[BufferManagerCleanup] Vulkan device not available.");
+        return;
+    };
+    let Some(allocator) = vk_guard.allocator.as_ref() else {
+        error!("[BufferManagerCleanup] Vulkan allocator not available.");
+        return;
+    };
+
+    for entity in entities_to_cleanup {
+        (*bm_guard).remove_entity_resources(entity, device, allocator);
+    }
 }
 
 fn create_global_ubo_system(
@@ -884,6 +941,7 @@ fn rendering_system(
     // Resources needed for rendering
     renderer_res_opt: Option<ResMut<RendererResource>>,
     vk_context_res_opt: Option<Res<VulkanContextResource>>,
+    buffer_manager_res_opt: Option<Res<BufferManagerResource>>,
     global_ubo_res_opt: Option<Res<GlobalProjectionUboResource>>,
     text_res_opt: Option<Res<TextRenderingResources>>, // Still need pipeline/atlas set
 
@@ -897,9 +955,10 @@ fn rendering_system(
     let (
         Some(renderer_res),
         Some(vk_context_res),
+        Some(buffer_manager_res),
         Some(global_ubo_res),
         Some(text_res) // Get global text resources
-    ) = (renderer_res_opt, vk_context_res_opt, global_ubo_res_opt, text_res_opt) else {
+    ) = (renderer_res_opt, vk_context_res_opt, buffer_manager_res_opt, global_ubo_res_opt, text_res_opt) else {
         // Warn if resources aren't ready yet (might happen briefly at startup/shutdown)
         warn!("[rendering_system] Required resources not available. Skipping render.");
         return;
@@ -944,6 +1003,7 @@ fn rendering_system(
     if let Some(mut renderer_guard) = renderer_guard_opt {
         renderer_guard.render(
             &vk_context_res,
+            &buffer_manager_res,
             &shape_render_commands, // Pass slice directly
             &text_layout_infos,
             &global_ubo_res,
@@ -979,80 +1039,80 @@ fn cleanup_trigger_system(world: &mut World) {
     // --- Take ownership of resources by removing them from the world ---
     // These are now the actual Options containing the resources
     let renderer_res_opt: Option<RendererResource> = world.remove_resource::<RendererResource>();
+    let buffer_manager_res_opt: Option<BufferManagerResource> = world.remove_resource::<BufferManagerResource>(); 
     let vk_context_res_opt: Option<VulkanContextResource> = world.remove_resource::<VulkanContextResource>();
-    let text_rendering_res_opt: Option<TextRenderingResources> = world.remove_resource::<TextRenderingResources>(); // Keep this name
-    let global_ubo_res_opt: Option<GlobalProjectionUboResource> = world.remove_resource::<GlobalProjectionUboResource>(); // Keep this name
-    let glyph_atlas_res_opt: Option<GlyphAtlasResource> = world.remove_resource::<GlyphAtlasResource>(); // Keep this name
+    let text_rendering_res_opt: Option<TextRenderingResources> = world.remove_resource::<TextRenderingResources>();
+    let global_ubo_res_opt: Option<GlobalProjectionUboResource> = world.remove_resource::<GlobalProjectionUboResource>();
+    let glyph_atlas_res_opt: Option<GlyphAtlasResource> = world.remove_resource::<GlyphAtlasResource>();
     world.remove_resource::<crate::PreparedTextDrawsResource>();
 
-    // --- Main Cleanup Block (Requires VulkanContext Lock) ---
-    if let Some(vk_context_res) = vk_context_res_opt { // Use the removed Option here
+    // --- Main Cleanup Block ---
+    if let Some(vk_context_res) = vk_context_res_opt {
         info!("VulkanContextResource taken (Core Plugin).");
         match vk_context_res.0.lock() {
             Ok(mut vk_ctx_guard) => {
                 info!("Successfully locked VulkanContext Mutex (Core Plugin).");
 
-                // --- 2. Cleanup Renderer (Destroys Pool, Shape Buffers, etc.) ---
-                if let Some(renderer_res) = renderer_res_opt { // Use the Option removed earlier
+                // --- Cleanup BufferManagerResource ---
+                if let Some(bm_res) = buffer_manager_res_opt {
+                    info!("BufferManagerResource taken (Core Plugin).");
+                    match bm_res.0.lock() {
+                        Ok(mut bm_guard) => {
+                            info!("Successfully locked BufferManager Mutex (Core Plugin).");
+                            // Pass &mut vk_ctx_guard to BufferManager::cleanup
+                            bm_guard.cleanup(&mut vk_ctx_guard);
+                        }
+                        Err(poisoned) => error!("BufferManager Mutex poisoned: {:?}", poisoned),
+                    }
+                } else { info!("BufferManager resource not found (Core Plugin)."); }
+
+
+                // --- Cleanup Renderer (Destroys Pool, Shape Buffers, etc.) ---
+                if let Some(renderer_res) = renderer_res_opt {
                     info!("RendererResource taken (Core Plugin).");
                     match renderer_res.0.lock() {
                         Ok(mut renderer_guard) => {
                             info!("Successfully locked Renderer Mutex (Core Plugin).");
-                            renderer_guard.cleanup(&mut vk_ctx_guard); // Pass mutable context guard
+                            renderer_guard.cleanup(&mut vk_ctx_guard);
                         }
                         Err(poisoned) => error!("Renderer Mutex poisoned: {:?}", poisoned),
                     }
                 } else { info!("Renderer resource not found (Core Plugin)."); }
-                // --- End Renderer Cleanup ---
 
-                // --- Now cleanup remaining resources using handles inside vk_ctx_guard ---
-                let device_ref_opt = vk_ctx_guard.device.as_ref(); // Re-get device ref if needed
-                let allocator_arc_opt = vk_ctx_guard.allocator.clone(); // Re-get allocator Arc if needed
+                // ... (cleanup of TextRenderingResources, GlobalProjectionUboResource, GlyphAtlasResource as before, using vk_ctx_guard) ...
+                let device_ref_opt = vk_ctx_guard.device.as_ref();
+                let allocator_arc_opt = vk_ctx_guard.allocator.clone();
 
-                if let (Some(device), Some(allocator)) = (device_ref_opt, allocator_arc_opt.as_ref()) { // Get refs
-
-                    // --- Cleanup TextRenderingResources (Shared Pipeline, Buffer/Alloc) ---
-                    // Use the `text_rendering_res_opt` variable from the outer scope
-                    if let Some(mut text_res) = text_rendering_res_opt {
+                if let (Some(device), Some(allocator)) = (device_ref_opt, allocator_arc_opt.as_ref()) {
+                    if let Some(text_res) = text_rendering_res_opt { // Removed mut
                         unsafe {
                             if text_res.pipeline != vk::Pipeline::null() {
                                 device.destroy_pipeline(text_res.pipeline, None);
-                                info!("[Cleanup] Shared Text pipeline destroyed.");
                             }
-                            if text_res.vertex_buffer != vk::Buffer::null() {
-                                allocator.destroy_buffer(text_res.vertex_buffer, &mut text_res.vertex_allocation);
-                                info!("[Cleanup] Shared Text vertex buffer destroyed.");
-                            }
+                            // Vertex buffer and allocation for TextRenderingResources were removed
+                            // as they are now per-entity in TextRenderer
                         }
                     } else { info!("TextRenderingResources not found (Core Plugin)."); }
 
-                    // --- Cleanup GlobalProjectionUboResource ---
-                    // Use the `global_ubo_res_opt` variable from the outer scope
                     if let Some(mut global_ubo_res) = global_ubo_res_opt {
                         unsafe {
                             allocator.destroy_buffer(global_ubo_res.buffer, &mut global_ubo_res.allocation);
-                            info!("[Cleanup] Global UBO buffer destroyed.");
                         }
                     } else { info!("GlobalProjectionUboResource not found (Core Plugin)."); }
 
-                    // --- Cleanup Glyph Atlas ---
-                    // Use the `glyph_atlas_res_opt` variable from the outer scope
                     if let Some(atlas_res) = glyph_atlas_res_opt {
                          match atlas_res.0.lock() {
                             Ok(mut atlas_guard) => {
-                                atlas_guard.cleanup(&vk_ctx_guard); // Pass immutable context guard
-                                info!("[Cleanup] GlyphAtlas cleanup finished.");
+                                atlas_guard.cleanup(&vk_ctx_guard);
                             }
                             Err(poisoned) => error!("GlyphAtlas Mutex poisoned: {:?}", poisoned),
                         }
                     } else { info!("GlyphAtlas resource not found (Core Plugin)."); }
-
-                } else {
-                    error!("[Cleanup] Device or Allocator became None inside context lock!");
                 }
 
-                // --- 6. Cleanup Vulkan Context ---
-                cleanup_vulkan(&mut vk_ctx_guard); // Called on the still-valid guard
+
+                // --- Cleanup Vulkan Context (Instance, Device, Allocator, etc.) ---
+                cleanup_vulkan(&mut vk_ctx_guard);
             }
             Err(poisoned) => {
                 error!("VulkanContext Mutex was poisoned before cleanup (Core Plugin): {:?}", poisoned);

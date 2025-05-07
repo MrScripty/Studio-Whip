@@ -86,6 +86,9 @@ pub struct GlyphAtlasResource(pub std::sync::Arc<std::sync::Mutex<gui_framework:
 #[derive(bevy_ecs::prelude::Resource)]
 pub struct SwashCacheResource(pub std::sync::Mutex<cosmic_text::SwashCache>);
 
+#[derive(bevy_ecs::prelude::Resource, Clone)]
+pub struct BufferManagerResource(pub std::sync::Arc<std::sync::Mutex<gui_framework::rendering::buffer_manager::BufferManager>>);
+
 /// Holds the prepared Vulkan handles needed for a single shape draw call.
 #[derive(Debug, Clone)]
 pub struct PreparedDrawData {
@@ -108,3 +111,4 @@ pub struct RenderCommandData {
     pub depth: f32, // For sorting
     pub vertices_changed: bool, // For background quad resizing
 }
+

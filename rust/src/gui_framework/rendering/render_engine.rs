@@ -11,10 +11,13 @@ use bevy_log::{warn, error, info};
 use crate::{RenderCommandData, VulkanContextResource, TextRenderingResources}; 
 use crate::gui_framework::plugins::core::TextLayoutInfo;
 use crate::GlobalProjectionUboResource;
+use crate::BufferManagerResource;
+use bevy_ecs::prelude::Commands;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 
 pub struct Renderer {
-    buffer_manager: BufferManager,
     // Store pool and layouts needed for cleanup
     pub descriptor_pool: vk::DescriptorPool,
     pub descriptor_set_layout: vk::DescriptorSetLayout, // For shapes (Set 0)
@@ -23,7 +26,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(platform: &mut VulkanContext, extent: vk::Extent2D) -> Self {
+    pub fn new(
+        commands: &mut Commands,
+        platform: &mut VulkanContext,
+        extent: vk::Extent2D,
+    ) -> Self {
         // --- Create Command Pool (Once) and store in VulkanContext ---
         // This must happen before create_framebuffers if it allocates command buffers from this pool.
         if platform.command_pool.is_none() {
@@ -63,12 +70,15 @@ impl Renderer {
         platform.shape_pipeline_layout = Some(pipeline_mgr.shape_pipeline_layout);
         platform.text_pipeline_layout = Some(pipeline_mgr.text_pipeline_layout);
     
-        // Create BufferManager - Pass only needed layout/pool
-        let buffer_mgr = BufferManager::new(
-            platform, 
-            pipeline_mgr.per_entity_layout,
-            pipeline_mgr.descriptor_pool,
+        // Create BufferManager instance
+        let buffer_manager_instance = BufferManager::new(
+            platform,
+            pipeline_mgr.per_entity_layout, // This is the layout for Set 0 (Global UBO, Transform UBO)
+            pipeline_mgr.descriptor_pool,   // This is the shared pool
         );
+        // Insert BufferManager as a resource using the passed-in commands
+        commands.insert_resource(BufferManagerResource(Arc::new(Mutex::new(buffer_manager_instance))));
+        info!("[Renderer::new] BufferManagerResource inserted.");
     
         // Create TextRenderer
         let text_renderer_instance = TextRenderer::new(
@@ -100,7 +110,6 @@ impl Renderer {
     
         // Initialize Renderer struct
         Self {
-            buffer_manager: buffer_mgr,
             text_renderer: text_renderer_instance,
             descriptor_pool,
             descriptor_set_layout: per_entity_layout,
@@ -137,6 +146,7 @@ impl Renderer {
     pub fn render(
         &mut self,
         vk_context_res: &VulkanContextResource,
+        buffer_manager_res: &BufferManagerResource,
         shape_commands: &[RenderCommandData],
         text_layout_infos: &[TextLayoutInfo],
         global_ubo_res: &GlobalProjectionUboResource,
@@ -217,11 +227,16 @@ impl Renderer {
         platform_guard.current_image = image_index as usize;
 
         // --- 4. Prepare Frame Resources (Buffers, Descriptors) ---
-        let prepared_shape_draws = self.buffer_manager.prepare_frame_resources(
-            &mut platform_guard, // Needs &mut for potential pipeline creation
-            shape_commands,
-            global_ubo_res,
-        );
+        // Lock BufferManagerResource to call prepare_frame_resources
+        let prepared_shape_draws = {
+            // buffer_manager_res is passed as a parameter to Renderer::render
+            let mut bm_guard = buffer_manager_res.0.lock().expect("Failed to lock BufferManagerResource in render");
+            bm_guard.prepare_frame_resources(
+                &mut platform_guard, 
+                shape_commands,
+                global_ubo_res,
+            )
+        }; // bm_guard dropped here
 
         let prepared_text_draws = self.text_renderer.prepare_text_draws(
             &device, // Pass cloned device
@@ -313,11 +328,6 @@ impl Renderer {
 
         // Ensure GPU is idle before destroying anything
         unsafe { device.device_wait_idle().unwrap(); }
-
-        // Call cleanup on BufferManager first (destroys buffers, pipelines, shaders)
-        self.buffer_manager.cleanup(
-            platform, // Pass &mut VulkanContext
-        );
 
         // --- Cleanup TextRenderer (which cleans its cached resources) ---
         let allocator_arc_for_text_cleanup = platform.allocator.clone().expect("Allocator missing for text renderer cleanup");

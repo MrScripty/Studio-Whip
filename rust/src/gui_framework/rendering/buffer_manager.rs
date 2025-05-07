@@ -10,6 +10,7 @@ use crate::{PreparedDrawData, RenderCommandData}; // Import command/prepared dat
 use crate::GlobalProjectionUboResource;
 use crate::gui_framework::rendering::shader_utils; // Keep shader_utils for loading the single shader set
 use bevy_color::ColorToComponents;
+use std::sync::Arc;
 
 // Struct holding Vulkan resources specific to one entity
 struct EntityRenderResources {
@@ -241,45 +242,77 @@ impl BufferManager {
         prepared_draws
     }
 
+    /// Removes Vulkan resources associated with a specific entity.
+    /// Called when an entity with ShapeData or CursorVisual is despawned.
+    pub fn remove_entity_resources(
+        &mut self,
+        entity: Entity,
+        device: &ash::Device,
+        allocator: &Arc<vk_mem::Allocator>,
+    ) {
+        if let Some(mut resources) = self.entity_resources.remove(&entity) {
+            info!("[BufferManager] Removing resources for despawned entity {:?}", entity);
+            unsafe {
+                allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
+                allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
+                if resources.descriptor_set != vk::DescriptorSet::null() {
+                    // The descriptor_pool was created with FREE_DESCRIPTOR_SET flag
+                    if let Err(e) = device.free_descriptor_sets(self.descriptor_pool, &[resources.descriptor_set]) {
+                        error!("[BufferManager] Failed to free descriptor set for entity {:?}: {:?}", entity, e);
+                } else {
+                    info!("[BufferManager] Freed descriptor set for entity {:?}", entity);
+                }
+            }
+        }
+    } else {
+        // This might happen if cleanup is called multiple times for the same entity,
+        // or if the entity never had shape resources managed by BufferManager.
+        // It's not necessarily an error, so a warn! might be too noisy.
+        // A debug! log could be appropriate if needed for diagnostics.
+        // info!("[BufferManager] Attempted to remove resources for entity {:?}, but it was not found in cache.", entity);
+        }
+    }
+
     // --- cleanup() function ---
+    // This is for full resource cleanup on app exit
     pub fn cleanup(
         &mut self,
-        platform: &mut VulkanContext,
+        platform: &mut VulkanContext, // Keep VulkanContext here for now, or change to device/allocator
     ) {
-        let device = platform.device.as_ref().expect("Device missing in cleanup");
-        let allocator = platform.allocator.as_ref().expect("Allocator missing in cleanup");
+        let device = platform.device.as_ref().expect("Device missing in BufferManager::cleanup");
+        let allocator = platform.allocator.as_ref().expect("Allocator missing in BufferManager::cleanup");
 
+        // This part is tricky: if descriptor_pool is shared, we should not destroy it here.
+        // PipelineManager creates it and gives it to Renderer, which then gives it to BufferManager.
+        // Renderer should own and destroy the pool.
+        // BufferManager should only free sets it allocated from that pool.
+
+        let mut sets_to_free: Vec<vk::DescriptorSet> = Vec::new();
         unsafe {
-            // Cleanup cached resources
-            let sets_to_free: Vec<vk::DescriptorSet> = self.entity_resources.values()
-                .map(|r| r.descriptor_set)
-                .collect();
-
-            if !sets_to_free.is_empty() {
-                 match device.free_descriptor_sets(self.descriptor_pool, &sets_to_free) {
-                    Ok(_) => info!("[BufferManager::cleanup] Freed {} cached descriptor sets", sets_to_free.len()),
-                    Err(e) => error!("[BufferManager::cleanup] Failed to free descriptor sets: {:?}", e),
-                 }
-            } else {
-                 info!("[BufferManager::cleanup] No cached descriptor sets to free.");
+            // Cleanup entity-specific resources
+            let entity_count = self.entity_resources.len();
+            for (_entity_id, mut resources) in self.entity_resources.drain() {
+                allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
+                allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
+                if resources.descriptor_set != vk::DescriptorSet::null() {
+                    sets_to_free.push(resources.descriptor_set);
+                }
             }
+            if !sets_to_free.is_empty() {
+                if let Err(e) = device.free_descriptor_sets(self.descriptor_pool, &sets_to_free) {
+                    error!("[BufferManager::cleanup] Failed to free {} descriptor sets during full cleanup: {:?}", sets_to_free.len(), e);
+                } else {
+                    info!("[BufferManager::cleanup] Freed {} descriptor sets during full cleanup.", sets_to_free.len());
+                }
+            }
+            info!("[BufferManager::cleanup] Cleaned up resources for {} entities.", entity_count);
 
-           // Cleanup entity-specific resources
-           let entity_count = self.entity_resources.len();
-           for (_entity_id, mut resources) in self.entity_resources.drain() { // Use _entity_id
-               allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
-               allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
-           }
-           info!("[BufferManager::cleanup] Cleaned up resources for {} entities.", entity_count);
-
-           // Cleanup cached pipelines
-           let pipeline_count = self.pipeline_cache.len();
-           for (_key, pipeline) in self.pipeline_cache.drain() { // Use _key
+            // Cleanup cached pipelines
+            let pipeline_count = self.pipeline_cache.len();
+            for (_key, pipeline) in self.pipeline_cache.drain() {
                 device.destroy_pipeline(pipeline, None);
-           }
-           info!("[BufferManager::cleanup] Cleaned up {} cached pipelines.", pipeline_count);
-
-           // REMOVED: Shader cache cleanup
+            }
+            info!("[BufferManager::cleanup] Cleaned up {} cached pipelines.", pipeline_count);
         }
     }
 }

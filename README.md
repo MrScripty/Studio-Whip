@@ -1,6 +1,8 @@
 # Studio-Whip
 AI-enhanced collaborative content production suite for movies, comics, and interactive visual novels. Create compelling stories with seamlessly integrated tools designed to enhance your creative talents.
 
+There is a website in construction at https://github.com/MrScripty/whip-docs
+
 ## Major Planned Features
 *   **Story-Driven Platform**: Create original screenplays with visual story-building tools and advanced LLM integrations.
 *   **P2P Real-Time Collaboration**: Create together remotely for free, without requiring third-party servers.
@@ -9,7 +11,6 @@ AI-enhanced collaborative content production suite for movies, comics, and inter
 *   **Video Production**: Develop storyboards into rendered scenes using integrated image and video generation models.
 *   **Professional Color Grading**: Make expressive color choices in a color-managed environment using scopes, primary/secondary adjustments, and AI-assisted tools.
 *   **Node-Based Compositing**: Combine multiple visual elements (renders, footage, effects) into final shots using a flexible node graph system.
-
 
 ## System Requirments
 System requirements heavily depend on the size and type of AI models you choose to run locally. You can find many models on platforms like [Hugging Face](https://huggingface.co/) and [Civitai](https://civitai.com/).

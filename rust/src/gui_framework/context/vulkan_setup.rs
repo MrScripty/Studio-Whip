@@ -301,61 +301,57 @@ pub fn setup_vulkan(app: &mut VulkanContext, window: &winit::window::Window) {
 
 pub fn cleanup_vulkan(app: &mut VulkanContext) {
     info!("[cleanup_vulkan] Starting cleanup...");
-    // Ensure device is idle before destroying anything critical
+
     if let Some(device) = app.device.as_ref() {
         info!("[cleanup_vulkan] Waiting for device idle...");
-        unsafe { device.device_wait_idle().expect("Failed to wait for device idle during Renderer cleanup"); }
-        info!("[cleanup_vulkan] Device idle.");
+        unsafe {
+            match device.device_wait_idle() {
+                Ok(_) => info!("[cleanup_vulkan] Device idle."),
+                Err(e) => {
+                    error!("[cleanup_vulkan] Failed to wait for device idle: {:?}. Cleanup might be unsafe.", e);
+                }
+            }
+        }
     } else {
-        info!("[cleanup_vulkan] Warning: Device not available for idle wait.");
-        // Cannot proceed safely if device doesn't exist
-        return;
+        warn!("[cleanup_vulkan] Device not available for idle wait. This is unexpected if cleanup is called correctly.");
     }
 
-    // Explicitly destroy the allocator *before* destroying the device.
-    // Taking the Option<Arc<Allocator>> transfers ownership to allocator_arc_opt.
-    // Dropping allocator_arc_opt triggers vmaDestroyAllocator if this is the last Arc.
-    info!("[VulkanCleanup] Preparing to destroy vk-mem Allocator...");
+    info!("[cleanup_vulkan] Preparing to destroy vk-mem Allocator...");
     if let Some(allocator_arc) = app.allocator.take() {
-        // The allocator is destroyed when allocator_arc goes out of scope here.
         drop(allocator_arc);
-        info!("[VulkanCleanup] vk-mem Allocator Arc dropped and allocator destroyed (assuming last Arc).");
+        info!("[cleanup_vulkan] vk-mem Allocator Arc dropped. VMA Allocator should be destroyed now if this was the last Arc.");
     } else {
-         info!("[VulkanCleanup] Allocator already taken or never initialized.");
+         info!("[cleanup_vulkan] Allocator was already taken or never initialized in VulkanContext.");
     }
-    // Ensure allocator field is None now
     app.allocator = None;
 
-    // Destroy the logical device
     if let Some(device) = app.device.take() {
         info!("[cleanup_vulkan] Destroying logical device...");
-        unsafe { device.destroy_device(None); }
+        unsafe { device.destroy_device(None); } // This is where the validation error occurs
         info!("[cleanup_vulkan] Logical device destroyed.");
     } else {
-        info!("[cleanup_vulkan] Device already taken or never initialized.");
+        info!("[cleanup_vulkan] Logical device already taken or never initialized.");
     }
 
-    // Destroy the surface
-    if let (Some(_instance), Some(surface_loader), Some(surface)) = (app.instance.as_ref(), app.surface_loader.as_ref(), app.surface.take()) {
-         info!("[cleanup_vulkan] Destroying surface...");
-         unsafe { surface_loader.destroy_surface(surface, None); }
-         info!("[cleanup_vulkan] Surface destroyed.");
+    if let (Some(instance_ref), Some(surface_loader_ref), Some(surface_handle)) =
+        (app.instance.as_ref(), app.surface_loader.as_ref(), app.surface.take()) {
+        info!("[cleanup_vulkan] Destroying surface...");
+        unsafe { surface_loader_ref.destroy_surface(surface_handle, None); }
+        info!("[cleanup_vulkan] Surface destroyed.");
     } else {
          info!("[cleanup_vulkan] Instance, surface loader, or surface not available for surface destruction.");
     }
+    app.surface_loader = None;
 
-    // Destroy Debug Messenger *before* instance
     #[cfg(debug_assertions)]
     if let (Some(loader), Some(messenger)) = (app.debug_utils_loader.take(), app.debug_messenger.take()) {
         info!("[cleanup_vulkan] Destroying debug messenger...");
         unsafe { loader.destroy_debug_utils_messenger(messenger, None); }
         info!("[cleanup_vulkan] Debug messenger destroyed.");
     } else {
-         info!("[cleanup_vulkan] Debug messenger loader or handle not available for destruction.");
+         info!("[cleanup_vulkan] Debug messenger loader or handle not available for destruction (or not a debug build).");
     }
 
-
-    // Destroy the instance
     if let Some(instance) = app.instance.take() {
         info!("[cleanup_vulkan] Destroying instance...");
         unsafe { instance.destroy_instance(None); }
@@ -364,12 +360,6 @@ pub fn cleanup_vulkan(app: &mut VulkanContext) {
          info!("[cleanup_vulkan] Instance already taken or never initialized.");
     }
 
-    // Clear other Option fields just in case
     app.entry = None;
-    app.surface_loader = None;
-    app.queue = None;
-    app.queue_family_index = None;
-    // Swapchain resources should be cleaned up by Renderer::cleanup
-
     info!("[cleanup_vulkan] Cleanup finished.");
 }

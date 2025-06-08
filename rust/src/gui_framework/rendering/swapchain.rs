@@ -328,66 +328,90 @@ pub fn cleanup_swapchain_resources(platform: &mut VulkanContext) {
             return;
         }
     };
-    let swapchain_loader = match platform.swapchain_loader.as_ref() {
-         Some(l) => l,
-         None => {
-             // This might happen if cleanup is called before swapchain was fully created or after full cleanup
-             info!("[cleanup_swapchain_resources] Swapchain loader not available, assuming resources are already clean or never created.");
-             return;
-         }
-    };
+    // swapchain_loader is only needed for swapchain.destroy_swapchain
+    // let swapchain_loader = match platform.swapchain_loader.as_ref() {
+    //      Some(l) => l,
+    //      None => {
+    //          info!("[cleanup_swapchain_resources] Swapchain loader not available, assuming resources are already clean or never created.");
+    //          return;
+    //      }
+    // };
 
     unsafe {
-        // Free Command Buffers (must be done before destroying the pool they came from)
-        // The command pool itself is cleaned up by Renderer::cleanup or VulkanContext::cleanup
-        if let Some(pool) = platform.command_pool { // Check if pool exists
+        if let Some(pool) = platform.command_pool {
             if !platform.command_buffers.is_empty() {
                 device.free_command_buffers(pool, &platform.command_buffers);
                 platform.command_buffers.clear();
                 info!("[cleanup_swapchain_resources] Freed command buffers.");
             }
         } else {
-            // If pool is None, command buffers should also be empty or were never allocated.
             if !platform.command_buffers.is_empty() {
                 warn!("[cleanup_swapchain_resources] Command buffers exist but command pool is None. Buffers not freed.");
-                platform.command_buffers.clear(); // Still clear the vec to avoid dangling refs
+                platform.command_buffers.clear();
             }
         }
 
-        // Destroy Framebuffers
+        info!("[cleanup_swapchain_resources] Destroying {} framebuffers.", platform.framebuffers.len());
         for fb in platform.framebuffers.drain(..) {
             device.destroy_framebuffer(fb, None);
         }
 
-        // Destroy Image Views
+        info!("[cleanup_swapchain_resources] Destroying {} image views.", platform.image_views.len());
         for view in platform.image_views.drain(..) {
             device.destroy_image_view(view, None);
         }
-        platform.images.clear(); // Explicitly clear the image handles vector
+        platform.images.clear();
 
-        // Destroy Depth Buffer Resources (View, Image, Allocation)
+        // Destroy Depth Buffer Resources
         if let Some(view) = platform.depth_image_view.take() {
+            info!("[cleanup_swapchain_resources] Destroying DepthImageView {:?}.", view);
             device.destroy_image_view(view, None);
+        } else {
+            info!("[cleanup_swapchain_resources] DepthImageView was already None.");
         }
-        if let (Some(image), Some(mut alloc)) = (platform.depth_image.take(), platform.depth_image_allocation.take()) {
+
+        let depth_image_opt = platform.depth_image.take();
+        let mut depth_alloc_opt = platform.depth_image_allocation.take();
+
+        if let (Some(image), Some(alloc_ref_mut)) = (depth_image_opt, depth_alloc_opt.as_mut()) {
+             info!("[cleanup_swapchain_resources] Attempting to destroy DepthImage {:?} with allocation.", image);
              if let Some(allocator) = platform.allocator.as_ref() {
-                 allocator.destroy_image(image, &mut alloc);
+                 info!("[cleanup_swapchain_resources] Destroying VkImage (DepthImage) {:?}.", image);
+                 device.destroy_image(image, None);
+                 info!("[cleanup_swapchain_resources] Freeing VmaAllocation (DepthImage) for image {:?}.", image);
+                 allocator.free_memory(alloc_ref_mut);
              } else {
                   error!("[cleanup_swapchain_resources] Allocator not available to destroy depth image!");
              }
+        } else {
+            info!("[cleanup_swapchain_resources] DepthImage or its allocation was already taken/None or pair incomplete.");
+            if depth_image_opt.is_some() && depth_alloc_opt.is_none() {
+                warn!("[cleanup_swapchain_resources] DepthImage existed but its Allocation was None.");
+            }
+            if depth_image_opt.is_none() && depth_alloc_opt.is_some() {
+                warn!("[cleanup_swapchain_resources] DepthImage Allocation existed but the Image was None.");
+            }
         }
         platform.depth_format = None;
 
-        // Destroy Render Pass (Only if it exists)
-        // Render pass might be shared, only destroy if owned uniquely by swapchain setup?
-        // For now, assume it's recreated on resize if needed.
         if let Some(rp) = platform.render_pass.take() {
+            info!("[cleanup_swapchain_resources] Destroying RenderPass {:?}.", rp);
             device.destroy_render_pass(rp, None);
+        } else {
+            info!("[cleanup_swapchain_resources] RenderPass was already None.");
         }
 
-        // Destroy Swapchain (Only if it exists)
         if let Some(sc) = platform.swapchain.take() {
-            swapchain_loader.destroy_swapchain(sc, None);
+            // Need swapchain_loader for this
+            if let Some(loader) = platform.swapchain_loader.as_ref() {
+                info!("[cleanup_swapchain_resources] Destroying Swapchain {:?}.", sc);
+                loader.destroy_swapchain(sc, None);
+            } else {
+                error!("[cleanup_swapchain_resources] Swapchain loader not available to destroy swapchain handle {:?}.", sc);
+            }
+        } else {
+            info!("[cleanup_swapchain_resources] Swapchain was already None.");
         }
     }
+    info!("[cleanup_swapchain_resources] Finished cleaning up swapchain resources.");
 }

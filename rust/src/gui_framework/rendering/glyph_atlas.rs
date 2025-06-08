@@ -70,6 +70,7 @@ impl GlyphAtlas {
 
         let allocation_create_info = vk_mem::AllocationCreateInfo {
             usage: vk_mem::MemoryUsage::AutoPreferDevice, // Let VMA decide, likely GPU local
+            flags: vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
             ..Default::default()
         };
 
@@ -290,7 +291,9 @@ impl GlyphAtlas {
         };
         let staging_allocation_create_info = AllocationCreateInfo {
             usage: vk_mem::MemoryUsage::AutoPreferHost,
-            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED,
+            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
+            | vk_mem::AllocationCreateFlags::MAPPED
+            | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
             ..Default::default()
         };
 
@@ -464,23 +467,27 @@ impl GlyphAtlas {
         };
         let Some(allocator) = vk_context.allocator.as_ref() else {
             error!("[GlyphAtlas::cleanup] Allocator not available for cleanup.");
-            // Need allocator to destroy image+allocation safely
             return;
         };
-
+    
         unsafe {
+            info!("[GlyphAtlas::cleanup] Destroying sampler {:?} and image_view {:?}.", self.sampler, self.image_view);
             device.destroy_sampler(self.sampler, None);
             device.destroy_image_view(self.image_view, None);
-            // Take ownership of allocation before destroying image
-            if let Some(mut alloc) = self.allocation.take() {
-                //info!("[GlyphAtlas::cleanup] Destroying atlas image {:?} and allocation...", self.image);
-                allocator.destroy_image(self.image, &mut alloc); // Destroys image and frees memory via vk-mem
+    
+            let mut image_alloc_opt = self.allocation.take();
+    
+            if let (Some(image_handle), Some(alloc_ref_mut)) = (Some(self.image), image_alloc_opt.as_mut()) {
+                info!("[GlyphAtlas::cleanup] Attempting to destroy atlas image {:?} with allocation.", image_handle);
+                info!("[GlyphAtlas::cleanup] Destroying VkImage (atlas image) {:?}.", image_handle);
+                device.destroy_image(image_handle, None);
+                info!("[GlyphAtlas::cleanup] Freeing VmaAllocation (atlas image) for image {:?}.", image_handle);
+                allocator.free_memory(alloc_ref_mut);
             } else {
-                error!("[GlyphAtlas::cleanup] Allocation was already taken or None!");
-                // Maybe destroy image anyway? Or just log?
-                // device.destroy_image(self.image, None); // Potentially unsafe without allocator
+                error!("[GlyphAtlas::cleanup] Atlas image allocation was already taken or None! Cannot destroy image memory.");
             }
         }
+        info!("[GlyphAtlas::cleanup] Finished.");
     }
 }
 

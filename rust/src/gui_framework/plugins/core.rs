@@ -280,7 +280,9 @@ fn create_global_ubo_system(
         };
         let allocation_info = vk_mem::AllocationCreateInfo {
             usage: vk_mem::MemoryUsage::AutoPreferDevice,
-            flags: vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+            flags: vk_mem::AllocationCreateFlags::MAPPED
+            | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+            | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
             ..Default::default()
         };
         allocator.create_buffer(&buffer_info, &allocation_info)
@@ -406,8 +408,18 @@ fn create_text_rendering_resources_system(
     let initial_text_capacity = 1024 * 6; // Enough for ~1024 glyphs
     let buffer_size = (std::mem::size_of::<TextVertex>() * initial_text_capacity as usize) as vk::DeviceSize;
     let (vertex_buffer, vertex_allocation) = unsafe {
-        let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: buffer_size, usage: vk::BufferUsageFlags::VERTEX_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
-        let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
+        let buffer_info = vk::BufferCreateInfo { 
+            s_type: vk::StructureType::BUFFER_CREATE_INFO, 
+            size: buffer_size, 
+            usage: vk::BufferUsageFlags::VERTEX_BUFFER, 
+            sharing_mode: vk::SharingMode::EXCLUSIVE, 
+            ..Default::default() };
+        let allocation_info = vk_mem::AllocationCreateInfo { 
+            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
+            | vk_mem::AllocationCreateFlags::MAPPED
+            | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY, 
+            usage: vk_mem::MemoryUsage::AutoPreferDevice, 
+            ..Default::default() };
         allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to create initial text vertex buffer")
     };
     // --- NAME Shared Text VB & Memory ---

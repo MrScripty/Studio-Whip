@@ -89,19 +89,21 @@ impl BufferManager {
 
                 // 1. Create Vertex Buffer & Copy Data
                 let (vertex_buffer, vertex_allocation) = unsafe {
-                    let buffer_info = vk::BufferCreateInfo {
+                    let buffer_info_vb = vk::BufferCreateInfo {
                         s_type: vk::StructureType::BUFFER_CREATE_INFO,
                         size: vertex_buffer_size, // <-- Use correct size
                         usage: vk::BufferUsageFlags::VERTEX_BUFFER, // <-- Use correct usage
                         sharing_mode: vk::SharingMode::EXCLUSIVE,
                         ..Default::default()
                     };
-                    let allocation_info = vk_mem::AllocationCreateInfo {
-                        flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED,
+                    let allocation_info_vb = vk_mem::AllocationCreateInfo {
+                        flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
+                        | vk_mem::AllocationCreateFlags::MAPPED
+                        | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
                         usage: vk_mem::MemoryUsage::AutoPreferDevice,
                         ..Default::default()
                     };
-                    allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to create vertex buffer")
+                    allocator.create_buffer(&buffer_info_vb, &allocation_info_vb).expect("Failed to create vertex buffer")
                 };
                 // --- NAME Vertex Buffer & Memory ---
                 #[cfg(debug_assertions)]
@@ -119,9 +121,19 @@ impl BufferManager {
 
                 // 2. Create Offset Uniform Buffer & Copy Data
                 let (offset_uniform, offset_allocation) = unsafe {
-                    let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: std::mem::size_of::<Mat4>() as u64, usage: vk::BufferUsageFlags::UNIFORM_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
-                    let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
-                    allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to create offset uniform buffer")
+                    let buffer_info_ubo = vk::BufferCreateInfo { 
+                        s_type: vk::StructureType::BUFFER_CREATE_INFO, 
+                        size: std::mem::size_of::<Mat4>() as u64, 
+                        usage: vk::BufferUsageFlags::UNIFORM_BUFFER, 
+                        sharing_mode: vk::SharingMode::EXCLUSIVE, 
+                        ..Default::default() };
+                    let allocation_info_ubo = vk_mem::AllocationCreateInfo { 
+                        flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
+                        | vk_mem::AllocationCreateFlags::MAPPED
+                        | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
+                        usage: vk_mem::MemoryUsage::AutoPreferDevice, 
+                        ..Default::default() };
+                    allocator.create_buffer(&buffer_info_ubo, &allocation_info_ubo).expect("Failed to create offset uniform buffer")
                 };
                  // --- NAME Offset UBO & Memory ---
                  #[cfg(debug_assertions)]
@@ -170,8 +182,17 @@ impl BufferManager {
                               entity_id, current_alloc_info.size, new_size_bytes);
                         unsafe { allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation); }
                         let (new_buffer, new_alloc) = unsafe {
-                            let buffer_info = vk::BufferCreateInfo { s_type: vk::StructureType::BUFFER_CREATE_INFO, size: new_size_bytes, usage: vk::BufferUsageFlags::VERTEX_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() };
-                            let allocation_info = vk_mem::AllocationCreateInfo { flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE | vk_mem::AllocationCreateFlags::MAPPED, usage: vk_mem::MemoryUsage::AutoPreferDevice, ..Default::default() };
+                            let buffer_info = vk::BufferCreateInfo { 
+                                s_type: vk::StructureType::BUFFER_CREATE_INFO, 
+                                size: new_size_bytes, usage: vk::BufferUsageFlags::VERTEX_BUFFER, 
+                                sharing_mode: vk::SharingMode::EXCLUSIVE, 
+                                ..Default::default() };
+                            let allocation_info = vk_mem::AllocationCreateInfo { 
+                                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
+                                | vk_mem::AllocationCreateFlags::MAPPED,
+                                //| vk_mem::AllocationCreateFlags::DEDICATED_MEMORY, // This buffer never had an error where we needed dedicated memory
+                                usage: vk_mem::MemoryUsage::AutoPreferDevice, 
+                                ..Default::default() };
                             allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to recreate vertex buffer")
                         };
                         resources.vertex_buffer = new_buffer;

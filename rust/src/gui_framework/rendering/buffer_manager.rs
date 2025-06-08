@@ -327,10 +327,9 @@ impl BufferManager {
     // This is for full resource cleanup on app exit
     pub fn cleanup(
         &mut self,
-        platform: &mut VulkanContext, // Keep VulkanContext here for now, or change to device/allocator
+        device: &ash::Device,
+        allocator: &Arc<vk_mem::Allocator>,
     ) {
-        let device = platform.device.as_ref().expect("Device missing in BufferManager::cleanup");
-        let allocator = platform.allocator.as_ref().expect("Allocator missing in BufferManager::cleanup");
 
         // This part is tricky: if descriptor_pool is shared, we should not destroy it here.
         // PipelineManager creates it and gives it to Renderer, which then gives it to BufferManager.

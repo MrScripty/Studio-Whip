@@ -299,74 +299,84 @@ pub fn setup_vulkan(app: &mut VulkanContext, window: &winit::window::Window) {
     info!("[setup_vulkan] Setup complete.");
 }
 
-pub fn cleanup_vulkan(app: &mut VulkanContext) {
-    info!("[cleanup_vulkan] Starting cleanup...");
+// This function now takes the VulkanContext by value, consuming it.
+// It performs the final destruction of core Vulkan handles.
+pub fn cleanup_vulkan(mut app: VulkanContext) {
+    info!("[cleanup_vulkan] Starting final context destruction...");
 
-    if let Some(device) = app.device.as_ref() {
-        info!("[cleanup_vulkan] Waiting for device idle...");
-        unsafe {
-            match device.device_wait_idle() {
-                Ok(_) => info!("[cleanup_vulkan] Device idle."),
-                Err(e) => {
-                    error!("[cleanup_vulkan] Failed to wait for device idle: {:?}. Cleanup might be unsafe.", e);
-                }
-            }
-        }
-    } else {
-        warn!("[cleanup_vulkan] Device not available for idle wait. This is unexpected if cleanup is called correctly.");
-    }
+    // The device_wait_idle is now handled by the caller (cleanup_trigger_system).
 
-    // The Allocator must be dropped *before* the device.
-    // By taking both here, we ensure the drop order is explicit within this scope.
+    // Take ownership of the handles from the context struct.
     let allocator_to_drop = app.allocator.take();
     let device_to_destroy = app.device.take();
+    let instance_to_destroy = app.instance.take();
+    let surface_loader_to_drop = app.surface_loader.take();
+    let surface_to_destroy = app.surface.take();
+    let debug_loader_to_drop = app.debug_utils_loader.take();
+    let debug_messenger_to_destroy = app.debug_messenger.take();
 
-    if let Some(device) = device_to_destroy {
-        // Explicitly drop the allocator right before destroying the device.
-        // When `allocator_to_drop` goes out of scope here, the Arc is dropped.
-        // If it's the last Arc, the Allocator is dropped, freeing all its memory pools.
-        if let Some(allocator) = allocator_to_drop {
-            info!("[cleanup_vulkan] Dropping vk-mem Allocator Arc...");
-            drop(allocator);
-            info!("[cleanup_vulkan] vk-mem Allocator Arc dropped.");
-        } else {
-            info!("[cleanup_vulkan] Allocator was already taken or never initialized.");
+    // The order of destruction is critical:
+    // 1. Destroy objects created from the device (command pools, sync objects).
+    // 2. Drop the Allocator Arc.
+    // 3. Destroy the logical device.
+    // 4. Destroy the surface.
+    // 5. Destroy the debug messenger.
+    // 6. Destroy the instance.
+
+    if let Some(device) = &device_to_destroy {
+        unsafe {
+            if let Some(layout) = app.shape_pipeline_layout.take() {
+                device.destroy_pipeline_layout(layout, None);
+            }
+            if let Some(layout) = app.text_pipeline_layout.take() {
+                device.destroy_pipeline_layout(layout, None);
+            }
+            if let Some(pool) = app.command_pool.take() {
+                device.destroy_command_pool(pool, None);
+            }
+            if let Some(sema) = app.image_available_semaphore.take() {
+                device.destroy_semaphore(sema, None);
+            }
+            if let Some(sema) = app.render_finished_semaphore.take() {
+                device.destroy_semaphore(sema, None);
+            }
+            if let Some(fen) = app.fence.take() {
+                device.destroy_fence(fen, None);
+            }
         }
+    }
 
+    // Explicitly drop the allocator Arc. If this is the last Arc, the allocator is destroyed.
+    if let Some(allocator) = allocator_to_drop {
+        info!("[cleanup_vulkan] Dropping vk-mem Allocator Arc...");
+        drop(allocator);
+    }
+
+    // Destroy the logical device.
+    if let Some(device) = device_to_destroy {
         info!("[cleanup_vulkan] Destroying logical device...");
-        unsafe { device.destroy_device(None); } // This is where the validation error occurs
-        info!("[cleanup_vulkan] Logical device destroyed.");
-    } else {
-        info!("[cleanup_vulkan] Logical device already taken or never initialized.");
+        unsafe { device.destroy_device(None); }
     }
 
-    if let (Some(instance_ref), Some(surface_loader_ref), Some(surface_handle)) =
-        (app.instance.as_ref(), app.surface_loader.as_ref(), app.surface.take()) {
+    // Destroy the surface and debug messenger (they depend on the instance).
+    if let (Some(instance), Some(surface_loader), Some(surface)) =
+        (&instance_to_destroy, surface_loader_to_drop, surface_to_destroy)
+    {
         info!("[cleanup_vulkan] Destroying surface...");
-        unsafe { surface_loader_ref.destroy_surface(surface_handle, None); }
-        info!("[cleanup_vulkan] Surface destroyed.");
-    } else {
-         info!("[cleanup_vulkan] Instance, surface loader, or surface not available for surface destruction.");
+        unsafe { surface_loader.destroy_surface(surface, None); }
     }
-    app.surface_loader = None;
 
     #[cfg(debug_assertions)]
-    if let (Some(loader), Some(messenger)) = (app.debug_utils_loader.take(), app.debug_messenger.take()) {
+    if let (Some(loader), Some(messenger)) = (debug_loader_to_drop, debug_messenger_to_destroy) {
         info!("[cleanup_vulkan] Destroying debug messenger...");
         unsafe { loader.destroy_debug_utils_messenger(messenger, None); }
-        info!("[cleanup_vulkan] Debug messenger destroyed.");
-    } else {
-         info!("[cleanup_vulkan] Debug messenger loader or handle not available for destruction (or not a debug build).");
     }
 
-    if let Some(instance) = app.instance.take() {
+    // Finally, destroy the instance.
+    if let Some(instance) = instance_to_destroy {
         info!("[cleanup_vulkan] Destroying instance...");
         unsafe { instance.destroy_instance(None); }
-        info!("[cleanup_vulkan] Instance destroyed.");
-    } else {
-         info!("[cleanup_vulkan] Instance already taken or never initialized.");
     }
 
-    app.entry = None;
-    info!("[cleanup_vulkan] Cleanup finished.");
+    info!("[cleanup_vulkan] Final context destruction finished.");
 }

@@ -331,52 +331,30 @@ impl Renderer {
         }
     }
 
-    // Accept &mut self and &mut VulkanContext
-    pub fn cleanup(&mut self, platform: &mut VulkanContext) { // Changed to &mut self
-        // Clone device handle early if needed, but cleanup methods might take platform directly
-        let device = platform.device.as_ref().expect("Device not available for cleanup").clone();
+    pub fn cleanup(
+        &mut self,
+        device: &ash::Device,
+        allocator: &Arc<vk_mem::Allocator>,
+    ) {
+        // The device_wait_idle is now handled by the caller (cleanup_trigger_system).
 
-        // Ensure GPU is idle before destroying anything
-        unsafe { device.device_wait_idle().unwrap(); }
-
-        // --- Cleanup TextRenderer
-        let allocator_arc_for_text_cleanup = platform.allocator.clone().expect("Allocator missing for text renderer cleanup");
-        self.text_renderer.cleanup(&device, &allocator_arc_for_text_cleanup);
+        // --- Cleanup TextRenderer ---
+        self.text_renderer.cleanup(device, allocator);
         info!("[Renderer::cleanup] TextRenderer cleanup called.");
 
         // --- Cleanup Layouts and Pool ---
+        // This function is now only responsible for resources owned by the Renderer struct.
+        // The pipeline layouts stored in VulkanContext are cleaned by the main cleanup system.
         unsafe {
-            // Destroy layouts stored in VulkanContext
-            if let Some(layout) = platform.shape_pipeline_layout.take() { device.destroy_pipeline_layout(layout, None); }
-            if let Some(layout) = platform.text_pipeline_layout.take() { device.destroy_pipeline_layout(layout, None); }
-            // Destroy layouts stored in self
-            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None); // Per-entity layout
-            device.destroy_descriptor_set_layout(self.text_descriptor_set_layout, None); // Atlas layout
-            // Destroy pool *after* freeing sets and cleaning BufferManager
+            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            info!("[Renderer::cleanup] Destroyed shape descriptor set layout.");
+            device.destroy_descriptor_set_layout(self.text_descriptor_set_layout, None);
+            info!("[Renderer::cleanup] Destroyed text descriptor set layout.");
             device.destroy_descriptor_pool(self.descriptor_pool, None);
+            info!("[Renderer::cleanup] Destroyed descriptor pool.");
         }
 
-        // Cleanup of text pipeline handled by cleanup_trigger_system
-        // Cleanup swapchain resources (Framebuffers, Views, Swapchain, RenderPass)
-        // Use the dedicated cleanup function
-        crate::gui_framework::rendering::swapchain::cleanup_swapchain_resources(platform);
-
-        // Cleanup remaining resources (Sync objects, Command Pool)
-        unsafe {
-            if let Some(sema) = platform.image_available_semaphore.take() { device.destroy_semaphore(sema, None); }
-            if let Some(sema) = platform.render_finished_semaphore.take() { device.destroy_semaphore(sema, None); }
-            if let Some(fen) = platform.fence.take() { device.destroy_fence(fen, None); }
-
-            // Cleanup command pool *after* all command buffers using it are freed.
-            // Command buffers are freed by cleanup_swapchain_resources.
-            if let Some(pool) = platform.command_pool.take() {
-                device.destroy_command_pool(pool, None);
-                info!("[Renderer::cleanup] Command pool destroyed.");
-            } else {
-                info!("[Renderer::cleanup] Command pool was already None or taken.");
-            }
-        }
-        // Note: VulkanContext itself (device, instance, allocator) is cleaned up
-        // by the GuiFrameworkCorePlugin's cleanup_trigger_system calling vulkan_setup::cleanup_vulkan
+        // NOTE: Cleanup of swapchain, sync objects, and command pool is now handled
+        // by the main cleanup_trigger_system and cleanup_vulkan.
     }
 }

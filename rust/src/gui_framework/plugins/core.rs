@@ -31,6 +31,7 @@ use crate::{
 // Import types/functions from the gui_framework
 use crate::gui_framework::events::YrsTextChanged;
 use crate::gui_framework::{
+    context::vulkan_context::VulkanContext,
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
     rendering::render_engine::Renderer,
     rendering::glyph_atlas::GlyphAtlas,
@@ -592,7 +593,6 @@ fn manage_cursor_visual_system(
         let cursor_entity = commands.spawn((
             CursorVisual,
             ShapeData {
-                // Define a 1x1 unit quad centered at the origin.
                 // It will be scaled dynamically by `update_cursor_transform_system`.
                 vertices: Arc::new(vec![
                     // Triangle 1
@@ -1081,133 +1081,93 @@ fn rendering_system(
     }
 }
 
-// System running on AppExit in Last schedule: Takes ownership of Vulkan/Renderer resources via World access and cleans them up immediately.
+// System running on AppExit in Last schedule: Takes ownership of all Vulkan-related resources
+// from the World and orchestrates their destruction in the correct order.
 fn cleanup_trigger_system(world: &mut World) {
-    // --- Get device handle EARLY ---
-    let device_opt_clone = world.get_resource::<VulkanContextResource>() // Use a different name to avoid confusion later
-        .and_then(|res| res.0.lock().ok())
-        .and_then(|guard| guard.device.clone()); // Clone the device handle
+    info!("[Cleanup] Cleanup trigger system running on AppExit...");
 
-    // --- <<< ADD EXPLICIT WAIT IDLE HERE >>> ---
-    if let Some(device_clone) = device_opt_clone.as_ref() { // Check if we got the device
-        info!("[Cleanup] Waiting for device idle before cleanup...");
-        unsafe {
-             match device_clone.device_wait_idle() { // Use the cloned handle
-                Ok(_) => info!("[Cleanup] Device idle."),
-                Err(e) => error!("[Cleanup] Failed to wait for device idle: {:?}", e),
-             }
-        }
-    } else {
-        error!("[Cleanup] Could not get device handle to wait for idle!");
-    }
-    // --- <<< END WAIT IDLE >>> ---
-
-    // --- Take ownership of resources by removing them from the world ---
-    // These are now the actual Options containing the resources
-    let renderer_res_opt: Option<RendererResource> = world.remove_resource::<RendererResource>();
-    let buffer_manager_res_opt: Option<BufferManagerResource> = world.remove_resource::<BufferManagerResource>(); 
-    let vk_context_res_opt: Option<VulkanContextResource> = world.remove_resource::<VulkanContextResource>();
-    let text_rendering_res_opt: Option<TextRenderingResources> = world.remove_resource::<TextRenderingResources>();
-    let global_ubo_res_opt: Option<GlobalProjectionUboResource> = world.remove_resource::<GlobalProjectionUboResource>();
-    let glyph_atlas_res_opt: Option<GlyphAtlasResource> = world.remove_resource::<GlyphAtlasResource>();
+    // --- Take ownership of all resources by removing them from the world ---
+    let renderer_res_opt = world.remove_resource::<RendererResource>();
+    let buffer_manager_res_opt = world.remove_resource::<BufferManagerResource>();
+    let text_rendering_res_opt = world.remove_resource::<TextRenderingResources>();
+    let global_ubo_res_opt = world.remove_resource::<GlobalProjectionUboResource>();
+    let glyph_atlas_res_opt = world.remove_resource::<GlyphAtlasResource>();
     world.remove_resource::<crate::PreparedTextDrawsResource>();
 
-    // --- Main Cleanup Block ---
-    if let Some(vk_context_res) = vk_context_res_opt {
-        info!("VulkanContextResource taken (Core Plugin).");
-        match vk_context_res.0.lock() {
-            Ok(mut vk_ctx_guard) => {
-                info!("Successfully locked VulkanContext Mutex (Core Plugin).");
+    // The VulkanContextResource is the last one we take, as it contains the core handles.
+    let vk_context_res_opt = world.remove_resource::<VulkanContextResource>();
 
-                // --- Cleanup BufferManagerResource ---
-                if let Some(bm_res) = buffer_manager_res_opt {
-                    info!("BufferManagerResource taken (Core Plugin).");
-                    match bm_res.0.lock() {
-                        Ok(mut bm_guard) => {
-                            info!("Successfully locked BufferManager Mutex (Core Plugin).");
-                            // Pass &mut vk_ctx_guard to BufferManager::cleanup
-                            bm_guard.cleanup(&mut vk_ctx_guard);
-                        }
-                        Err(poisoned) => error!("BufferManager Mutex poisoned: {:?}", poisoned),
-                    }
-                } else { info!("BufferManager resource not found (Core Plugin)."); }
+    // --- Deconstruct VulkanContext ---
+    // If the context doesn't exist, we can't clean anything up.
+    let Some(vk_context_res) = vk_context_res_opt else {
+        warn!("[Cleanup] VulkanContext resource not found. Cannot perform Vulkan cleanup.");
+        return;
+    };
 
-
-                // --- Cleanup Renderer (Destroys Pool, Shape Buffers, etc.) ---
-                if let Some(renderer_res) = renderer_res_opt {
-                    info!("RendererResource taken (Core Plugin).");
-                    match renderer_res.0.lock() {
-                        Ok(mut renderer_guard) => {
-                            info!("Successfully locked Renderer Mutex (Core Plugin).");
-                            renderer_guard.cleanup(&mut vk_ctx_guard);
-                        }
-                        Err(poisoned) => error!("Renderer Mutex poisoned: {:?}", poisoned),
-                    }
-                } else { info!("Renderer resource not found (Core Plugin)."); }
-
-                // ... (cleanup of TextRenderingResources, GlobalProjectionUboResource, GlyphAtlasResource as before, using vk_ctx_guard) ...
-                let device_ref_opt = vk_ctx_guard.device.as_ref();
-                let allocator_arc_opt = vk_ctx_guard.allocator.clone();
-
-                if let (Some(device), Some(allocator)) = (device_ref_opt, allocator_arc_opt.as_ref()) {
-                    // --- Cleanup TextRenderingResources ---
-                    if let Some(mut text_res) = text_rendering_res_opt {
-                        info!("[Cleanup] Cleaning up TextRenderingResources...");
-                        unsafe {
-                            if text_res.pipeline != vk::Pipeline::null() {
-                                device.destroy_pipeline(text_res.pipeline, None);
-                                info!("[Cleanup] Destroyed text pipeline.");
-                            } else {
-                                info!("[Cleanup] TextRenderingResources pipeline handle was null.");
-                            }
-                            if text_res.vertex_buffer != vk::Buffer::null() {
-                                allocator.destroy_buffer(text_res.vertex_buffer, &mut text_res.vertex_allocation);
-                                info!("[Cleanup] Destroyed TextRenderingResources shared vertex buffer and allocation.");
-                            } else {
-                                info!("[Cleanup] TextRenderingResources vertex_buffer handle was null, skipping destroy.");
-                            }
-                        }
-                    } else { info!("[Cleanup] TextRenderingResources not found (Core Plugin)."); }
-
-                    // --- Cleanup GlobalProjectionUboResource (Processed ONCE) ---
-                    if let Some(mut global_ubo_res) = global_ubo_res_opt {
-                         info!("[Cleanup] Cleaning up GlobalProjectionUboResource...");
-                        if global_ubo_res.buffer != vk::Buffer::null() {
-                            unsafe {
-                                allocator.destroy_buffer(global_ubo_res.buffer, &mut global_ubo_res.allocation);
-                                info!("[Cleanup] Destroyed global UBO buffer and allocation.");
-                            }
-                        } else {
-                             info!("[Cleanup] Global UBO buffer handle was null, skipping destroy.");
-                        }
-                    } else { info!("[Cleanup] GlobalProjectionUboResource not found (Core Plugin)."); }
-
-                    // --- Cleanup GlyphAtlasResource ---
-                    if let Some(atlas_res) = glyph_atlas_res_opt {
-                         match atlas_res.0.lock() {
-                            Ok(mut atlas_guard) => {
-                                atlas_guard.cleanup(&vk_ctx_guard);
-                            }
-                            Err(poisoned) => error!("GlyphAtlas Mutex poisoned during cleanup: {:?}", poisoned),
-                        }
-                    } else { info!("[Cleanup] GlyphAtlas resource not found (Core Plugin)."); }
-                } else {
-                    // This case means device or allocator was not available from vk_ctx_guard
-                    error!("[Cleanup] Device or Allocator not available from VulkanContext for resource cleanup. Skipping dependent cleanups.");
-                    // Log if resources existed but couldn't be cleaned
-                    if text_rendering_res_opt.is_some() { info!("[Cleanup] TextRenderingResources existed but cannot be cleaned up due to missing Vulkan device/allocator."); }
-                    if global_ubo_res_opt.is_some() { info!("[Cleanup] GlobalProjectionUboResource existed but cannot be cleaned up due to missing Vulkan device/allocator."); }
-                    if glyph_atlas_res_opt.is_some() { info!("[Cleanup] GlyphAtlasResource existed but cannot be cleaned up due to missing Vulkan device/allocator."); }
-                }
-                // --- Cleanup Vulkan Context (Instance, Device, Allocator, etc.) ---
-                cleanup_vulkan(&mut vk_ctx_guard);
-            }
-            Err(poisoned) => {
-                error!("VulkanContext Mutex was poisoned before cleanup (Core Plugin): {:?}", poisoned);
-            }
+    // Move the context out of the Mutex. This is the only time it's safe to do so.
+    let mut vk_context = match vk_context_res.0.lock() {
+        Ok(mut guard) => std::mem::replace(&mut *guard, VulkanContext::new()),
+        Err(_) => {
+            error!("[Cleanup] VulkanContext Mutex was poisoned. Cleanup cannot proceed safely.");
+            return;
         }
-    } else {
-        warn!("VulkanContext resource not found or already removed during cleanup trigger (Core Plugin).");
+    };
+
+    // Extract the core device and allocator handles. These will be passed to other cleanup functions.
+    let (Some(device), Some(allocator)) = (vk_context.device.as_ref(), vk_context.allocator.as_ref()) else {
+        error!("[Cleanup] Vulkan Device or Allocator handle not found in context. Aborting cleanup.");
+        return;
+    };
+
+    // --- Explicitly Wait for GPU to be Idle ---
+    info!("[Cleanup] Waiting for device idle before resource destruction...");
+    unsafe {
+        if let Err(e) = device.device_wait_idle() {
+            error!("[Cleanup] Failed to wait for device idle: {:?}", e);
+        }
     }
-    info!("EXITING cleanup_trigger_system (Core Plugin on AppExit)");
+
+    // --- Cleanup Dependent Resources (in reverse order of creation) ---
+
+    if let Some(bm_res) = buffer_manager_res_opt {
+        if let Ok(mut bm_guard) = bm_res.0.lock() {
+            bm_guard.cleanup(device, allocator);
+        }
+    }
+
+    if let Some(renderer_res) = renderer_res_opt {
+        if let Ok(mut renderer_guard) = renderer_res.0.lock() {
+            renderer_guard.cleanup(device, allocator);
+        }
+    }
+
+    if let Some(mut text_res) = text_rendering_res_opt {
+        info!("[Cleanup] Cleaning up TextRenderingResources...");
+        unsafe {
+            device.destroy_pipeline(text_res.pipeline, None);
+            allocator.destroy_buffer(text_res.vertex_buffer, &mut text_res.vertex_allocation);
+        }
+    }
+
+    if let Some(mut global_ubo_res) = global_ubo_res_opt {
+        info!("[Cleanup] Cleaning up GlobalProjectionUboResource...");
+        unsafe {
+            allocator.destroy_buffer(global_ubo_res.buffer, &mut global_ubo_res.allocation);
+        }
+    }
+
+    if let Some(atlas_res) = glyph_atlas_res_opt {
+        if let Ok(mut atlas_guard) = atlas_res.0.lock() {
+            atlas_guard.cleanup(device, allocator);
+        }
+    }
+
+    // --- Final Swapchain and Context Cleanup ---
+    // This function now takes the mutable context directly.
+    crate::gui_framework::rendering::swapchain::cleanup_swapchain_resources(&mut vk_context);
+
+    // Now, call the final cleanup function with the deconstructed context.
+    cleanup_vulkan(vk_context);
+
+    info!("[Cleanup] Cleanup trigger system finished.");
 }

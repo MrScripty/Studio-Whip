@@ -460,15 +460,11 @@ impl GlyphAtlas {
     }
 
     // Cleanup Vulkan resources
-    pub fn cleanup(&mut self, vk_context: &VulkanContext) {
-        let Some(device) = vk_context.device.as_ref() else {
-            error!("[GlyphAtlas::cleanup] Device not available for cleanup.");
-            return;
-        };
-        let Some(allocator) = vk_context.allocator.as_ref() else {
-            error!("[GlyphAtlas::cleanup] Allocator not available for cleanup.");
-            return;
-        };
+        pub fn cleanup(
+            &mut self,
+            device: &ash::Device,
+            allocator: &Arc<vk_mem::Allocator>,
+        ) {
     
         unsafe {
             info!("[GlyphAtlas::cleanup] Destroying sampler {:?} and image_view {:?}.", self.sampler, self.image_view);

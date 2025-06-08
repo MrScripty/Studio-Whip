@@ -209,7 +209,7 @@ pub(crate) fn interaction_system(
                         // Don't reset context here, reset it based on what is hit
                         // mouse_context.context = MouseContextType::Idle;
                         let mut clicked_on_something = false;
-                        let text_hit_details: Option<(Entity, Cursor)> = None;
+                        let mut text_hit_details: Option<(Entity, Cursor)> = None;
 
                         // --- 1. Check Editable Text Hit Detection (Overall BBox + buffer.hit()) ---
                         let Ok(mut font_server_guard) = font_server_res.0.lock() else {
@@ -283,9 +283,10 @@ pub(crate) fn interaction_system(
                                     // Use the utility function here
                                     if let Some(hit_cursor) = get_cursor_at_position(buffer, cursor_pos_local_ydown) {
                                         info!("Hit text entity {:?} at cursor: {:?}", entity, hit_cursor);
-                                        info!("Setting MouseContext to TextInteraction for entity {:?}", entity);
+                                        text_hit_details = Some((entity, hit_cursor));
                                         // Set context now that we know we hit text
                                         mouse_context.context = MouseContextType::TextInteraction;
+                                        info!("Setting MouseContext to TextInteraction for entity {:?}", entity);
                                         clicked_on_something = true;
                                         break; // Found hit on this entity
                                     }

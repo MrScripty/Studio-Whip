@@ -19,6 +19,7 @@ use bevy_core::Name;
 use crate::gui_framework::plugins::interaction::InteractionSet;
 use crate::BufferManagerResource;
 use crate::gui_framework::context::vulkan_setup::set_debug_object_name;
+use crate::gui_framework::interaction::utils::global_to_local_cursor;
 
 // Import types from the crate root (lib.rs)
 use crate::{
@@ -593,16 +594,18 @@ fn manage_cursor_visual_system(
         let cursor_entity = commands.spawn((
             CursorVisual,
             ShapeData {
-                // It will be scaled dynamically by `update_cursor_transform_system`.
+                // Define a 1x1 unit quad centered at the origin.
+                // It will be scaled and positioned dynamically by `update_cursor_transform_system`
+                // using the Rect from cosmic-text's `layout_cursor` function.
                 vertices: Arc::new(vec![
                     // Triangle 1
-                    Vertex { position: [-0.5, -8.5] },
-                    Vertex { position: [-0.5, 8.5] },
-                    Vertex { position: [0.5, -8.5] },
+                    Vertex { position: [-0.5, -0.5] },
+                    Vertex { position: [0.5, 0.5] },
+                    Vertex { position: [0.5, -0.5] },
                     // Triangle 2
-                    Vertex { position: [0.5, -8.5] },
-                    Vertex { position: [-0.5, 8.5] },
-                    Vertex { position: [0.5, 8.5] },
+                    Vertex { position: [-0.5, -0.5] },
+                    Vertex { position: [-0.5, 0.5] },
+                    Vertex { position: [0.5, 0.5] },
                 ]),
                 color: Color::BLACK,
             },
@@ -646,15 +649,23 @@ fn manage_cursor_visual_system(
     }
 }
 
-/// System to update the visual cursor's position based on `CursorState` and `TextBufferCache`.
+/// System to update the visual cursor's position and size based on `CursorState` and `TextBufferCache`.
 fn update_cursor_transform_system(
-    focused_query: Query<(Entity, &CursorState, &TextBufferCache, &Transform), With<Focus>>, // Add Transform
-    mut cursor_visual_query: Query<&mut Transform, (With<CursorVisual>, Without<Focus>)>,
+    mut focused_query: ParamSet<(
+        Query<(Entity, &CursorState, &mut TextBufferCache), With<Focus>>,
+    )>,
+    mut cursor_visual_query: Query<(&mut Transform, &Visibility), (With<CursorVisual>, Without<Focus>)>,
     children_query: Query<&Children>,
-    font_server_res: Res<FontServerResource>,
+    mut font_server_res: ResMut<FontServerResource>,
 ) {
-    if let Ok((focused_entity, cursor_state, text_cache, _text_transform)) = focused_query.get_single() {
-        // Find the child cursor entity
+    let mut focused_entity_opt: Option<(Entity, CursorState)> = None;
+
+    for (entity, cursor_state, _) in focused_query.p0().iter() {
+        focused_entity_opt = Some((entity, *cursor_state));
+        break;
+    }
+
+    if let Some((focused_entity, cursor_state)) = focused_entity_opt {
         let mut target_cursor_entity: Option<Entity> = None;
         if let Ok(children) = children_query.get(focused_entity) {
             for &child in children.iter() {
@@ -666,96 +677,79 @@ fn update_cursor_transform_system(
         }
 
         if let Some(cursor_entity) = target_cursor_entity {
-            if let Ok(mut cursor_transform) = cursor_visual_query.get_mut(cursor_entity) {
-                // Try to use the buffer for precise positioning
-                if let Some(buffer) = text_cache.buffer.as_ref() {
-                    let Ok(mut font_server) = font_server_res.0.lock() else {
-                        error!("[update_cursor_transform_system] Failed to lock FontServerResource. Skipping cursor update.");
-                        return;
-                    };
-                    let line_index = cursor_state.line;
-                    let byte_offset = cursor_state.position;
+            // Get mutable access to the transform and immutable access to visibility
+            if let (Ok((_, _, mut text_cache)), Ok((mut cursor_transform, cursor_visibility))) =
+                (focused_query.p0().get_mut(focused_entity), cursor_visual_query.get_mut(cursor_entity))
+            {
+                if let Some(buffer) = text_cache.buffer.as_mut() {
+                    let Ok(mut font_server) = font_server_res.0.lock() else { return; };
 
-                    let mut position_found = false;
-                    let mut current_logical_line = 0;
+                    let local_cursor = global_to_local_cursor(buffer, cursor_state.position);
 
-                    for run in buffer.layout_runs() {
-                        if current_logical_line == line_index {
-                            let mut current_x = 0.0;
-                            let mut found_glyph_pos = false;
-
-                            let mut max_scaled_ascent = 0.0f32;
-                            let mut max_scaled_descent = 0.0f32;
-
-                            for glyph_layout in run.glyphs.iter() {
-                                if let Some(font) = font_server.font_system.get_font(glyph_layout.font_id) {
-                                    let metrics = font.as_swash().metrics(&[]);
-                                    if metrics.units_per_em > 0 {
-                                        let scale = glyph_layout.font_size / metrics.units_per_em as f32;
-                                        max_scaled_ascent = max_scaled_ascent.max(metrics.ascent * scale);
-                                        max_scaled_descent = max_scaled_descent.min(metrics.descent * scale);
-                                    }
-                                }
+                    if let Some(layout_cursor) = buffer.layout_cursor(&mut font_server.font_system, local_cursor) {
+                        // Find the correct LayoutRun to get the line's Y position (baseline).
+                        let mut line_y = 0.0;
+                        let mut found_run = false;
+                        for run in buffer.layout_runs() {
+                            if run.line_i == layout_cursor.line {
+                                line_y = run.line_y;
+                                found_run = true;
+                                break;
                             }
-
-                            for (i, glyph_layout) in run.glyphs.iter().enumerate() {
-                                if byte_offset >= glyph_layout.start && byte_offset < glyph_layout.end {
-                                    current_x = glyph_layout.x;
-                                    found_glyph_pos = true;
-                                    break;
-                                }
-                                if byte_offset == glyph_layout.end {
-                                    if let Some(next_glyph) = run.glyphs.get(i + 1) {
-                                        current_x = next_glyph.x;
-                                    } else {
-                                        current_x = run.line_w;
-                                    }
-                                    found_glyph_pos = true;
-                                    break;
-                                }
-                                if byte_offset < glyph_layout.start {
-                                    current_x = glyph_layout.x;
-                                    found_glyph_pos = true;
-                                    break;
-                                }
-                            }
-
-                            if !found_glyph_pos {
-                                if run.glyphs.is_empty() || byte_offset == 0 {
-                                    current_x = 0.0;
-                                    found_glyph_pos = true;
-                                } else if byte_offset >= run.glyphs.last().unwrap().end {
-                                    current_x = run.line_w;
-                                    found_glyph_pos = true;
-                                }
-                            }
-
-                            if found_glyph_pos {
-                                let local_x = current_x;
-                                let baseline_y_down = run.line_y;
-                                let descent_y_up = max_scaled_descent;
-                                let local_y_up = -baseline_y_down + descent_y_up + 8.0;
-
-                                cursor_transform.translation.x = local_x;
-                                cursor_transform.translation.y = local_y_up;
-                                position_found = true;
-                            }
-                            break;
                         }
-                        current_logical_line += 1;
+
+                        if !found_run {
+                            *cursor_transform = Transform::default();
+                            return;
+                        }
+
+                        // Now get the LayoutLine using the indices from LayoutCursor.
+                        let line_layout = buffer.lines.get(layout_cursor.line)
+                            .and_then(|line| line.layout_opt())
+                            .and_then(|layouts| layouts.get(layout_cursor.layout));
+
+                        if let Some(line) = line_layout {
+                            let glyph_x = if layout_cursor.glyph < line.glyphs.len() {
+                                line.glyphs[layout_cursor.glyph].x
+                            } else {
+                                line.w // End of line
+                            };
+
+                            // Calculate height from ascent and descent.
+                            let cursor_height = line.max_ascent + line.max_descent;
+                            let cursor_width = 1.0;
+
+                            // Calculate the Y position of the *top* of the line.
+                            let line_top_y = line_y - line.max_ascent;
+
+                            // Center of the cursor rectangle in Y-down space.
+                            let center_x_ydown = glyph_x + (cursor_width / 2.0);
+                            let center_y_ydown = line_top_y + (cursor_height / 2.0);
+
+                            // Convert to Bevy's Y-up space.
+                            cursor_transform.translation.x = center_x_ydown;
+                            cursor_transform.translation.y = -center_y_ydown;
+                            cursor_transform.scale.x = cursor_width;
+                            cursor_transform.scale.y = cursor_height;
+                        } else {
+                            *cursor_transform = Transform::default();
+                        }
+                    } else {
+                        *cursor_transform = Transform::default();
                     }
 
-                    // Fallback if no position was found
-                    if !position_found {
-                        warn!("Could not determine cursor position for line {}, offset {}. Using fallback.", line_index, byte_offset);
-                        cursor_transform.translation.x = 0.0;
-                        cursor_transform.translation.y = 0.0;
-                    }
+                    // --- Add diagnostic logging ---
+                    info!(
+                        "CURSOR UPDATE: Entity {:?}, Visible: {}, Translation: {:?}, Scale: {:?}",
+                        cursor_entity,
+                        cursor_visibility.0,
+                        cursor_transform.translation,
+                        cursor_transform.scale
+                    );
+
                 } else {
-                    // Fallback when buffer is not yet available
-                    warn!("TextBufferCache.buffer not available for cursor positioning. Using text entity origin.");
-                    cursor_transform.translation.x = 0.0;
-                    cursor_transform.translation.y = 0.0;
+                    warn!("TextBufferCache.buffer not available for cursor positioning.");
+                    *cursor_transform = Transform::default();
                 }
             }
         }

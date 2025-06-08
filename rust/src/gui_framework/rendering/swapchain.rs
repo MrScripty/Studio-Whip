@@ -371,26 +371,26 @@ pub fn cleanup_swapchain_resources(platform: &mut VulkanContext) {
         }
 
         let depth_image_opt = platform.depth_image.take();
-        let mut depth_alloc_opt = platform.depth_image_allocation.take();
+        let depth_alloc_opt = platform.depth_image_allocation.take();
 
-        if let (Some(image), Some(alloc_ref_mut)) = (depth_image_opt, depth_alloc_opt.as_mut()) {
-             info!("[cleanup_swapchain_resources] Attempting to destroy DepthImage {:?} with allocation.", image);
-             if let Some(allocator) = platform.allocator.as_ref() {
-                 info!("[cleanup_swapchain_resources] Destroying VkImage (DepthImage) {:?}.", image);
-                 device.destroy_image(image, None);
-                 info!("[cleanup_swapchain_resources] Freeing VmaAllocation (DepthImage) for image {:?}.", image);
-                 allocator.free_memory(alloc_ref_mut);
-             } else {
-                  error!("[cleanup_swapchain_resources] Allocator not available to destroy depth image!");
-             }
+        // Check for mismatched resources *before* moving them into the `if let`.
+        if depth_image_opt.is_some() != depth_alloc_opt.is_some() {
+            warn!("[cleanup_swapchain_resources] Mismatched DepthImage and Allocation. Image: {:?}, Allocation: {:?}",
+                  depth_image_opt.is_some(), depth_alloc_opt.is_some());
+        }
+
+        // Now, consume the Options to perform the cleanup.
+        if let (Some(image), Some(mut allocation)) = (depth_image_opt, depth_alloc_opt) {
+            info!("[cleanup_swapchain_resources] Attempting to destroy DepthImage {:?} with its allocation.", image);
+            if let Some(allocator) = platform.allocator.as_ref() {
+                // Use the correct vk-mem function to destroy the image and free its memory.
+                allocator.destroy_image(image, &mut allocation);
+                info!("[cleanup_swapchain_resources] Destroyed DepthImage and its memory allocation.");
+            } else {
+                error!("[cleanup_swapchain_resources] Allocator not available to destroy depth image!");
+            }
         } else {
-            info!("[cleanup_swapchain_resources] DepthImage or its allocation was already taken/None or pair incomplete.");
-            if depth_image_opt.is_some() && depth_alloc_opt.is_none() {
-                warn!("[cleanup_swapchain_resources] DepthImage existed but its Allocation was None.");
-            }
-            if depth_image_opt.is_none() && depth_alloc_opt.is_some() {
-                warn!("[cleanup_swapchain_resources] DepthImage Allocation existed but the Image was None.");
-            }
+            info!("[cleanup_swapchain_resources] DepthImage or its allocation was already taken/None.");
         }
         platform.depth_format = None;
 

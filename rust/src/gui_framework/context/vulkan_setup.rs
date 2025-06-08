@@ -316,16 +316,23 @@ pub fn cleanup_vulkan(app: &mut VulkanContext) {
         warn!("[cleanup_vulkan] Device not available for idle wait. This is unexpected if cleanup is called correctly.");
     }
 
-    info!("[cleanup_vulkan] Preparing to destroy vk-mem Allocator...");
-    if let Some(allocator_arc) = app.allocator.take() {
-        drop(allocator_arc);
-        info!("[cleanup_vulkan] vk-mem Allocator Arc dropped. VMA Allocator should be destroyed now if this was the last Arc.");
-    } else {
-         info!("[cleanup_vulkan] Allocator was already taken or never initialized in VulkanContext.");
-    }
-    app.allocator = None;
+    // The Allocator must be dropped *before* the device.
+    // By taking both here, we ensure the drop order is explicit within this scope.
+    let allocator_to_drop = app.allocator.take();
+    let device_to_destroy = app.device.take();
 
-    if let Some(device) = app.device.take() {
+    if let Some(device) = device_to_destroy {
+        // Explicitly drop the allocator right before destroying the device.
+        // When `allocator_to_drop` goes out of scope here, the Arc is dropped.
+        // If it's the last Arc, the Allocator is dropped, freeing all its memory pools.
+        if let Some(allocator) = allocator_to_drop {
+            info!("[cleanup_vulkan] Dropping vk-mem Allocator Arc...");
+            drop(allocator);
+            info!("[cleanup_vulkan] vk-mem Allocator Arc dropped.");
+        } else {
+            info!("[cleanup_vulkan] Allocator was already taken or never initialized.");
+        }
+
         info!("[cleanup_vulkan] Destroying logical device...");
         unsafe { device.destroy_device(None); } // This is where the validation error occurs
         info!("[cleanup_vulkan] Logical device destroyed.");

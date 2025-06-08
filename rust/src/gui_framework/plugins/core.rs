@@ -592,13 +592,17 @@ fn manage_cursor_visual_system(
         let cursor_entity = commands.spawn((
             CursorVisual,
             ShapeData {
+                // Define a 1x1 unit quad centered at the origin.
+                // It will be scaled dynamically by `update_cursor_transform_system`.
                 vertices: Arc::new(vec![
-                    Vertex { position: [-0.5, -8.0] },
-                    Vertex { position: [-0.5, 8.0] },
-                    Vertex { position: [0.5, -8.0] },
-                    Vertex { position: [0.5, -8.0] },
-                    Vertex { position: [-0.5, 8.0] },
-                    Vertex { position: [0.5, 8.0] },
+                    // Triangle 1
+                    Vertex { position: [-0.5, -8.5] },
+                    Vertex { position: [-0.5, 8.5] },
+                    Vertex { position: [0.5, -8.5] },
+                    // Triangle 2
+                    Vertex { position: [0.5, -8.5] },
+                    Vertex { position: [-0.5, 8.5] },
+                    Vertex { position: [0.5, 8.5] },
                 ]),
                 color: Color::BLACK,
             },

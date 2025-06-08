@@ -304,26 +304,19 @@ impl TextRenderer {
             info!("[TextRenderer::cleanup] Processing entity {:?} for cleanup. UBO: {:?}, VB: {:?}",
                   entity, render_data.transform_ubo, render_data.vertex_buffer);
             unsafe {
-                // Cleanup Transform UBO
+                // Use allocator.destroy_buffer to correctly clean up both the buffer and its memory.
                 if render_data.transform_ubo != vk::Buffer::null() {
-                    info!("[TextRenderer::cleanup] Destroying VkBuffer (transform UBO) for entity {:?}", entity);
-                    device.destroy_buffer(render_data.transform_ubo, None);
-                    info!("[TextRenderer::cleanup] Freeing VmaAllocation (transform UBO) for entity {:?}", entity);
-                    allocator.free_memory(&mut render_data.transform_alloc);
+                    allocator.destroy_buffer(render_data.transform_ubo, &mut render_data.transform_alloc);
                 } else {
                     warn!("[TextRenderer::cleanup] Transform UBO for entity {:?} was already null.", entity);
                 }
-    
-                // Cleanup Vertex Buffer
+
                 if render_data.vertex_buffer != vk::Buffer::null() {
-                    info!("[TextRenderer::cleanup] Destroying VkBuffer (vertex buffer) for entity {:?}", entity);
-                    device.destroy_buffer(render_data.vertex_buffer, None);
-                    info!("[TextRenderer::cleanup] Freeing VmaAllocation (vertex buffer) for entity {:?}", entity);
-                    allocator.free_memory(&mut render_data.vertex_alloc);
+                    allocator.destroy_buffer(render_data.vertex_buffer, &mut render_data.vertex_alloc);
                 } else {
                     warn!("[TextRenderer::cleanup] Vertex buffer for entity {:?} was already null.", entity);
                 }
-    
+
                 if render_data.descriptor_set_0 != vk::DescriptorSet::null() {
                     sets_to_free.push(render_data.descriptor_set_0);
                 }

@@ -474,15 +474,12 @@ impl GlyphAtlas {
             info!("[GlyphAtlas::cleanup] Destroying sampler {:?} and image_view {:?}.", self.sampler, self.image_view);
             device.destroy_sampler(self.sampler, None);
             device.destroy_image_view(self.image_view, None);
-    
-            let mut image_alloc_opt = self.allocation.take();
-    
-            if let (Some(image_handle), Some(alloc_ref_mut)) = (Some(self.image), image_alloc_opt.as_mut()) {
-                info!("[GlyphAtlas::cleanup] Attempting to destroy atlas image {:?} with allocation.", image_handle);
-                info!("[GlyphAtlas::cleanup] Destroying VkImage (atlas image) {:?}.", image_handle);
-                device.destroy_image(image_handle, None);
-                info!("[GlyphAtlas::cleanup] Freeing VmaAllocation (atlas image) for image {:?}.", image_handle);
-                allocator.free_memory(alloc_ref_mut);
+
+            // Take ownership of the allocation Option
+            if let Some(mut allocation) = self.allocation.take() {
+                info!("[GlyphAtlas::cleanup] Attempting to destroy atlas image {:?} with its allocation.", self.image);
+                // Use the correct vk-mem function to destroy the image and its memory
+                allocator.destroy_image(self.image, &mut allocation);
             } else {
                 error!("[GlyphAtlas::cleanup] Atlas image allocation was already taken or None! Cannot destroy image memory.");
             }

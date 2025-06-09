@@ -12,7 +12,7 @@ use bevy_input::{
 use bevy_math::{Vec2, Rect, Affine3A};
 use std::path::PathBuf;
 use std::env;
-use swash::Metrics as SwashMetrics;
+// warning: unused import: `swash::Metrics as SwashMetrics` - REMOVED
 use cosmic_text::Cursor;
 use crate::gui_framework::components::{CursorState, TextSelection};
 use crate::{HotkeyResource, FontServerResource};
@@ -201,17 +201,14 @@ pub(crate) fn interaction_system(
             match event.state {
                 ButtonState::Pressed => {
                     // --- Handle Click Down (Potential Drag Start or Focus Change) ---
-                    // Only proceed if we have a valid cursor position from the window
                     if let Some(cursor_pos_window) = cursor_pos_window_opt {
                         // Calculate world coordinates ONCE for this press event
                         let cursor_pos_world = Vec2::new(cursor_pos_window.x, window_height - cursor_pos_window.y);
 
-                        // Don't reset context here, reset it based on what is hit
-                        // mouse_context.context = MouseContextType::Idle;
                         let mut clicked_on_something = false;
                         let mut text_hit_details: Option<(Entity, Cursor)> = None;
 
-                        // --- 1. Check Editable Text Hit Detection (Overall BBox + buffer.hit()) ---
+                        // --- 1. Check Editable Text Hit Detection (Definitive BBox Method) ---
                         let Ok(mut font_server_guard) = font_server_res.0.lock() else {
                             error!("Failed to lock FontServer in interaction_system");
                             continue;
@@ -221,78 +218,42 @@ pub(crate) fn interaction_system(
                             if !visibility.is_visible() { continue; }
                             let Some(buffer) = text_cache.buffer.as_ref() else { continue; };
 
-                            // Calculate overall bounding box in cosmic-text local coords (Y-down)
-                            let mut overall_min_x = f32::MAX;
-                            let mut overall_max_x = f32::MIN;
-                            let mut overall_min_y = f32::MAX; // Top Y
-                            let mut overall_max_y = f32::MIN; // Bottom Y
+                            // Transform mouse position to local space
+                            let inverse_transform: Affine3A = transform.affine().inverse();
+                            let cursor_pos_local_yup = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
+                            let cursor_pos_local_ydown = Vec2::new(cursor_pos_local_yup.x, -cursor_pos_local_yup.y);
 
+                            // Log coordinate transformation
+                            info!(
+                                "[HitTest] Entity {:?}: Window=({}, {}), World=({}, {}), Local Y-up=({}, {}), Local Y-down=({}, {})",
+                                entity, cursor_pos_window.x, cursor_pos_window.y, cursor_pos_world.x, cursor_pos_world.y,
+                                cursor_pos_local_yup.x, cursor_pos_local_yup.y, cursor_pos_local_ydown.x, cursor_pos_local_ydown.y
+                            );
+
+                            // Log buffer layout to verify line positions
                             for run in buffer.layout_runs() {
-                                // Use line_top and calculated line_bottom even if glyphs are empty or width is zero
-                                // This ensures empty lines contribute to vertical bounds
-                                let run_min_x = if run.glyphs.is_empty() { 0.0 } else { run.glyphs[0].x }; // Default X if no glyphs
-                                let run_max_x = run_min_x + run.line_w;
-                                let run_min_y = run.line_top; // Top edge
-
-                                // Calculate max descent for this line (even if empty, descent is 0)
-                                let mut max_scaled_descent = 0.0f32;
-                                for glyph in run.glyphs { // This loop won't run if glyphs is empty
-                                    if let Some(font) = font_server_guard.font_system.get_font(glyph.font_id) {
-                                        let swash_font = font.as_swash();
-                                        let metrics: SwashMetrics = swash_font.metrics(&[]);
-                                        if metrics.units_per_em > 0 {
-                                            let scale = glyph.font_size / metrics.units_per_em as f32;
-                                            max_scaled_descent = max_scaled_descent.max(metrics.descent.abs() * scale);
-                                        }
-                                    }
-                                }
-                                let run_max_y = run.line_y + max_scaled_descent; // Bottom edge
-
-                                overall_min_x = overall_min_x.min(run_min_x);
-                                overall_max_x = overall_max_x.max(run_max_x);
-                                overall_min_y = overall_min_y.min(run_min_y);
-                                overall_max_y = overall_max_y.max(run_max_y);
+                                info!(
+                                    "[HitTest] Entity {:?}, Line {}: top={}, baseline_y={}, width={}, text='{}'",
+                                    entity, run.line_i, run.line_top, run.line_y, run.line_w, run.text
+                                );
                             }
 
-                            // Check if bounds were actually updated (i.e., text wasn't empty / had no runs)
-                            if overall_min_x <= overall_max_x && overall_min_y <= overall_max_y {
-                                // Create overall Rect in cosmic-text coords (Y-down)
-                                let mut overall_rect_local_ydown = Rect::from_corners(
-                                    Vec2::new(overall_min_x, overall_min_y), // Top-Left
-                                    Vec2::new(overall_max_x, overall_max_y)  // Bottom-Right
+                            // Use buffer.hit to get the cursor position
+                            if let Some(hit_cursor) = buffer.hit(cursor_pos_local_ydown.x, cursor_pos_local_ydown.y) {
+                                info!(
+                                    "[HitTest] Hit entity {:?} at line {}, index {}",
+                                    entity, hit_cursor.line, hit_cursor.index
                                 );
-
-                                // Add padding
-                                overall_rect_local_ydown.min -= Vec2::splat(2.0);
-                                overall_rect_local_ydown.max += Vec2::splat(2.0);
-
-                                // Flip Y axis for Bevy's local coords (Y-up)
-                                let overall_rect_local_yup = Rect::from_corners(
-                                    Vec2::new(overall_rect_local_ydown.min.x, -overall_rect_local_ydown.max.y),
-                                    Vec2::new(overall_rect_local_ydown.max.x, -overall_rect_local_ydown.min.y)
+                                text_hit_details = Some((entity, hit_cursor));
+                                mouse_context.context = MouseContextType::TextInteraction;
+                                clicked_on_something = true;
+                                break;
+                            } else {
+                                info!(
+                                    "[HitTest] No hit for entity {:?} at Y-down pos ({}, {})",
+                                    entity, cursor_pos_local_ydown.x, cursor_pos_local_ydown.y
                                 );
-
-                                // Transform cursor world position to entity's local space (Y-up)
-                                let inverse_transform: Affine3A = transform.affine().inverse();
-                                let cursor_pos_local_yup = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
-
-                                // Perform hit check using the Y-up Rect
-                                if overall_rect_local_yup.contains(cursor_pos_local_yup) {
-                                    // If overall box hit, use utility function with Y-down local coords
-                                    let cursor_pos_local_ydown = Vec2::new(cursor_pos_local_yup.x, -cursor_pos_local_yup.y);
-                                    // Use the utility function here
-                                    if let Some(hit_cursor) = get_cursor_at_position(buffer, cursor_pos_local_ydown) {
-                                        info!("Hit text entity {:?} at cursor: {:?}", entity, hit_cursor);
-                                        text_hit_details = Some((entity, hit_cursor));
-                                        // Set context now that we know we hit text
-                                        mouse_context.context = MouseContextType::TextInteraction;
-                                        info!("Setting MouseContext to TextInteraction for entity {:?}", entity);
-                                        clicked_on_something = true;
-                                        break; // Found hit on this entity
-                                    }
-                                }
                             }
-                            if clicked_on_something { break; } // Stop checking other text entities
                         }
                         drop(font_server_guard);
 
@@ -342,8 +303,31 @@ pub(crate) fn interaction_system(
                         }
 
                         if let Some((target_text_entity, hit_cursor)) = text_hit_details {
-                            let new_cursor_pos = hit_cursor.index;
-                            let new_cursor_line = hit_cursor.line;
+                            // --- START OF THE FIX ---
+                            // `hit_cursor.index` is the LOCAL byte offset within the hit line.
+                            // We must convert this to a GLOBAL byte offset for CursorState.
+                            let mut global_byte_offset = 0;
+                            // To get the buffer, we need to query for it again.
+                            if let Ok((_, _, text_cache, _)) = editable_text_query.get(target_text_entity) {
+                                if let Some(buffer) = text_cache.buffer.as_ref() {
+                                    for i in 0..hit_cursor.line {
+                                        if let Some(line) = buffer.lines.get(i) {
+                                            // Add the length of the line's text
+                                            global_byte_offset += line.text().len();
+                                            // Add 1 for the newline character, unless it's the last line in the buffer
+                                            if i < buffer.lines.len() - 1 {
+                                                global_byte_offset += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Add the local index from the hit line to the total offset of previous lines.
+                            global_byte_offset += hit_cursor.index;
+                            // --- END OF THE FIX ---
+
+                            let new_cursor_pos = global_byte_offset; // This is now the GLOBAL position.
+                            let new_cursor_line = hit_cursor.line; // Line index is still correct.
 
                             // --- Handle Focus Change ---
                             if entity_to_unfocus != Some(target_text_entity) {

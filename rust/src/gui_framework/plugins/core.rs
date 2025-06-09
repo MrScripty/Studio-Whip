@@ -651,108 +651,81 @@ fn manage_cursor_visual_system(
 
 /// System to update the visual cursor's position and size based on `CursorState` and `TextBufferCache`.
 fn update_cursor_transform_system(
-    mut focused_query: ParamSet<(
-        Query<(Entity, &CursorState, &mut TextBufferCache), With<Focus>>,
-    )>,
-    mut cursor_visual_query: Query<(&mut Transform, &Visibility), (With<CursorVisual>, Without<Focus>)>,
+    focused_query: Query<(Entity, &CursorState, &TextBufferCache), With<Focus>>,
+    mut cursor_visual_query: Query<&mut Transform, With<CursorVisual>>,
     children_query: Query<&Children>,
-    font_server_res: ResMut<FontServerResource>,
 ) {
-    let mut focused_entity_opt: Option<(Entity, CursorState)> = None;
+    // There should only be one focused entity.
+    if let Ok((focused_entity, cursor_state, text_cache)) = focused_query.get_single() {
+        // The buffer cache must exist to calculate positions.
+        if let Some(buffer) = text_cache.buffer.as_ref() {
+            // Find the child entity that is the visual cursor.
+            if let Ok(children) = children_query.get(focused_entity) {
+                for &child in children.iter() {
+                    if let Ok(mut cursor_transform) = cursor_visual_query.get_mut(child) {
+                        // Convert the global byte offset from CursorState into a local (line, index) cursor
+                        // that cosmic-text understands.
+                        let local_cursor = global_to_local_cursor(buffer, cursor_state.position);
 
-    // Find the single entity that currently has focus and grab its state.
-    for (entity, cursor_state, _) in focused_query.p0().iter() {
-        focused_entity_opt = Some((entity, *cursor_state));
-        break; // There should only be one focused entity.
-    }
+                        // Find the run the cursor is in to get its layout properties.
+                        let run_opt = buffer.layout_runs().find(|run| {
+                            // A cursor is within a run if it's on the same line and its
+                            // character index is within the range of glyphs in that run.
+                            let run_start_index = run.glyphs.first().map_or(0, |g| g.start);
+                            let run_end_index = run.glyphs.last().map_or(run_start_index, |g| g.end);
+                            local_cursor.line == run.line_i && (local_cursor.index >= run_start_index && local_cursor.index <= run_end_index)
+                        });
 
-    // Proceed only if an entity has focus.
-    if let Some((focused_entity, cursor_state)) = focused_entity_opt {
-        let mut target_cursor_entity: Option<Entity> = None;
+                        if let Some(run) = run_opt {
+                            // Find the specific glyph layout within the run.
+                            // The index in the glyphs slice is the local cursor index minus the run's start index.
+                            let glyph_pos = local_cursor.index - run.glyphs.first().map_or(0, |g| g.start);
+                            let glyph_opt = run.glyphs.get(glyph_pos);
 
-        // Find the child entity that is the visual cursor.
-        if let Ok(children) = children_query.get(focused_entity) {
-            for &child in children.iter() {
-                if cursor_visual_query.get(child).is_ok() {
-                    target_cursor_entity = Some(child);
-                    break;
-                }
-            }
-        }
+                            // Determine the cursor's X position.
+                            // If it's after the last glyph, use the line's width.
+                            // Otherwise, use the glyph's X position.
+                            let cursor_x_ydown = glyph_opt.map_or(run.line_w, |g| g.x);
 
-        // Proceed only if we found the visual cursor entity.
-        if let Some(cursor_entity) = target_cursor_entity {
-            // Get mutable access to the text entity's cache and the cursor's transform.
-            if let (Ok((_, _, mut text_cache)), Ok((mut cursor_transform, _))) =
-                (focused_query.p0().get_mut(focused_entity), cursor_visual_query.get_mut(cursor_entity))
-            {
-                // The buffer cache must exist to calculate positions.
-                if let Some(buffer) = text_cache.buffer.as_mut() {
-                    let Ok(mut font_server) = font_server_res.0.lock() else { return; };
-
-                    // Convert the global byte offset from CursorState into a local (line, index) cursor
-                    // that cosmic-text understands.
-                    let local_cursor = global_to_local_cursor(buffer, cursor_state.position);
-
-                    // --- NEW, CORRECTED LOGIC USING layout_cursor ---
-                    // Ask cosmic-text for the layout information for the cursor.
-                    if let Some(layout_cursor) = buffer.layout_cursor(&mut font_server.font_system, local_cursor) {
-                        // The `layout_cursor` gives us the line and glyph index. We need to find the
-                        // corresponding layout data to get physical coordinates.
-
-                        // Find the specific LayoutLine the cursor is on.
-                        let line_layout = buffer.lines.get(layout_cursor.line)
-                            .and_then(|line| line.layout_opt())
-                            .and_then(|layouts| layouts.get(layout_cursor.layout));
-
-                        if let Some(line) = line_layout {
-                            // Determine the cursor's X position. If it's after the last glyph,
-                            // use the line's width. Otherwise, use the glyph's X position.
-                            let cursor_x_ydown = if layout_cursor.glyph < line.glyphs.len() {
-                                line.glyphs[layout_cursor.glyph].x
-                            } else {
-                                line.w // Position cursor at the end of the line
-                            };
-
-                            // The cursor's height is determined by the line's ascent and descent.
-                            let cursor_height = line.max_ascent + line.max_descent;
+                            // The cursor's height is determined by the line's height.
+                            let line_visual_height = run.line_height;
                             let cursor_width = 1.0; // A standard 1px wide cursor.
 
-                            // To find the Y position, we need the line's baseline from a LayoutRun.
-                            let mut line_y_baseline_ydown = 0.0;
-                            for run in buffer.layout_runs() {
-                                if run.line_i == layout_cursor.line {
-                                    line_y_baseline_ydown = run.line_y;
-                                    break;
-                                }
-                            }
-
-                            // The top of the cursor aligns with the line's ascent above the baseline.
-                            let cursor_top_y_ydown = line_y_baseline_ydown - line.max_ascent;
+                            // The top of the cursor aligns with the line's top.
+                            let cursor_top_y_ydown = run.line_top;
 
                             // Calculate the center of the cursor rectangle in Y-down coordinates.
                             let center_x_ydown = cursor_x_ydown + (cursor_width / 2.0);
-                            let center_y_ydown = cursor_top_y_ydown + (cursor_height / 2.0);
+                            let center_y_ydown = cursor_top_y_ydown + (line_visual_height / 2.0);
 
                             // Convert the center to Bevy's local Y-up space by negating the Y coordinate.
+                            // The cursor is a child, so this is relative to the parent text entity.
                             cursor_transform.translation.x = center_x_ydown;
                             cursor_transform.translation.y = -center_y_ydown;
 
                             // Set the scale to match the calculated dimensions.
                             cursor_transform.scale.x = cursor_width;
-                            cursor_transform.scale.y = cursor_height;
+                            cursor_transform.scale.y = line_visual_height;
+
                         } else {
-                            // If we can't find the layout line, hide the cursor.
+                            // If we can't find the layout run (e.g., empty text), hide the cursor.
                             cursor_transform.scale = bevy_math::Vec3::ZERO;
                         }
-                    } else {
-                        // If cosmic-text can't provide a layout cursor, hide it.
-                        cursor_transform.scale = bevy_math::Vec3::ZERO;
+                        // We found the cursor and updated it, so we can break the inner loop.
+                        break;
                     }
-                } else {
-                    // If the text buffer isn't cached, we can't position the cursor. Hide it.
-                    warn!("TextBufferCache.buffer not available for cursor positioning.");
-                    cursor_transform.scale = bevy_math::Vec3::ZERO;
+                }
+            }
+        } else {
+            // If the text buffer isn't cached, we can't position the cursor.
+            // This case should be rare, but we can find the cursor and hide it.
+            if let Ok(children) = children_query.get(focused_entity) {
+                 for &child in children.iter() {
+                    if let Ok(mut cursor_transform) = cursor_visual_query.get_mut(child) {
+                        warn!("TextBufferCache.buffer not available for cursor positioning. Hiding cursor.");
+                        cursor_transform.scale = bevy_math::Vec3::ZERO;
+                        break;
+                    }
                 }
             }
         }

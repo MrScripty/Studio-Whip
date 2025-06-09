@@ -656,7 +656,7 @@ fn update_cursor_transform_system(
     )>,
     mut cursor_visual_query: Query<(&mut Transform, &Visibility), (With<CursorVisual>, Without<Focus>)>,
     children_query: Query<&Children>,
-    mut font_server_res: ResMut<FontServerResource>,
+    font_server_res: ResMut<FontServerResource>,
 ) {
     let mut focused_entity_opt: Option<(Entity, CursorState)> = None;
 

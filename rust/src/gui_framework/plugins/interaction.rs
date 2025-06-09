@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use std::env;
 // warning: unused import: `swash::Metrics as SwashMetrics` - REMOVED
 use cosmic_text::Cursor;
-use crate::gui_framework::components::{CursorState, TextSelection};
-use crate::{HotkeyResource, FontServerResource};
+use crate::gui_framework::components::{CursorState, TextSelection, CursorVisual};
+use crate::{HotkeyResource};
 use crate::gui_framework::interaction::utils::get_cursor_at_position;
 use crate::gui_framework::interaction::text_drag::text_drag_selection_system;
 
@@ -173,12 +173,11 @@ pub(crate) fn interaction_system(
     mut entity_dragged_writer: EventWriter<EntityDragged>,
     mut text_focus_writer: EventWriter<TextFocusChanged>,
     // Queries for entities
-    interaction_query: Query<(Entity, &GlobalTransform, &Interaction, &Visibility), Without<EditableText>>, // Exclude EditableText
+    interaction_query: Query<(Entity, &GlobalTransform, &Interaction, &Visibility), (Without<EditableText>, Without<CursorVisual>)>,
     editable_text_query: Query<(Entity, &GlobalTransform, &TextBufferCache, &Visibility), With<EditableText>>,
-    focus_query: Query<Entity, With<Focus>>, // Query for entities that currently HAVE focus
+    focus_query: Query<Entity, With<Focus>>,
     // Resources
-    font_server_res: Res<FontServerResource>,
-    mut mouse_context: ResMut<MouseContext>, // Add MouseContext resource
+    mut mouse_context: ResMut<MouseContext>,
     // State for dragging
     mut drag_start_position: Local<Option<Vec2>>,
     mut dragged_entity: Local<Option<Entity>>,
@@ -192,245 +191,186 @@ pub(crate) fn interaction_system(
 ) {
     let Ok(primary_window) = windows.get_single() else { return; };
     let window_height = primary_window.height();
-    // Get cursor position once before processing events for this frame
     let cursor_pos_window_opt = primary_window.cursor_position();
+
+    // Helper enum for the unified hit-test result
+    enum HitResult {
+        Text { entity: Entity, z_depth: f32, cursor: Cursor },
+        Shape { entity: Entity, z_depth: f32, interaction: Interaction },
+    }
 
     // --- Process Mouse Button Events ---
     for event in mouse_button_input_events.read() {
         if event.button == MouseButton::Left {
             match event.state {
                 ButtonState::Pressed => {
-                    // --- Handle Click Down (Potential Drag Start or Focus Change) ---
                     if let Some(cursor_pos_window) = cursor_pos_window_opt {
-                        // Calculate world coordinates ONCE for this press event
                         let cursor_pos_world = Vec2::new(cursor_pos_window.x, window_height - cursor_pos_window.y);
+                        let mut top_hit: Option<HitResult> = None;
 
-                        let mut clicked_on_something = false;
-                        let mut text_hit_details: Option<(Entity, Cursor)> = None;
+                        // --- 1. UNIFIED HIT-TESTING ---
 
-                        // --- 1. Check Editable Text Hit Detection (Definitive BBox Method) ---
-                        let Ok(mut font_server_guard) = font_server_res.0.lock() else {
-                            error!("Failed to lock FontServer in interaction_system");
-                            continue;
-                        };
-
+                        // First, check for text hits
                         for (entity, transform, text_cache, visibility) in editable_text_query.iter() {
                             if !visibility.is_visible() { continue; }
-                            let Some(buffer) = text_cache.buffer.as_ref() else { continue; };
+                            if let Some(buffer) = text_cache.buffer.as_ref() {
+                                // *** FIX: Calculate the text's bounding box in its local (Y-down) space ***
+                                if buffer.layout_runs().next().is_none() { continue; } // Skip if no text is laid out
 
-                            // Transform mouse position to local space
-                            let inverse_transform: Affine3A = transform.affine().inverse();
-                            let cursor_pos_local_yup = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
-                            let cursor_pos_local_ydown = Vec2::new(cursor_pos_local_yup.x, -cursor_pos_local_yup.y);
+                                let mut bounds_min = Vec2::new(f32::MAX, f32::MAX);
+                                let mut bounds_max = Vec2::new(f32::MIN, f32::MIN);
+                                for run in buffer.layout_runs() {
+                                    // The horizontal start of the run is the x-position of the first glyph, or 0.0 if empty.
+                                    let line_x = run.glyphs.first().map_or(0.0, |glyph| glyph.x);
 
-                            // Log coordinate transformation
-                            info!(
-                                "[HitTest] Entity {:?}: Window=({}, {}), World=({}, {}), Local Y-up=({}, {}), Local Y-down=({}, {})",
-                                entity, cursor_pos_window.x, cursor_pos_window.y, cursor_pos_world.x, cursor_pos_world.y,
-                                cursor_pos_local_yup.x, cursor_pos_local_yup.y, cursor_pos_local_ydown.x, cursor_pos_local_ydown.y
-                            );
+                                    bounds_min.x = bounds_min.x.min(line_x);
+                                    bounds_max.x = bounds_max.x.max(line_x + run.line_w);
+                                    bounds_min.y = bounds_min.y.min(run.line_top);
+                                    bounds_max.y = bounds_max.y.max(run.line_y); // Using baseline is a reasonable approximation for the bottom edge
+                                }
+                                let mut local_bounds_ydown = Rect { min: bounds_min, max: bounds_max };
+                                local_bounds_ydown.min -= Vec2::splat(2.0); // Add padding
+                                local_bounds_ydown.max += Vec2::splat(2.0);
 
-                            // Log buffer layout to verify line positions
-                            for run in buffer.layout_runs() {
-                                info!(
-                                    "[HitTest] Entity {:?}, Line {}: top={}, baseline_y={}, width={}, text='{}'",
-                                    entity, run.line_i, run.line_top, run.line_y, run.line_w, run.text
-                                );
-                            }
-
-                            // Use buffer.hit to get the cursor position
-                            if let Some(hit_cursor) = buffer.hit(cursor_pos_local_ydown.x, cursor_pos_local_ydown.y) {
-                                info!(
-                                    "[HitTest] Hit entity {:?} at line {}, index {}",
-                                    entity, hit_cursor.line, hit_cursor.index
-                                );
-                                text_hit_details = Some((entity, hit_cursor));
-                                mouse_context.context = MouseContextType::TextInteraction;
-                                clicked_on_something = true;
-                                break;
-                            } else {
-                                info!(
-                                    "[HitTest] No hit for entity {:?} at Y-down pos ({}, {})",
-                                    entity, cursor_pos_local_ydown.x, cursor_pos_local_ydown.y
-                                );
-                            }
-                        }
-                        drop(font_server_guard);
-
-                        // --- 2. Check Non-Text Interactable Hit Detection (If no text hit) ---
-                        if !clicked_on_something {
-                            let mut top_entity: Option<(Entity, f32, bool, bool)> = None;
-
-                            for (entity, transform, interaction, visibility) in interaction_query.iter() {
-                                if !visibility.is_visible() { continue; }
-
+                                // Transform mouse position to the text's local (Y-down) space
                                 let inverse_transform: Affine3A = transform.affine().inverse();
-                                let cursor_pos_local = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
+                                let cursor_pos_local_yup = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
+                                let cursor_pos_local_ydown = Vec2::new(cursor_pos_local_yup.x, -cursor_pos_local_yup.y);
 
-                                let half_size = Vec2::new(50.0, 50.0); // Placeholder
-                                let bounds = Rect::from_center_half_size(Vec2::ZERO, half_size);
-
-                                if bounds.contains(cursor_pos_local) {
-                                    let z_depth = transform.translation().z;
-                                    if top_entity.is_none() || z_depth < top_entity.unwrap().1 {
-                                        top_entity = Some((entity, z_depth, interaction.clickable, interaction.draggable));
-                                    }
-                                }
-                            }
-
-                            if let Some((entity, _z, clickable, draggable)) = top_entity {
-                                clicked_on_something = true;
-                                if clickable {
-                                    entity_clicked_writer.send(EntityClicked { entity });
-                                }
-                                if draggable {
-                                    *drag_start_position = Some(cursor_pos_world);
-                                    *dragged_entity = Some(entity);
-                                    info!("Setting MouseContext to DraggingShape for entity {:?}", entity);
-                                    mouse_context.context = MouseContextType::DraggingShape;
-                                }
-                            }
-                        }
-
-
-                        // --- 3. Handle Focus Change using Focus Component ---
-                        let mut focus_event_to_send: Option<Option<Entity>> = None;
-                        let mut entity_to_unfocus: Option<Entity> = None;
-
-                        for current_focus_entity in focus_query.iter() {
-                            entity_to_unfocus = Some(current_focus_entity);
-                            break;
-                        }
-
-                        if let Some((target_text_entity, hit_cursor)) = text_hit_details {
-                            // --- START OF THE FIX ---
-                            // `hit_cursor.index` is the LOCAL byte offset within the hit line.
-                            // We must convert this to a GLOBAL byte offset for CursorState.
-                            let mut global_byte_offset = 0;
-                            // To get the buffer, we need to query for it again.
-                            if let Ok((_, _, text_cache, _)) = editable_text_query.get(target_text_entity) {
-                                if let Some(buffer) = text_cache.buffer.as_ref() {
-                                    for i in 0..hit_cursor.line {
-                                        if let Some(line) = buffer.lines.get(i) {
-                                            // Add the length of the line's text
-                                            global_byte_offset += line.text().len();
-                                            // Add 1 for the newline character, unless it's the last line in the buffer
-                                            if i < buffer.lines.len() - 1 {
-                                                global_byte_offset += 1;
-                                            }
+                                // *** FIX: Only proceed if the click is within the bounding box ***
+                                if local_bounds_ydown.contains(cursor_pos_local_ydown) {
+                                    // Now that we're inside the box, do the precise hit-test
+                                    if let Some(hit_cursor) = get_cursor_at_position(buffer, cursor_pos_local_ydown) {
+                                        let z_depth = transform.translation().z;
+                                        // Check if this hit is on top of any previous hit
+                                        if top_hit.as_ref().map_or(true, |prev_hit| z_depth < match prev_hit {
+                                            HitResult::Text { z_depth, .. } | HitResult::Shape { z_depth, .. } => *z_depth,
+                                        }) {
+                                            top_hit = Some(HitResult::Text { entity, z_depth, cursor: hit_cursor });
                                         }
                                     }
                                 }
                             }
-                            // Add the local index from the hit line to the total offset of previous lines.
-                            global_byte_offset += hit_cursor.index;
-                            // --- END OF THE FIX ---
+                        }
 
-                            let new_cursor_pos = global_byte_offset; // This is now the GLOBAL position.
-                            let new_cursor_line = hit_cursor.line; // Line index is still correct.
+                        // Second, check for shape hits and see if they are on top
+                        for (entity, transform, interaction, visibility) in interaction_query.iter() {
+                            if !visibility.is_visible() { continue; }
+                            let inverse_transform: Affine3A = transform.affine().inverse();
+                            let cursor_pos_local = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
+                            let bounds = Rect::from_center_half_size(Vec2::ZERO, Vec2::new(50.0, 50.0)); // Placeholder bounds
 
-                            // --- Handle Focus Change ---
-                            if entity_to_unfocus != Some(target_text_entity) {
-                                if let Some(old_focus) = entity_to_unfocus {
-                                    commands.entity(old_focus).remove::<Focus>();
-                                    commands.entity(old_focus).remove::<TextSelection>();
-                                    info!("Focus lost: {:?}", old_focus);
+                            if bounds.contains(cursor_pos_local) {
+                                let z_depth = transform.translation().z;
+                                if top_hit.as_ref().map_or(true, |prev_hit| z_depth < match prev_hit {
+                                    HitResult::Text { z_depth, .. } | HitResult::Shape { z_depth, .. } => *z_depth,
+                                }) {
+                                    top_hit = Some(HitResult::Shape { entity, z_depth, interaction: *interaction });
                                 }
-                                commands.entity(target_text_entity).insert(Focus);
-                                commands.entity(target_text_entity).insert(CursorState {
-                                    position: new_cursor_pos,
-                                    line: new_cursor_line,
-                                });
-                                commands.entity(target_text_entity).insert(TextSelection {
-                                    start: new_cursor_pos,
-                                    end: new_cursor_pos,
-                                });
-                                info!("Focus gained: {:?}, CursorState set: pos {}, line {}. Selection set: [{}, {}]", target_text_entity, new_cursor_pos, new_cursor_line, new_cursor_pos, new_cursor_pos);
-                                focus_event_to_send = Some(Some(target_text_entity));
+                            }
+                        }
 
-                                // Trigger text layout update
-                                yrs_text_changed_writer.send(YrsTextChanged { entity: target_text_entity });
-                            } else {
-                                if let Ok(existing_selection) = selection_param_set.p1().get(target_text_entity) {
-                                    if existing_selection.start != existing_selection.end {
-                                        info!("Clicked on focused entity {:?} with active selection [{}, {}]. Clearing selection.", target_text_entity, existing_selection.start, existing_selection.end);
+                        // --- 2. CENTRALIZED DECISION LOGIC ---
+
+                        let previously_focused = focus_query.get_single().ok();
+
+                        match top_hit {
+                            // --- CASE: A TEXT ENTITY WAS CLICKED ---
+                            Some(HitResult::Text { entity: target_entity, cursor, .. }) => {
+                                mouse_context.context = MouseContextType::TextInteraction;
+                                *dragged_entity = None;
+                                *drag_start_position = None;
+
+                                // Calculate global byte offset from local hit cursor
+                                let mut global_byte_offset = 0;
+                                if let Ok((_, _, text_cache, _)) = editable_text_query.get(target_entity) {
+                                    if let Some(buffer) = text_cache.buffer.as_ref() {
+                                        for i in 0..cursor.line {
+                                            if let Some(line) = buffer.lines.get(i) {
+                                                global_byte_offset += line.text().len();
+                                                if i < buffer.lines.len() - 1 { global_byte_offset += 1; }
+                                            }
+                                        }
                                     }
                                 }
+                                global_byte_offset += cursor.index;
 
-                                commands.entity(target_text_entity).insert(CursorState {
-                                    position: new_cursor_pos,
-                                    line: new_cursor_line,
-                                });
+                                let new_cursor_pos = global_byte_offset;
+                                let new_cursor_line = cursor.line;
 
-                                if let Ok(mut selection) = selection_param_set.p0().get_mut(target_text_entity) {
-                                    selection.start = new_cursor_pos;
-                                    selection.end = new_cursor_pos;
-                                    info!("Focus maintained: {:?}, CursorState updated: pos {}, line {}. Selection updated/cleared: [{}, {}]", target_text_entity, new_cursor_pos, new_cursor_line, new_cursor_pos, new_cursor_pos);
+                                if previously_focused != Some(target_entity) {
+                                    if let Some(old_focus) = previously_focused {
+                                        commands.entity(old_focus).remove::<(Focus, TextSelection, CursorState)>();
+                                    }
+                                    commands.entity(target_entity).insert((
+                                        Focus,
+                                        CursorState { position: new_cursor_pos, line: new_cursor_line },
+                                        TextSelection { start: new_cursor_pos, end: new_cursor_pos },
+                                    ));
+                                    text_focus_writer.send(TextFocusChanged { entity: Some(target_entity) });
                                 } else {
-                                    commands.entity(target_text_entity).insert(TextSelection {
-                                        start: new_cursor_pos,
-                                        end: new_cursor_pos,
-                                    });
-                                    info!("Focus maintained: {:?}, CursorState updated: pos {}, line {}. Selection inserted: [{}, {}]", target_text_entity, new_cursor_pos, new_cursor_line, new_cursor_pos, new_cursor_pos);
+                                    commands.entity(target_entity).insert(CursorState { position: new_cursor_pos, line: new_cursor_line });
+                                    if let Ok(mut selection) = selection_param_set.p0().get_mut(target_entity) {
+                                        selection.start = new_cursor_pos;
+                                        selection.end = new_cursor_pos;
+                                    }
+                                }
+                                yrs_text_changed_writer.send(YrsTextChanged { entity: target_entity });
+                            }
+
+                            // --- CASE: A SHAPE ENTITY WAS CLICKED ---
+                            Some(HitResult::Shape { entity: target_entity, interaction, .. }) => {
+                                if let Some(old_focus) = previously_focused {
+                                    commands.entity(old_focus).remove::<(Focus, TextSelection, CursorState)>();
+                                    text_focus_writer.send(TextFocusChanged { entity: None });
                                 }
 
-                                // Trigger text layout update to ensure buffer is ready
-                                yrs_text_changed_writer.send(YrsTextChanged { entity: target_text_entity });
+                                if interaction.clickable {
+                                    entity_clicked_writer.send(EntityClicked { entity: target_entity });
+                                }
+                                if interaction.draggable {
+                                    mouse_context.context = MouseContextType::DraggingShape;
+                                    *dragged_entity = Some(target_entity);
+                                    *drag_start_position = Some(cursor_pos_world);
+                                } else {
+                                    mouse_context.context = MouseContextType::Idle;
+                                    *dragged_entity = None;
+                                    *drag_start_position = None;
+                                }
                             }
-                        } else {
-                            if let Some(old_focus) = entity_to_unfocus {
-                                commands.entity(old_focus).remove::<Focus>();
-                                commands.entity(old_focus).remove::<TextSelection>();
-                                info!("Focus lost: {:?}", old_focus);
-                                focus_event_to_send = Some(None);
-                            }
-                            if !clicked_on_something {
+
+                            // --- CASE: EMPTY SPACE WAS CLICKED ---
+                            None => {
                                 mouse_context.context = MouseContextType::Idle;
-                                info!("Clicked empty space. Setting MouseContext to Idle.");
+                                *dragged_entity = None;
+                                *drag_start_position = None;
+
+                                if let Some(old_focus) = previously_focused {
+                                    commands.entity(old_focus).remove::<(Focus, TextSelection, CursorState)>();
+                                    text_focus_writer.send(TextFocusChanged { entity: None });
+                                }
                             }
                         }
-
-                        if let Some(event_data) = focus_event_to_send {
-                            text_focus_writer.send(TextFocusChanged { entity: event_data });
-                        }
-                                            
-
-                        // Clear shape drag state if not clicking on a draggable shape
-                        if mouse_context.context != MouseContextType::DraggingShape {
-                            *drag_start_position = None;
-                            *dragged_entity = None;
-                        }
-                        // Note: TextInteraction context is set, but drag state isn't initiated yet.
                     }
                 }
                 ButtonState::Released => {
-                    // --- Handle Click Release ---
-                    // If dragging a shape, stop the drag
                     if mouse_context.context == MouseContextType::DraggingShape {
                         *drag_start_position = None;
                         *dragged_entity = None;
-                        info!("Shape drag released. Setting MouseContext to Idle.");
-                        mouse_context.context = MouseContextType::Idle;
                     }
-                    // If interacting with text, keep the selection active but reset context
-                    else if mouse_context.context == MouseContextType::TextInteraction {
-                        info!("Text interaction released. Keeping selection, setting MouseContext to Idle.");
-                        mouse_context.context = MouseContextType::Idle;
-                    }
-                    // Otherwise, context should already be Idle
+                    mouse_context.context = MouseContextType::Idle;
                 }
             }
         }
     }
 
-    // --- Process Mouse Motion Events (Dragging Shapes Only for now) ---
+    // --- Process Mouse Motion Events ---
     if mouse_context.context == MouseContextType::DraggingShape {
         if let (Some(drag_entity), Some(start_pos)) = (*dragged_entity, *drag_start_position) {
             let mut last_cursor_pos = start_pos;
 
-            // Use read().last() to get the most recent position if multiple events occurred
             if let Some(cursor_pos_window) = cursor_moved_events.read().last().map(|e| e.position) {
-                 last_cursor_pos = Vec2::new(cursor_pos_window.x, window_height - cursor_pos_window.y);
+                last_cursor_pos = Vec2::new(cursor_pos_window.x, window_height - cursor_pos_window.y);
             }
 
             let delta = last_cursor_pos - start_pos;
@@ -440,15 +380,12 @@ pub(crate) fn interaction_system(
                     entity: drag_entity,
                     delta,
                 });
-                // Update start position for next frame's delta calculation
                 *drag_start_position = Some(last_cursor_pos);
             }
         }
     } else {
-        // If not dragging a shape, clear motion events to avoid processing them next frame
         cursor_moved_events.clear();
     }
-    // Note: Text drag selection logic will be added in Phase 3
 }
 
 /// Update system: Detects keyboard input and sends HotkeyActionTriggered events.

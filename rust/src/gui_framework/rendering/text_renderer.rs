@@ -142,8 +142,7 @@ impl TextRenderer {
                         };
                         let allocation_info_vb_recreate = vk_mem::AllocationCreateInfo { // Distinct name
                             flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
-                                | vk_mem::AllocationCreateFlags::MAPPED
-                                | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
+                                | vk_mem::AllocationCreateFlags::MAPPED,
                             usage: vk_mem::MemoryUsage::AutoPreferDevice,
                             ..Default::default()
                         };

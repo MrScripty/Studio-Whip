@@ -292,8 +292,7 @@ impl GlyphAtlas {
         let staging_allocation_create_info = AllocationCreateInfo {
             usage: vk_mem::MemoryUsage::AutoPreferHost,
             flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
-            | vk_mem::AllocationCreateFlags::MAPPED
-            | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
+            | vk_mem::AllocationCreateFlags::MAPPED,
             ..Default::default()
         };
 

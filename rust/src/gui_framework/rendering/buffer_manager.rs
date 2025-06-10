@@ -98,8 +98,7 @@ impl BufferManager {
                     };
                     let allocation_info_vb = vk_mem::AllocationCreateInfo {
                         flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
-                        | vk_mem::AllocationCreateFlags::MAPPED
-                        | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
+                        | vk_mem::AllocationCreateFlags::MAPPED,
                         usage: vk_mem::MemoryUsage::AutoPreferDevice,
                         ..Default::default()
                     };
@@ -129,8 +128,7 @@ impl BufferManager {
                         ..Default::default() };
                     let allocation_info_ubo = vk_mem::AllocationCreateInfo { 
                         flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
-                        | vk_mem::AllocationCreateFlags::MAPPED
-                        | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
+                        | vk_mem::AllocationCreateFlags::MAPPED,
                         usage: vk_mem::MemoryUsage::AutoPreferDevice, 
                         ..Default::default() };
                     allocator.create_buffer(&buffer_info_ubo, &allocation_info_ubo).expect("Failed to create offset uniform buffer")
@@ -190,7 +188,6 @@ impl BufferManager {
                             let allocation_info = vk_mem::AllocationCreateInfo { 
                                 flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
                                 | vk_mem::AllocationCreateFlags::MAPPED,
-                                //| vk_mem::AllocationCreateFlags::DEDICATED_MEMORY, // This buffer never had an error where we needed dedicated memory
                                 usage: vk_mem::MemoryUsage::AutoPreferDevice, 
                                 ..Default::default() };
                             allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to recreate vertex buffer")

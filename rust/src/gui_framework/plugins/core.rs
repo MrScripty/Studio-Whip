@@ -283,8 +283,7 @@ fn create_global_ubo_system(
         let allocation_info = vk_mem::AllocationCreateInfo {
             usage: vk_mem::MemoryUsage::AutoPreferDevice,
             flags: vk_mem::AllocationCreateFlags::MAPPED
-            | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
-            | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
+            | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
             ..Default::default()
         };
         allocator.create_buffer(&buffer_info, &allocation_info)
@@ -418,8 +417,7 @@ fn create_text_rendering_resources_system(
             ..Default::default() };
         let allocation_info = vk_mem::AllocationCreateInfo { 
             flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE 
-            | vk_mem::AllocationCreateFlags::MAPPED
-            | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY, 
+            | vk_mem::AllocationCreateFlags::MAPPED,
             usage: vk_mem::MemoryUsage::AutoPreferDevice, 
             ..Default::default() };
         allocator.create_buffer(&buffer_info, &allocation_info).expect("Failed to create initial text vertex buffer")

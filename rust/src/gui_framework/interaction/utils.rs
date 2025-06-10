@@ -56,3 +56,30 @@ pub fn global_to_local_cursor(buffer: &Buffer, global_pos: usize) -> Cursor {
         Cursor::new(0, 0)
     }
 }
+
+/// Converts a `cosmic_text::Cursor` (line index and byte offset within the line)
+/// into a global byte offset within the entire text buffer.
+///
+/// # Arguments
+///
+/// * `buffer` - The `cosmic_text::Buffer` containing the laid-out text.
+/// * `cursor` - The `cosmic_text::Cursor` to convert.
+///
+/// # Returns
+///
+/// * `usize` representing the global byte offset from the beginning of the text.
+pub fn cosmic_cursor_to_global_index(buffer: &Buffer, cursor: Cursor) -> usize {
+    let mut global_index = 0;
+    for (i, line) in buffer.lines.iter().enumerate() {
+        if i < cursor.line {
+            // Add the length of the line's text plus 1 for the newline character.
+            // This is correct for all but the last line, but the loop condition handles that.
+            global_index += line.text().len() + 1;
+        } else {
+            // We are on the target line. Add the cursor's index within this line and break.
+            global_index += cursor.index;
+            break;
+        }
+    }
+    global_index
+}

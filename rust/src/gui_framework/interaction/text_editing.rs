@@ -15,165 +15,157 @@ use crate::{
 
 /// System responsible for handling keyboard input for text editing operations
 /// like typing, deletion, and selection modification with arrow keys.
+/// 1. Initialize cosmic-text Editor from Bevy component state.
+/// 2. Perform actions (either on YRS data or directly on the Editor).
+/// 3. If YRS data changed, re-sync the Editor's internal buffer.
+/// 4. Read the final state from the Editor.
+/// 5. Update Bevy components from the Editor's final state.
 pub(crate) fn text_editing_system(
-    mut commands: Commands,
+    mut keyboard_input_events: EventReader<KeyboardInput>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut char_events: EventReader<KeyboardInput>,
-    mut focused_query: Query<(Entity, &mut CursorState, &mut TextSelection, &TextBufferCache), (With<Focus>, With<EditableText>)>,
+    // Make the TextBufferCache query mutable as proposed.
+    mut focused_query: Query<(Entity, &mut CursorState, &mut TextSelection, &mut TextBufferCache), (With<Focus>, With<EditableText>)>,
     yrs_doc_res: Res<YrsDocResource>,
     mut yrs_text_changed_writer: EventWriter<YrsTextChanged>,
-    mut font_system_res: ResMut<crate::FontServerResource>, // Added FontServerResource
+    mut font_system_res: ResMut<FontServerResource>,
 ) {
-    for (entity, mut cursor_state, mut selection, text_cache) in focused_query.iter_mut() {
-        let yrs_doc = yrs_doc_res.doc.clone();
-        let text_map_guard = yrs_doc_res.text_map.lock().unwrap();
-        let Some(yrs_text_ref) = text_map_guard.get(&entity) else {
-            warn!("TextEditing: YrsTextRef not found for focused entity {:?}", entity);
-            continue;
-        };
-        let yrs_text = yrs_text_ref.clone(); // Clone to release lock sooner
-        drop(text_map_guard);
+    let Ok((entity, mut cursor_state, mut selection, mut text_cache)) = focused_query.get_single_mut() else {
+        // No focused entity, or more than one. Clear events and do nothing.
+        keyboard_input_events.clear();
+        return;
+    };
 
-        let Some(buffer) = text_cache.buffer.as_ref() else {
-            warn!("TextEditing: TextBufferCache is None for focused entity {:?}", entity);
-            continue;
-        };
+    // --- 1. INITIAL SETUP ---
+    let yrs_doc = yrs_doc_res.doc.clone();
+    let Some(yrs_text) = yrs_doc_res.text_map.lock().unwrap().get(&entity).cloned() else {
+        warn!("TextEditing: YrsTextRef not found for focused entity {:?}", entity);
+        return;
+    };
 
-        // Create a temporary editor for this operation
-        // Note: We are not using cosmic-text's full Editor state persistence here,
-        // as YRS is the source of truth. We use the Editor for its editing methods.
-        let mut editor = Editor::new(buffer.clone());
-        editor.set_cursor(cosmic_text::Cursor::new(cursor_state.line, cursor_state.position));
-        editor.set_selection(cosmic_text::Selection::Normal(cosmic_text::Cursor::new(cursor_state.line, selection.start.min(selection.end))));
+    let Some(buffer) = text_cache.buffer.as_mut() else {
+        warn!("TextEditing: TextBufferCache is None for focused entity {:?}", entity);
+        return;
+    };
 
-        let mut changed = false;
-        let mut new_cursor_pos = cursor_state.position;
-        let mut new_selection_start = selection.start;
-        let mut new_selection_end = selection.end;
+    // Create a mutable `cosmic_text::Editor` from our buffer.
+    let mut editor = Editor::new(buffer);
 
-        let shift_pressed = keyboard_input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    // Set the editor's cursor and selection from our Bevy components.
+    let initial_cosmic_cursor = global_to_local_cursor(editor.buffer_ref(), cursor_state.position);
+    editor.set_cursor(initial_cosmic_cursor);
 
-        // --- Handle Deletion ---
-        if keyboard_input.just_pressed(KeyCode::Backspace) {
-            if selection.start != selection.end { // If there's a selection, delete it
-                let (del_start, del_end) = (min(selection.start, selection.end), max(selection.start, selection.end));
-                yrs_text.remove_range(&mut yrs_doc.transact_mut(), del_start as u32, (del_end - del_start) as u32);
-                new_cursor_pos = del_start;
-                new_selection_start = new_cursor_pos;
-                new_selection_end = new_cursor_pos;
-            } else if cursor_state.position > 0 { // If no selection, delete char before cursor
-                yrs_text.remove_range(&mut yrs_doc.transact_mut(), (cursor_state.position - 1) as u32, 1);
-                new_cursor_pos = cursor_state.position - 1;
-                new_selection_start = new_cursor_pos;
-                new_selection_end = new_cursor_pos;
-            }
-            changed = true;
-        } else if keyboard_input.just_pressed(KeyCode::Delete) {
-            if selection.start != selection.end { // If there's a selection, delete it
-                let (del_start, del_end) = (min(selection.start, selection.end), max(selection.start, selection.end));
-                yrs_text.remove_range(&mut yrs_doc.transact_mut(), del_start as u32, (del_end - del_start) as u32);
-                new_cursor_pos = del_start;
-                new_selection_start = new_cursor_pos;
-                new_selection_end = new_cursor_pos;
-            } else { // If no selection, delete char after cursor
-                let current_len = yrs_text.len(&yrs_doc.transact_mut()) as usize;
-                if cursor_state.position < current_len {
-                    yrs_text.remove_range(&mut yrs_doc.transact_mut(), cursor_state.position as u32, 1);
-                    // Cursor position doesn't change, but selection should collapse
-                    new_selection_start = new_cursor_pos;
-                    new_selection_end = new_cursor_pos;
-                }
-            }
-            changed = true;
+    let selection_start_cursor = global_to_local_cursor(editor.buffer_ref(), selection.start);
+    editor.set_selection(cosmic_text::Selection::Normal(selection_start_cursor));
+    // Now, perform a motion to the end of the selection to set it correctly in the editor.
+    let selection_end_cursor = global_to_local_cursor(editor.buffer_ref(), selection.end);
+    editor.action(font_system_res.0.lock().unwrap().font_system(), cosmic_text::Action::MoveCursor(selection_end_cursor, true));
+
+
+    // --- 2. HANDLE INPUT AND MODIFY STATE ---
+    let mut content_changed = false;
+    let mut action_taken = false;
+    let mut new_global_cursor_pos = cursor_state.position;
+
+    let shift_pressed = keyboard_input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
+    // --- Handle Deletion ---
+    if keyboard_input.just_pressed(KeyCode::Backspace) {
+        if editor.delete_selection() {
+            // Selection was deleted by the editor.
+        } else {
+            editor.action(font_system_res.0.lock().unwrap().font_system(), cosmic_text::Action::Backspace);
         }
+        content_changed = true;
+        action_taken = true;
+    } else if keyboard_input.just_pressed(KeyCode::Delete) {
+        if editor.delete_selection() {
+            // Selection was deleted by the editor.
+        } else {
+            editor.action(font_system_res.0.lock().unwrap().font_system(), cosmic_text::Action::Delete);
+        }
+        content_changed = true;
+        action_taken = true;
+    }
 
-        // --- Handle Character Input ---
-        for event in char_events.read() {
-            if let Key::Character(chars) = &event.logical_key {
-                if !event.repeat && event.state.is_pressed() {
-                    let mut txn = yrs_doc.transact_mut(); // Make txn mutable
-                    if selection.start != selection.end { // If selection, replace it
-                        let (replace_start, replace_end) = (min(selection.start, selection.end), max(selection.start, selection.end));
-                        yrs_text.remove_range(&mut txn, replace_start as u32, (replace_end - replace_start) as u32);
-                        yrs_text.insert(&mut txn, replace_start as u32, chars);
-                        new_cursor_pos = replace_start + chars.len();
-                    } else { // No selection, insert at cursor
-                        yrs_text.insert(&mut txn, cursor_state.position as u32, chars);
-                        new_cursor_pos = cursor_state.position + chars.len();
-                    }
-                    new_selection_start = new_cursor_pos;
-                    new_selection_end = new_cursor_pos;
-                    changed = true;
-                }
+    // --- Handle Character Input ---
+    for event in keyboard_input_events.read() {
+        if let Key::Character(chars) = &event.logical_key {
+            if !event.repeat && event.state.is_pressed() {
+                editor.insert_string(chars, None);
+                content_changed = true;
+                action_taken = true;
             }
         }
-        char_events.clear(); // Consume events
+    }
 
-        // --- Handle Arrow Key Navigation/Selection ---
-        // We use the editor's action method for cursor motion, then update our state.
-        // This is simpler than re-implementing all cursor motion logic.
-        let mut font_system_guard = font_system_res.0.lock().unwrap();
-        let mut action_taken = false;
+    // --- Handle Arrow Key Navigation/Selection ---
+    if !content_changed { // Only process navigation if no text was changed
         if keyboard_input.just_pressed(KeyCode::ArrowLeft) {
-            editor.action(&mut font_system_guard.font_system, cosmic_text::Action::Motion(Motion::Left));
+            editor.action(font_system_res.0.lock().unwrap().font_system(), cosmic_text::Action::Motion(Motion::Left, shift_pressed));
             action_taken = true;
         }
         if keyboard_input.just_pressed(KeyCode::ArrowRight) {
-            editor.action(&mut font_system_guard.font_system, cosmic_text::Action::Motion(Motion::Right));
+            editor.action(font_system_res.0.lock().unwrap().font_system(), cosmic_text::Action::Motion(Motion::Right, shift_pressed));
             action_taken = true;
         }
         if keyboard_input.just_pressed(KeyCode::ArrowUp) {
-            editor.action(&mut font_system_guard.font_system, cosmic_text::Action::Motion(Motion::Up));
+            editor.action(font_system_res.0.lock().unwrap().font_system(), cosmic_text::Action::Motion(Motion::Up, shift_pressed));
             action_taken = true;
         }
         if keyboard_input.just_pressed(KeyCode::ArrowDown) {
-            editor.action(&mut font_system_guard.font_system, cosmic_text::Action::Motion(Motion::Down));
+            editor.action(font_system_res.0.lock().unwrap().font_system(), cosmic_text::Action::Motion(Motion::Down, shift_pressed));
             action_taken = true;
         }
+    }
 
-        drop(font_system_guard); // Release lock
-        if action_taken {
-            let editor_cursor = editor.cursor();
-            new_cursor_pos = editor_cursor.index;
-            // If shift is pressed, extend selection. Otherwise, collapse it.
-            if shift_pressed {
-                new_selection_end = new_cursor_pos;
-                // new_selection_start remains the original selection.start
-            } else {
-                new_selection_start = new_cursor_pos;
-                new_selection_end = new_cursor_pos;
-            }
-            changed = true; // Cursor or selection definitely changed
+    // --- 3. SYNCHRONIZE YRS & EDITOR (The Key Fix) ---
+    if content_changed {
+        // Get the full text from the now-modified editor buffer.
+        let mut editor_text = String::new();
+        for line in editor.buffer_ref().lines.iter() {
+            editor_text.push_str(line.text());
+            editor_text.push('\n');
+        }
+        if !editor_text.is_empty() {
+            editor_text.pop(); // Remove trailing newline
         }
 
+        // Get the current text from YRS to compare.
+        let yrs_text_string = yrs_text.get_string(&yrs_doc.transact_mut());
 
-        // --- Update Components if anything changed ---
-        if changed {
-            // Update CursorState
-            // To get the correct line after edits, we need to re-layout or use cosmic-text's editor state.
-            // For now, we'll just update the position. Line update will happen after re-layout.
-            // A more robust solution would involve getting the line from the editor after actions.
-            let (final_cursor_line, final_cursor_pos) = if action_taken {
-                // If an arrow key action was taken, the editor's cursor is most up-to-date
-                (editor.cursor().line, editor.cursor().index)
-            } else {
-                // For typing/deletion, we calculated new_cursor_pos. Line needs update.
-                // This is a simplification; a full re-layout would be needed for accurate line.
-                // For now, assume line doesn't change drastically or will be corrected by layout.
-                (cursor_state.line, new_cursor_pos)
-            };
+        // Replace the entire YRS text with the editor's text.
+        // This is simpler and more robust than calculating diffs.
+        // YRS is efficient at handling this.
+        let mut txn = yrs_doc.transact_mut();
+        yrs_text.remove_range(&mut txn, 0, yrs_text_string.len() as u32);
+        yrs_text.insert(&mut txn, 0, &editor_text);
 
-            cursor_state.position = final_cursor_pos;
-            cursor_state.line = final_cursor_line; // This might be stale until next layout
+        // Send the event to notify other systems (like text_layout_system).
+        yrs_text_changed_writer.send(YrsTextChanged { entity });
+    }
 
-            selection.start = new_selection_start;
-            selection.end = new_selection_end;
+    // --- 4. UPDATE BEVY COMPONENTS FROM FINAL EDITOR STATE ---
+    if action_taken {
+        // Get the final cursor and selection from the editor.
+        let final_cursor = editor.cursor();
+        let final_selection_bounds = editor.selection_bounds();
 
-            info!(
-                "Text Edited: Entity {:?}, New Cursor [L{}, P{}], New Selection [{}, {}]",
-                entity, cursor_state.line, cursor_state.position, selection.start, selection.end
-            );
-            yrs_text_changed_writer.send(YrsTextChanged { entity });
+        // Convert back to global byte offsets.
+        cursor_state.position = cosmic_cursor_to_global_index(editor.buffer_ref(), final_cursor);
+        cursor_state.line = final_cursor.line;
+
+        if let Some((start_cursor, end_cursor)) = final_selection_bounds {
+            selection.start = cosmic_cursor_to_global_index(editor.buffer_ref(), start_cursor);
+            selection.end = cosmic_cursor_to_global_index(editor.buffer_ref(), end_cursor);
+        } else {
+            // No selection, so collapse it to the cursor position.
+            selection.start = cursor_state.position;
+            selection.end = cursor_state.position;
         }
+
+        info!(
+            "Text Edited: Entity {:?}, New Cursor [L{}, P{}], New Selection [{}, {}]",
+            entity, cursor_state.line, cursor_state.position, selection.start, selection.end
+        );
     }
 }

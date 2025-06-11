@@ -1,28 +1,39 @@
 use bevy_ecs::prelude::*;
 use bevy_input::{keyboard::{KeyCode, KeyboardInput, Key}, ButtonInput};
 use bevy_log::{info, warn};
-use cosmic_text::{Attrs, Buffer, Edit, Editor, Metrics, Motion, Selection, Shaping};
-use yrs::{Transact, Text, GetString};
+// Corrected imports based on compiler errors and new needs
+use cosmic_text::{Editor, Motion, Action, CacheKey, CacheKeyFlags, Edit, Font, LayoutGlyph};
+use swash::FontRef;
+use bevy_math::Vec2;
+use yrs::{Transact, Text};
 
 use crate::{
     YrsDocResource,
+    // Import all the types we need, as pointed out by the compiler
     gui_framework::{
-        components::{Focus, CursorState, TextSelection, TextBufferCache, EditableText},
+        components::{Focus, CursorState, TextSelection, TextBufferCache, EditableText, TextLayoutOutput, PositionedGlyph},
         events::YrsTextChanged,
         interaction::utils::{global_to_local_cursor, cosmic_cursor_to_global_index},
     },
     FontServerResource,
+    // Correctly import the resource wrappers
+    GlyphAtlasResource,
+    SwashCacheResource,
 };
 
 pub(crate) fn text_editing_system(
+    mut commands: Commands,
     mut keyboard_input_events: EventReader<KeyboardInput>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut focused_query: Query<(Entity, &mut CursorState, &mut TextSelection, &TextBufferCache), (With<Focus>, With<EditableText>)>,
+    mut focused_query: Query<(Entity, &mut CursorState, &mut TextSelection, &mut TextBufferCache), (With<Focus>, With<EditableText>)>,
     yrs_doc_res: Res<YrsDocResource>,
     mut yrs_text_changed_writer: EventWriter<YrsTextChanged>,
     font_system_res: Res<FontServerResource>,
+    glyph_atlas_res: Res<GlyphAtlasResource>,
+    swash_cache_res: Res<SwashCacheResource>,
+    vk_context_res: Res<crate::VulkanContextResource>,
 ) {
-    let Ok((entity, mut cursor_state, mut selection, text_cache)) = focused_query.get_single_mut() else {
+    let Ok((entity, mut cursor_state, mut selection, mut text_cache)) = focused_query.get_single_mut() else {
         keyboard_input_events.clear();
         return;
     };
@@ -35,47 +46,112 @@ pub(crate) fn text_editing_system(
         || keyboard_input_events.read().any(|ev| matches!(ev.logical_key, Key::Character(_)) && ev.state.is_pressed());
 
     if is_content_modification {
-        // This logic for content modification remains unchanged.
         action_taken = true;
-        let yrs_doc = yrs_doc_res.doc.clone();
-        let Some(yrs_text) = yrs_doc_res.text_map.lock().unwrap().get(&entity).cloned() else { return; };
-        let current_text = yrs_text.get_string(&yrs_doc.transact_mut());
+
+        let Some(buffer) = text_cache.buffer.as_mut() else {
+            warn!("TextBufferCache is empty for focused entity {:?}. Cannot perform edit.", entity);
+            return;
+        };
+
         let mut font_system = font_system_res.0.lock().unwrap();
-        let metrics = Metrics::new(text_cache.buffer.as_ref().unwrap().metrics().font_size, text_cache.buffer.as_ref().unwrap().metrics().line_height);
-        let mut buffer = Buffer::new(&mut font_system.font_system, metrics);
-        if let Some(original_buffer) = text_cache.buffer.as_ref() {
-            buffer.set_size(&mut font_system.font_system, original_buffer.size().0, original_buffer.size().1);
-            buffer.set_wrap(&mut font_system.font_system, original_buffer.wrap());
-        }
-        buffer.set_text(&mut font_system.font_system, &current_text, &Attrs::new(), Shaping::Advanced);
-        let mut editor = Editor::new(&mut buffer);
-        let selection_start_cursor = editor.with_buffer(|b| global_to_local_cursor(b, selection.start));
-        let selection_end_cursor = editor.with_buffer(|b| global_to_local_cursor(b, selection.end));
-        editor.set_selection(Selection::Normal(selection_start_cursor));
-        editor.set_cursor(selection_end_cursor);
-        if keyboard_input.just_pressed(KeyCode::Backspace) { if !editor.delete_selection() { editor.action(&mut font_system.font_system, cosmic_text::Action::Backspace); } }
-        else if keyboard_input.just_pressed(KeyCode::Delete) { if !editor.delete_selection() { editor.action(&mut font_system.font_system, cosmic_text::Action::Delete); } }
-        for event in keyboard_input_events.read() { if let Key::Character(chars) = &event.logical_key { if event.state.is_pressed() { editor.insert_string(chars, None); } } }
-        let mut editor_text = String::new();
-        editor.with_buffer(|b| { for line in b.lines.iter() { editor_text.push_str(line.text()); editor_text.push('\n'); } });
-        if !editor_text.is_empty() { editor_text.pop(); }
-        let mut txn = yrs_doc.transact_mut();
-        yrs_text.remove_range(&mut txn, 0, current_text.len() as u32);
-        yrs_text.insert(&mut txn, 0, &editor_text);
-        yrs_text_changed_writer.send(YrsTextChanged { entity });
-        editor.shape_as_needed(&mut font_system.font_system, true);
-        let final_cursor = editor.cursor();
-        let final_selection_bounds = editor.selection_bounds();
-        cursor_state.position = editor.with_buffer(|b| cosmic_cursor_to_global_index(b, final_cursor));
-        cursor_state.line = final_cursor.line;
-        cursor_state.x_goal = None;
-        if let Some((start_cursor, end_cursor)) = final_selection_bounds {
-            selection.start = editor.with_buffer(|b| cosmic_cursor_to_global_index(b, start_cursor));
-            selection.end = editor.with_buffer(|b| cosmic_cursor_to_global_index(b, end_cursor));
+        let mut editor = Editor::new(buffer);
+
+        let current_cursor = editor.with_buffer(|b| global_to_local_cursor(b, cursor_state.position));
+        editor.set_cursor(current_cursor);
+
+        let initial_cursor_pos = cursor_state.position;
+
+        if keyboard_input.just_pressed(KeyCode::Backspace) {
+            editor.action(&mut font_system.font_system, Action::Backspace);
+            editor.shape_as_needed(&mut font_system.font_system, true);
+
+            let new_cursor = editor.cursor();
+            let new_cursor_pos = editor.with_buffer(|b| cosmic_cursor_to_global_index(b, new_cursor));
+
+            cursor_state.position = new_cursor_pos;
+            cursor_state.line = new_cursor.line;
+            editor.with_buffer(|b| {
+                if let Some(run) = b.layout_runs().find(|r| r.line_i == new_cursor.line) {
+                    let glyph_at_cursor = run.glyphs.iter().find(|g| g.start == new_cursor.index);
+                    let new_x = glyph_at_cursor.map_or_else(
+                        || run.glyphs.first().map_or(0.0, |g| g.x) + run.line_w,
+                        |g| g.x,
+                    );
+                    cursor_state.x_goal = Some(new_x as i32);
+                } else {
+                    cursor_state.x_goal = None;
+                }
+            });
+            selection.start = new_cursor_pos;
+            selection.end = new_cursor_pos;
+
+            // *** THE FIX IS HERE (AGAIN) - A more faithful recreation of text_layout_system ***
+            let mut positioned_glyphs = Vec::new();
+            let mut swash_cache = swash_cache_res.0.lock().unwrap();
+            let mut glyph_atlas = glyph_atlas_res.0.lock().unwrap();
+            
+            let (device, queue, command_pool, allocator) = {
+                let vk_guard = vk_context_res.0.lock().unwrap();
+                (
+                    vk_guard.device.as_ref().unwrap().clone(),
+                    vk_guard.queue.unwrap(),
+                    vk_guard.command_pool.unwrap(),
+                    vk_guard.allocator.as_ref().unwrap().clone()
+                )
+            };
+
+            // We need to use with_buffer to get an immutable reference to the buffer for layout iteration.
+            editor.with_buffer(|b| {
+                for run in b.layout_runs() {
+                    let baseline_y = -run.line_y;
+                    for layout_glyph in run.glyphs.iter() {
+                        let (cache_key, _, _) = CacheKey::new(layout_glyph.font_id, layout_glyph.glyph_id, layout_glyph.font_size, (layout_glyph.x, layout_glyph.y), CacheKeyFlags::empty());
+                        let Some(swash_image) = swash_cache.get_image(&mut font_system.font_system, cache_key) else { continue; };
+                        
+                        if let Ok(glyph_info) = glyph_atlas.add_glyph(&device, queue, command_pool, &allocator, cache_key, &swash_image) {
+                            let placement = swash_image.placement;
+                            let width = placement.width as f32;
+                            let height = placement.height as f32;
+
+                            let relative_left_x = layout_glyph.x;
+                            let relative_right_x = relative_left_x + width;
+                            let relative_top_y = baseline_y + placement.top as f32;
+                            let relative_bottom_y = relative_top_y - height;
+
+                            let top_left = Vec2::new(relative_left_x, relative_top_y);
+                            let top_right = Vec2::new(relative_right_x, relative_top_y);
+                            let bottom_right = Vec2::new(relative_right_x, relative_bottom_y);
+                            let bottom_left = Vec2::new(relative_left_x, relative_bottom_y);
+
+                            positioned_glyphs.push(PositionedGlyph {
+                                glyph_info: *glyph_info,
+                                layout_glyph: layout_glyph.clone(),
+                                vertices: [top_left, top_right, bottom_right, bottom_left],
+                            });
+                        }
+                    }
+                }
+            });
+
+            commands.entity(entity).insert(TextLayoutOutput {
+                glyphs: positioned_glyphs,
+            });
+
+            if let Some(yrs_text) = yrs_doc_res.text_map.lock().unwrap().get(&entity) {
+                let mut txn = yrs_doc_res.doc.transact_mut();
+                if initial_cursor_pos > 0 {
+                    yrs_text.remove_range(&mut txn, (initial_cursor_pos - 1) as u32, 1);
+                }
+            }
+
+            yrs_text_changed_writer.send(YrsTextChanged { entity });
+
+        } else if keyboard_input.just_pressed(KeyCode::Delete) {
+            warn!("'Delete' key not yet implemented with local-first pattern.");
         } else {
-            selection.start = cursor_state.position;
-            selection.end = cursor_state.position;
+            warn!("Character insertion not yet implemented with local-first pattern.");
         }
+
     } else {
         // --- Path 2: Handle Navigation (Arrow Keys) ---
         let mut motion_to_perform: Option<(Motion, bool)> = None;
@@ -89,10 +165,7 @@ pub(crate) fn text_editing_system(
                 let mut new_cursor_opt: Option<cosmic_text::Cursor> = None;
 
                 if is_vertical {
-                    // --- NEW: Vertical Movement using buffer.hit() ---
-                    // 1. Get the origin X coordinate from our stored x_goal.
                     if let Some(origin_x) = cursor_state.x_goal {
-                        // 2. Determine the target line's Y coordinate.
                         let target_line_index = if motion == Motion::Up {
                             cursor_state.line.saturating_sub(1)
                         } else {
@@ -101,12 +174,10 @@ pub(crate) fn text_editing_system(
 
                         if let Some(target_run) = original_buffer.layout_runs().find(|r| r.line_i == target_line_index) {
                             let target_y = target_run.line_top + (target_run.line_height / 2.0);
-                            // 3. Use hit() to find the closest cursor on the target line.
                             new_cursor_opt = original_buffer.hit(origin_x as f32, target_y);
                         }
                     }
                 } else {
-                    // --- Horizontal Movement using cursor_motion (this is correct) ---
                     let start_cursor = global_to_local_cursor(original_buffer, cursor_state.position);
                     let mut temp_buffer = original_buffer.clone();
                     let mut font_system = font_system_res.0.lock().unwrap();
@@ -115,16 +186,13 @@ pub(crate) fn text_editing_system(
                     }
                 }
 
-                // --- Universal State Update ---
                 if let Some(new_cursor) = new_cursor_opt {
                     action_taken = true;
-
-                    // Update logical position
                     let new_global_pos = cosmic_cursor_to_global_index(original_buffer, new_cursor);
                     cursor_state.position = new_global_pos;
                     cursor_state.line = new_cursor.line;
 
-                    // **CRITICAL FIX**: After any move, recalculate and update the x_goal to match the new position.
+                    // This is the typo you found! Corrected `run` to `new_run`.
                     let new_run = original_buffer.layout_runs().find(|r| r.line_i == new_cursor.line).unwrap();
                     let glyph_at_cursor = new_run.glyphs.iter().find(|g| g.start == new_cursor.index);
                     let new_x = glyph_at_cursor.map_or_else(
@@ -133,7 +201,6 @@ pub(crate) fn text_editing_system(
                     );
                     cursor_state.x_goal = Some(new_x as i32);
 
-                    // Update selection
                     if shift_pressed {
                         selection.end = new_global_pos;
                     } else {

@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use bevy_input::{keyboard::{KeyCode, KeyboardInput, Key}, ButtonInput};
 use bevy_log::{info, warn};
-// *** THE FIX IS HERE: Bring the Edit trait into scope to access its methods. ***
 use cosmic_text::{Editor, Motion, Action, CacheKey, CacheKeyFlags, Font, LayoutGlyph, Edit};
 use swash::FontRef;
 use bevy_math::Vec2;
@@ -41,7 +40,6 @@ pub(crate) fn text_editing_system(
 
     // --- Refactored Content Modification Logic ---
 
-    // Determine which, if any, deletion action to perform.
     let mut deletion_action: Option<Action> = None;
     if keyboard_input.just_pressed(KeyCode::Backspace) {
         deletion_action = Some(Action::Backspace);
@@ -49,46 +47,35 @@ pub(crate) fn text_editing_system(
         deletion_action = Some(Action::Delete);
     }
 
-    let is_char_insertion = keyboard_input_events.read().any(|ev| matches!(ev.logical_key, Key::Character(_)) && ev.state.is_pressed());
+    // We need to clone the events to iterate over them for character insertion.
+    let character_events: Vec<KeyboardInput> = keyboard_input_events.read().cloned().collect();
+    let is_char_insertion = character_events.iter().any(|ev| matches!(ev.logical_key, Key::Character(_)) && ev.state.is_pressed());
 
     if let Some(action_to_perform) = deletion_action {
         // --- Unified Deletion Handling (Backspace & Delete) ---
         action_taken = true;
 
-        let Some(buffer) = text_cache.buffer.as_mut() else {
-            warn!("TextBufferCache is empty for focused entity {:?}. Cannot perform edit.", entity);
-            return;
-        };
-
+        let Some(buffer) = text_cache.buffer.as_mut() else { return; };
         let mut font_system_guard = font_system_res.0.lock().unwrap();
         let mut editor = Editor::new(buffer);
-
         let current_cursor = editor.with_buffer(|b| global_to_local_cursor(b, cursor_state.position));
         editor.set_cursor(current_cursor);
-
         let initial_cursor_pos = cursor_state.position;
-        // Get the total length of the text *before* we modify it.
         let initial_text_len = editor.with_buffer(|b| {
             b.lines.iter().map(|line| line.text().len()).sum::<usize>() + b.lines.len().saturating_sub(1)
         });
 
-        // Perform the determined action (Backspace or Delete)
         editor.action(&mut font_system_guard.font_system, action_to_perform);
         editor.shape_as_needed(&mut font_system_guard.font_system, true);
 
-        // The rest of the local update logic is identical for both actions
         let new_cursor = editor.cursor();
         let new_cursor_pos = editor.with_buffer(|b| cosmic_cursor_to_global_index(b, new_cursor));
-
         cursor_state.position = new_cursor_pos;
         cursor_state.line = new_cursor.line;
         editor.with_buffer(|b| {
             if let Some(run) = b.layout_runs().find(|r| r.line_i == new_cursor.line) {
                 let glyph_at_cursor = run.glyphs.iter().find(|g| g.start == new_cursor.index);
-                let new_x = glyph_at_cursor.map_or_else(
-                    || run.glyphs.first().map_or(0.0, |g| g.x) + run.line_w,
-                    |g| g.x,
-                );
+                let new_x = glyph_at_cursor.map_or_else(|| run.glyphs.first().map_or(0.0, |g| g.x) + run.line_w, |g| g.x);
                 cursor_state.x_goal = Some(new_x as i32);
             } else {
                 cursor_state.x_goal = None;
@@ -97,18 +84,12 @@ pub(crate) fn text_editing_system(
         selection.start = new_cursor_pos;
         selection.end = new_cursor_pos;
 
-        // Regenerate the TextLayoutOutput
         let mut positioned_glyphs = Vec::new();
         let mut swash_cache = swash_cache_res.0.lock().unwrap();
         let mut glyph_atlas = glyph_atlas_res.0.lock().unwrap();
         let (device, queue, command_pool, allocator) = {
             let vk_guard = vk_context_res.0.lock().unwrap();
-            (
-                vk_guard.device.as_ref().unwrap().clone(),
-                vk_guard.queue.unwrap(),
-                vk_guard.command_pool.unwrap(),
-                vk_guard.allocator.as_ref().unwrap().clone()
-            )
+            (vk_guard.device.as_ref().unwrap().clone(), vk_guard.queue.unwrap(), vk_guard.command_pool.unwrap(), vk_guard.allocator.as_ref().unwrap().clone())
         };
         editor.with_buffer(|b| {
             for run in b.layout_runs() {
@@ -124,40 +105,108 @@ pub(crate) fn text_editing_system(
                         let top_right = Vec2::new(layout_glyph.x + width, baseline_y + placement.top as f32);
                         let bottom_right = Vec2::new(layout_glyph.x + width, baseline_y + placement.top as f32 - height);
                         let bottom_left = Vec2::new(layout_glyph.x, baseline_y + placement.top as f32 - height);
-                        positioned_glyphs.push(PositionedGlyph {
-                            glyph_info: *glyph_info,
-                            layout_glyph: layout_glyph.clone(),
-                            vertices: [top_left, top_right, bottom_right, bottom_left],
-                        });
+                        positioned_glyphs.push(PositionedGlyph { glyph_info: *glyph_info, layout_glyph: layout_glyph.clone(), vertices: [top_left, top_right, bottom_right, bottom_left] });
                     }
                 }
             }
         });
         commands.entity(entity).insert(TextLayoutOutput { glyphs: positioned_glyphs });
 
-        // Commit the change to YRS (this part is action-specific)
         if let Some(yrs_text) = yrs_doc_res.text_map.lock().unwrap().get(&entity) {
             let mut txn = yrs_doc_res.doc.transact_mut();
             match action_to_perform {
-                Action::Backspace if initial_cursor_pos > 0 => {
-                    yrs_text.remove_range(&mut txn, (initial_cursor_pos - 1) as u32, 1);
-                }
-                Action::Delete if initial_cursor_pos < initial_text_len => {
-                    yrs_text.remove_range(&mut txn, initial_cursor_pos as u32, 1);
-                }
-                _ => {} // Do nothing for other cases
+                Action::Backspace if initial_cursor_pos > 0 => { yrs_text.remove_range(&mut txn, (initial_cursor_pos - 1) as u32, 1); }
+                Action::Delete if initial_cursor_pos < initial_text_len => { yrs_text.remove_range(&mut txn, initial_cursor_pos as u32, 1); }
+                _ => {}
             }
         }
-
         yrs_text_changed_writer.send(YrsTextChanged { entity });
 
     } else if is_char_insertion {
-        // TODO: Implement character insertion using the same pattern.
-        warn!("Character insertion not yet implemented with local-first pattern.");
-        action_taken = true; // Mark as handled to prevent clearing events prematurely
+        // --- Character Insertion Handling ---
+        action_taken = true;
+
+        let Some(buffer) = text_cache.buffer.as_mut() else { return; };
+        let mut font_system_guard = font_system_res.0.lock().unwrap();
+        let mut editor = Editor::new(buffer);
+        let current_cursor = editor.with_buffer(|b| global_to_local_cursor(b, cursor_state.position));
+        editor.set_cursor(current_cursor);
+        
+        // Iterate through the character events and apply them.
+        for event in character_events.iter() {
+            if let Key::Character(chars) = &event.logical_key {
+                if event.state.is_pressed() {
+                    // 1. SIMULATE: Insert the string into the editor's buffer.
+                    editor.insert_string(chars, None);
+                    
+                    // 3. COMMIT TO TRUTH: Immediately commit the same change to YRS.
+                    // We do this inside the loop to maintain the correct cursor position for subsequent insertions in the same frame.
+                    if let Some(yrs_text) = yrs_doc_res.text_map.lock().unwrap().get(&entity) {
+                        let mut txn = yrs_doc_res.doc.transact_mut();
+                        // Get the current cursor position *before* committing, as this is the insertion point.
+                        let insert_pos = editor.with_buffer(|b| cosmic_cursor_to_global_index(b, editor.cursor()));
+                        // The string we inserted is `chars`. The length of the string we inserted *before* this one is `chars.len()`.
+                        // So we need to insert at `insert_pos - chars.len()`.
+                        yrs_text.insert(&mut txn, (insert_pos - chars.len()) as u32, chars);
+                    }
+                }
+            }
+        }
+
+        // After all insertions, re-shape the buffer once.
+        editor.shape_as_needed(&mut font_system_guard.font_system, true);
+
+        // 2. LOCAL UPDATE: Update all visual state.
+        let new_cursor = editor.cursor();
+        let new_cursor_pos = editor.with_buffer(|b| cosmic_cursor_to_global_index(b, new_cursor));
+        cursor_state.position = new_cursor_pos;
+        cursor_state.line = new_cursor.line;
+        editor.with_buffer(|b| {
+            if let Some(run) = b.layout_runs().find(|r| r.line_i == new_cursor.line) {
+                let glyph_at_cursor = run.glyphs.iter().find(|g| g.start == new_cursor.index);
+                let new_x = glyph_at_cursor.map_or_else(|| run.glyphs.first().map_or(0.0, |g| g.x) + run.line_w, |g| g.x);
+                cursor_state.x_goal = Some(new_x as i32);
+            } else {
+                cursor_state.x_goal = None;
+            }
+        });
+        selection.start = new_cursor_pos;
+        selection.end = new_cursor_pos;
+
+        // Regenerate the TextLayoutOutput
+        let mut positioned_glyphs = Vec::new();
+        let mut swash_cache = swash_cache_res.0.lock().unwrap();
+        let mut glyph_atlas = glyph_atlas_res.0.lock().unwrap();
+        let (device, queue, command_pool, allocator) = {
+            let vk_guard = vk_context_res.0.lock().unwrap();
+            (vk_guard.device.as_ref().unwrap().clone(), vk_guard.queue.unwrap(), vk_guard.command_pool.unwrap(), vk_guard.allocator.as_ref().unwrap().clone())
+        };
+        editor.with_buffer(|b| {
+            for run in b.layout_runs() {
+                let baseline_y = -run.line_y;
+                for layout_glyph in run.glyphs.iter() {
+                    let (cache_key, _, _) = CacheKey::new(layout_glyph.font_id, layout_glyph.glyph_id, layout_glyph.font_size, (layout_glyph.x, layout_glyph.y), CacheKeyFlags::empty());
+                    let Some(swash_image) = swash_cache.get_image(&mut font_system_guard.font_system, cache_key) else { continue; };
+                    if let Ok(glyph_info) = glyph_atlas.add_glyph(&device, queue, command_pool, &allocator, cache_key, &swash_image) {
+                        let placement = swash_image.placement;
+                        let width = placement.width as f32;
+                        let height = placement.height as f32;
+                        let top_left = Vec2::new(layout_glyph.x, baseline_y + placement.top as f32);
+                        let top_right = Vec2::new(layout_glyph.x + width, baseline_y + placement.top as f32);
+                        let bottom_right = Vec2::new(layout_glyph.x + width, baseline_y + placement.top as f32 - height);
+                        let bottom_left = Vec2::new(layout_glyph.x, baseline_y + placement.top as f32 - height);
+                        positioned_glyphs.push(PositionedGlyph { glyph_info: *glyph_info, layout_glyph: layout_glyph.clone(), vertices: [top_left, top_right, bottom_right, bottom_left] });
+                    }
+                }
+            }
+        });
+        commands.entity(entity).insert(TextLayoutOutput { glyphs: positioned_glyphs });
+
+        // 4. SIGNAL: Send one event after all insertions are done.
+        yrs_text_changed_writer.send(YrsTextChanged { entity });
+
     } else {
         // --- Path 2: Handle Navigation (Arrow Keys) ---
-        // This logic remains unchanged.
         let mut motion_to_perform: Option<(Motion, bool)> = None;
         if keyboard_input.just_pressed(KeyCode::ArrowLeft) { motion_to_perform = Some((Motion::Left, false)); }
         if keyboard_input.just_pressed(KeyCode::ArrowRight) { motion_to_perform = Some((Motion::Right, false)); }
@@ -201,7 +250,6 @@ pub(crate) fn text_editing_system(
     if action_taken {
         info!( "Input Action: Entity {:?}, New Cursor [L{}, P{}, X-Goal: {:?}], New Selection [{}, {}]", entity, cursor_state.line, cursor_state.position, cursor_state.x_goal, selection.start, selection.end );
     }
-    // Clear all keyboard events if any action was taken, to prevent them from being processed again.
     if action_taken {
         keyboard_input_events.clear();
     }

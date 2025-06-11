@@ -58,6 +58,9 @@ pub struct Focus;
 pub struct CursorState {
     pub position: usize,
     pub line: usize,
+    /// The desired horizontal pixel position. Used to maintain the column when moving up/down.
+    /// `None` means it needs to be calculated on the next horizontal move.
+    pub x_goal: Option<i32>,
     // Add selection range later if needed
 }
 

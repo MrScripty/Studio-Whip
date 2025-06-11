@@ -114,47 +114,55 @@ impl Plugin for GuiFrameworkCorePlugin {
                 create_global_ubo_system.in_set(CoreSet::CreateGlobalUbo),
                 create_text_rendering_resources_system.in_set(CoreSet::CreateTextResources),
             ))
-            .init_resource::<crate::PreparedTextDrawsResource>(); // Keep this initialization
+            .init_resource::<crate::PreparedTextDrawsResource>();
 
-            // == Update Systems ==
-            // Define Update schedule ordering (TextRendering system removed)
-            app.configure_sets(Update, ( // Ensure 'app' is used here
-                // InteractionSet::InputHandling runs first (defined in interaction plugin)
-                CoreSet::ManageCursorVisual.after(InteractionSet::InputHandling), // Ensure this runs after input
-                CoreSet::ApplyInputCommands.after(CoreSet::ManageCursorVisual),
-                CoreSet::TextLayout.after(CoreSet::ApplyInputCommands),
-                CoreSet::UpdateCursorTransform.after(CoreSet::TextLayout),
-                // Handle resize last in the main chain
-                CoreSet::HandleResize.after(CoreSet::UpdateCursorTransform), // Should run after cursor transform
-                CoreSet::PreRenderCleanup.after(CoreSet::HandleResize),
-            ).chain()) // Chain these sets to enforce the order
-            .add_systems(Update, ( // Ensure 'app' is used here
+            // == Update Systems (This is the corrected ordering) ==
+            app.configure_sets(Update, (
+                // Phase 1: Apply commands from input handling. This makes component changes
+                // (like adding `Focus`) available to the rest of the frame.
+                CoreSet::ApplyInputCommands
+                    .after(InteractionSet::InputHandling),
+
+                // Phase 2: Systems that react to the newly applied components and events.
+                // Both of these must run after commands are applied.
+                CoreSet::TextLayout
+                    .after(CoreSet::ApplyInputCommands),
+                CoreSet::ManageCursorVisual
+                    .after(CoreSet::ApplyInputCommands),
+
+                // Phase 3: The cursor's visual transform can only be updated *after* the
+                // layout has been calculated AND the visual entity has been spawned.
+                CoreSet::UpdateCursorTransform
+                    .after(CoreSet::TextLayout)
+                    .after(CoreSet::ManageCursorVisual),
+                
+                // Phase 4: The rest of the systems run in a simple linear order.
+                CoreSet::HandleResize
+                    .after(CoreSet::UpdateCursorTransform),
+                CoreSet::PreRenderCleanup
+                    .after(CoreSet::HandleResize),
+            ))
+            .add_systems(Update, (
+                // Add all the systems to the schedule. Their sets define the order.
                 handle_resize_system.in_set(CoreSet::HandleResize),
                 text_layout_system.in_set(CoreSet::TextLayout),
-                // text_rendering_system removed
                 manage_cursor_visual_system.in_set(CoreSet::ManageCursorVisual),
                 update_cursor_transform_system.in_set(CoreSet::UpdateCursorTransform),
-                // Add apply_deferred to run in the ApplyInputCommands set
                 apply_deferred.in_set(CoreSet::ApplyInputCommands),
                 buffer_manager_despawn_cleanup_system.in_set(CoreSet::PreRenderCleanup),
-            )); // Semicolon needed after add_systems
+            ));
 
-            // == Last Schedule Systems ==
-            // Configure the relationship between the Render and Cleanup sets in the Last schedule
-            app.configure_sets(Last, ( // Ensure 'app' is used here
-                CoreSet::Render.after(CoreSet::PreRenderCleanup), // Ensure Render is after PreRenderCleanup if it was in Update
-                CoreSet::Cleanup.after(CoreSet::Render), // Cleanup runs after Render
+            // == Last Schedule Systems (This part is correct and remains unchanged) ==
+            app.configure_sets(Last, (
+                CoreSet::Render.after(CoreSet::PreRenderCleanup),
+                CoreSet::Cleanup.after(CoreSet::Render),
             ))
-            // Add Rendering System (runs late)
-            .add_systems(Last, ( // Ensure 'app' is used here
+            .add_systems(Last, (
                 rendering_system.run_if(not(on_event::<AppExit>)).in_set(CoreSet::Render),
                 cleanup_trigger_system.run_if(on_event::<AppExit>).in_set(CoreSet::Cleanup),
-            )); // Semicolon needed after add_systems
+            ));
     }
 }
-
-
-// --- Systems Moved from main.rs ---
 
 // Startup system: Initializes Vulkan using the primary window handle.
 fn setup_vulkan_system(
@@ -661,52 +669,43 @@ fn update_cursor_transform_system(
             if let Ok(children) = children_query.get(focused_entity) {
                 for &child in children.iter() {
                     if let Ok(mut cursor_transform) = cursor_visual_query.get_mut(child) {
-                        // Convert the global byte offset from CursorState into a local (line, index) cursor
-                        // that cosmic-text understands.
-                        let local_cursor = global_to_local_cursor(buffer, cursor_state.position);
-
-                        // Find the run the cursor is in to get its layout properties.
-                        let run_opt = buffer.layout_runs().find(|run| {
-                            // A cursor is within a run if it's on the same line and its
-                            // character index is within the range of glyphs in that run.
-                            let run_start_index = run.glyphs.first().map_or(0, |g| g.start);
-                            let run_end_index = run.glyphs.last().map_or(run_start_index, |g| g.end);
-                            local_cursor.line == run.line_i && (local_cursor.index >= run_start_index && local_cursor.index <= run_end_index)
-                        });
+                        // Find the layout run for the cursor's current line.
+                        let run_opt = buffer.layout_runs().find(|run| run.line_i == cursor_state.line);
 
                         if let Some(run) = run_opt {
-                            // Find the specific glyph layout within the run.
-                            // The index in the glyphs slice is the local cursor index minus the run's start index.
-                            let glyph_pos = local_cursor.index - run.glyphs.first().map_or(0, |g| g.start);
-                            let glyph_opt = run.glyphs.get(glyph_pos);
+                            // --- NEW, SIMPLIFIED LOGIC ---
+                            // Always calculate the visual position from the logical `cursor_state.position`.
+                            // This ensures the visual cursor is always snapped to a valid character boundary.
+                            let local_cursor = global_to_local_cursor(buffer, cursor_state.position);
 
-                            // Determine the cursor's X position.
-                            // If it's after the last glyph, use the line's width.
-                            // Otherwise, use the glyph's X position.
-                            let cursor_x_ydown = glyph_opt.map_or(run.line_w, |g| g.x);
+                            // Find the glyph that the cursor is at the start of.
+                            // The `find` method works perfectly for this.
+                            let glyph_at_cursor = run.glyphs.iter().find(|g| g.start == local_cursor.index);
 
-                            // The cursor's height is determined by the line's height.
+                            // The cursor's X position is the start of the glyph it's on.
+                            // If no glyph is found (i.e., at the end of the line), use the line's end position.
+                            let cursor_x_ydown = glyph_at_cursor.map_or_else(
+                                || run.glyphs.first().map_or(0.0, |g| g.x) + run.line_w, // End of line
+                                |g| g.x, // Start of glyph
+                            );
+
+                            // Vertical position and size logic remains the same.
                             let line_visual_height = run.line_height;
-                            let cursor_width = 1.0; // A standard 1px wide cursor.
-
-                            // The top of the cursor aligns with the line's top.
+                            let cursor_width = 1.0;
                             let cursor_top_y_ydown = run.line_top;
 
-                            // Calculate the center of the cursor rectangle in Y-down coordinates.
+                            // Calculate the center of the cursor rectangle.
                             let center_x_ydown = cursor_x_ydown + (cursor_width / 2.0);
                             let center_y_ydown = cursor_top_y_ydown + (line_visual_height / 2.0);
 
-                            // Convert the center to Bevy's local Y-up space by negating the Y coordinate.
-                            // The cursor is a child, so this is relative to the parent text entity.
+                            // Update the transform.
                             cursor_transform.translation.x = center_x_ydown;
                             cursor_transform.translation.y = -center_y_ydown;
-
-                            // Set the scale to match the calculated dimensions.
                             cursor_transform.scale.x = cursor_width;
                             cursor_transform.scale.y = line_visual_height;
 
                         } else {
-                            // If we can't find the layout run (e.g., empty text), hide the cursor.
+                            // If we can't find the layout run, hide the cursor.
                             cursor_transform.scale = bevy_math::Vec3::ZERO;
                         }
                         // We found the cursor and updated it, so we can break the inner loop.
@@ -715,8 +714,7 @@ fn update_cursor_transform_system(
                 }
             }
         } else {
-            // If the text buffer isn't cached, we can't position the cursor.
-            // This case should be rare, but we can find the cursor and hide it.
+            // If the text buffer isn't cached, hide the cursor.
             if let Ok(children) = children_query.get(focused_entity) {
                  for &child in children.iter() {
                     if let Ok(mut cursor_transform) = cursor_visual_query.get_mut(child) {

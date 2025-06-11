@@ -15,9 +15,10 @@ use std::env;
 // warning: unused import: `swash::Metrics as SwashMetrics` - REMOVED
 use cosmic_text::Cursor;
 use crate::gui_framework::components::{CursorState, TextSelection, CursorVisual};
-use crate::{HotkeyResource};
+use crate::{HotkeyResource, FontServerResource};
 use crate::gui_framework::interaction::utils::get_cursor_at_position;
 use crate::gui_framework::interaction::text_drag::text_drag_selection_system;
+use crate::gui_framework::interaction::text_editing::text_editing_system;
 
 // Import types from the crate root (lib.rs)
 // (No specific types needed directly from lib.rs for this plugin)
@@ -101,7 +102,7 @@ impl Plugin for GuiFrameworkInteractionPlugin {
             .add_systems(Update,
                 (
                     // interaction_system sets the context, text_drag_selection_system reads it
-                    (interaction_system, hotkey_system, text_drag_selection_system).chain().in_set(InteractionSet::InputHandling),
+                    (interaction_system, hotkey_system, text_editing_system, text_drag_selection_system).chain().in_set(InteractionSet::InputHandling),
                     handle_close_request.in_set(InteractionSet::WindowClose),
                 )
             );
@@ -214,35 +215,28 @@ pub(crate) fn interaction_system(
                         for (entity, transform, text_cache, visibility) in editable_text_query.iter() {
                             if !visibility.is_visible() { continue; }
                             if let Some(buffer) = text_cache.buffer.as_ref() {
-                                // *** FIX: Calculate the text's bounding box in its local (Y-down) space ***
-                                if buffer.layout_runs().next().is_none() { continue; } // Skip if no text is laid out
+                                if buffer.layout_runs().next().is_none() { continue; }
 
                                 let mut bounds_min = Vec2::new(f32::MAX, f32::MAX);
                                 let mut bounds_max = Vec2::new(f32::MIN, f32::MIN);
                                 for run in buffer.layout_runs() {
-                                    // The horizontal start of the run is the x-position of the first glyph, or 0.0 if empty.
-                                    let line_x = run.glyphs.first().map_or(0.0, |glyph| glyph.x);
-
-                                    bounds_min.x = bounds_min.x.min(line_x);
-                                    bounds_max.x = bounds_max.x.max(line_x + run.line_w);
+                                    let line_start_x = run.glyphs.first().map_or(0.0, |g| g.x);
+                                    bounds_min.x = bounds_min.x.min(line_start_x);
+                                    bounds_max.x = bounds_max.x.max(line_start_x + run.line_w);
                                     bounds_min.y = bounds_min.y.min(run.line_top);
-                                    bounds_max.y = bounds_max.y.max(run.line_y); // Using baseline is a reasonable approximation for the bottom edge
+                                    bounds_max.y = bounds_max.y.max(run.line_y);
                                 }
                                 let mut local_bounds_ydown = Rect { min: bounds_min, max: bounds_max };
-                                local_bounds_ydown.min -= Vec2::splat(2.0); // Add padding
+                                local_bounds_ydown.min -= Vec2::splat(2.0);
                                 local_bounds_ydown.max += Vec2::splat(2.0);
 
-                                // Transform mouse position to the text's local (Y-down) space
                                 let inverse_transform: Affine3A = transform.affine().inverse();
                                 let cursor_pos_local_yup = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
                                 let cursor_pos_local_ydown = Vec2::new(cursor_pos_local_yup.x, -cursor_pos_local_yup.y);
 
-                                // *** FIX: Only proceed if the click is within the bounding box ***
                                 if local_bounds_ydown.contains(cursor_pos_local_ydown) {
-                                    // Now that we're inside the box, do the precise hit-test
                                     if let Some(hit_cursor) = get_cursor_at_position(buffer, cursor_pos_local_ydown) {
                                         let z_depth = transform.translation().z;
-                                        // Check if this hit is on top of any previous hit
                                         if top_hit.as_ref().map_or(true, |prev_hit| z_depth < match prev_hit {
                                             HitResult::Text { z_depth, .. } | HitResult::Shape { z_depth, .. } => *z_depth,
                                         }) {
@@ -253,12 +247,12 @@ pub(crate) fn interaction_system(
                             }
                         }
 
-                        // Second, check for shape hits and see if they are on top
+                        // Second, check for shape hits
                         for (entity, transform, interaction, visibility) in interaction_query.iter() {
                             if !visibility.is_visible() { continue; }
                             let inverse_transform: Affine3A = transform.affine().inverse();
                             let cursor_pos_local = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
-                            let bounds = Rect::from_center_half_size(Vec2::ZERO, Vec2::new(50.0, 50.0)); // Placeholder bounds
+                            let bounds = Rect::from_center_half_size(Vec2::ZERO, Vec2::new(50.0, 50.0));
 
                             if bounds.contains(cursor_pos_local) {
                                 let z_depth = transform.translation().z;
@@ -281,19 +275,41 @@ pub(crate) fn interaction_system(
                                 *dragged_entity = None;
                                 *drag_start_position = None;
 
-                                // Calculate global byte offset from local hit cursor
                                 let mut global_byte_offset = 0;
+                                let mut new_x_goal: Option<i32> = None;
+
                                 if let Ok((_, _, text_cache, _)) = editable_text_query.get(target_entity) {
                                     if let Some(buffer) = text_cache.buffer.as_ref() {
+                                        // Calculate global byte offset
                                         for i in 0..cursor.line {
                                             if let Some(line) = buffer.lines.get(i) {
                                                 global_byte_offset += line.text().len();
                                                 if i < buffer.lines.len() - 1 { global_byte_offset += 1; }
                                             }
                                         }
+                                        global_byte_offset += cursor.index;
+
+                                        // Manually find the x-position from the layout data
+                                        'outer: for run in buffer.layout_runs() {
+                                            if run.line_i == cursor.line {
+                                                // Check if cursor is at the end of the line
+                                                if cursor.index == run.glyphs.last().map_or(0, |g| g.end) {
+                                                    // ** THE FIX IS HERE **
+                                                    let line_start_x = run.glyphs.first().map_or(0.0, |g| g.x);
+                                                    new_x_goal = Some((line_start_x + run.line_w) as i32);
+                                                    break 'outer;
+                                                }
+                                                // Check if cursor is within one of the glyphs
+                                                for glyph in run.glyphs.iter() {
+                                                    if cursor.index >= glyph.start && cursor.index < glyph.end {
+                                                        new_x_goal = Some(glyph.x as i32);
+                                                        break 'outer;
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                                global_byte_offset += cursor.index;
 
                                 let new_cursor_pos = global_byte_offset;
                                 let new_cursor_line = cursor.line;
@@ -304,18 +320,17 @@ pub(crate) fn interaction_system(
                                     }
                                     commands.entity(target_entity).insert((
                                         Focus,
-                                        CursorState { position: new_cursor_pos, line: new_cursor_line },
+                                        CursorState { position: new_cursor_pos, line: new_cursor_line, x_goal: new_x_goal },
                                         TextSelection { start: new_cursor_pos, end: new_cursor_pos },
                                     ));
                                     text_focus_writer.send(TextFocusChanged { entity: Some(target_entity) });
                                 } else {
-                                    commands.entity(target_entity).insert(CursorState { position: new_cursor_pos, line: new_cursor_line });
+                                    commands.entity(target_entity).insert(CursorState { position: new_cursor_pos, line: new_cursor_line, x_goal: new_x_goal });
                                     if let Ok(mut selection) = selection_param_set.p0().get_mut(target_entity) {
                                         selection.start = new_cursor_pos;
                                         selection.end = new_cursor_pos;
                                     }
                                 }
-                                yrs_text_changed_writer.send(YrsTextChanged { entity: target_entity });
                             }
 
                             // --- CASE: A SHAPE ENTITY WAS CLICKED ---

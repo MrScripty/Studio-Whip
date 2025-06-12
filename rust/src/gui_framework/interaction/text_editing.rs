@@ -1,8 +1,7 @@
 use bevy_ecs::prelude::*;
 use bevy_input::{keyboard::{KeyCode, KeyboardInput, Key}, ButtonInput};
-use bevy_log::{info, warn};
-use cosmic_text::{Editor, Motion, Action, CacheKey, CacheKeyFlags, Font, LayoutGlyph, Edit};
-use swash::FontRef;
+use bevy_log::info;
+use cosmic_text::{Editor, Motion, Action, CacheKey, CacheKeyFlags, Edit};
 use bevy_math::Vec2;
 use yrs::{Transact, Text};
 use similar::{ChangeTag, TextDiff};
@@ -39,28 +38,25 @@ pub(crate) fn text_editing_system(
     let mut action_taken = false;
     let shift_pressed = keyboard_input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
 
-    // --- Determine which action to perform ---
+    // --- Determine if any modification action should be taken ---
     let mut cosmic_action: Option<Action> = None;
-
     if keyboard_input.just_pressed(KeyCode::Backspace) { cosmic_action = Some(Action::Backspace); }
     else if keyboard_input.just_pressed(KeyCode::Delete) { cosmic_action = Some(Action::Delete); }
     else if keyboard_input.just_pressed(KeyCode::Enter) { cosmic_action = Some(Action::Enter); }
     else if keyboard_input.just_pressed(KeyCode::Tab) {
-        // Simplified logic: Tab is always Indent, Shift+Tab is always Unindent.
-        if shift_pressed {
-            cosmic_action = Some(Action::Unindent);
-        } else {
-            cosmic_action = Some(Action::Indent);
-        }
+        cosmic_action = Some(if shift_pressed { Action::Unindent } else { Action::Indent });
     }
 
     let character_events: Vec<KeyboardInput> = keyboard_input_events.read().cloned().collect();
     let is_char_insertion = character_events.iter().any(|ev| matches!(ev.logical_key, Key::Character(_)) && ev.state.is_pressed());
 
-    // --- Execute the determined action ---
+    // --- Main Logic Branching: Modification vs. Navigation ---
+
     if cosmic_action.is_some() || is_char_insertion {
+        // --- Path 1: Unified Content Modification ---
         action_taken = true;
 
+        // 1. SETUP: Prepare the editor and capture the initial state.
         let Some(buffer) = text_cache.buffer.as_mut() else { return; };
         let mut font_system_guard = font_system_res.0.lock().unwrap();
         let mut editor = Editor::new(buffer);
@@ -71,7 +67,7 @@ pub(crate) fn text_editing_system(
             b.lines.iter().map(|line| line.text()).collect::<Vec<&str>>().join("\n")
         });
 
-        // Perform the action
+        // 2. PERFORM ACTION: Execute the specific modification.
         if let Some(action) = cosmic_action {
             editor.action(&mut font_system_guard.font_system, action);
         } else if is_char_insertion {
@@ -84,13 +80,15 @@ pub(crate) fn text_editing_system(
             }
         }
 
+        // 3. FINALIZE LOCAL STATE: Shape the buffer to apply layout changes.
         editor.shape_as_needed(&mut font_system_guard.font_system, true);
 
         let text_after = editor.with_buffer(|b| {
             b.lines.iter().map(|line| line.text()).collect::<Vec<&str>>().join("\n")
         });
 
-        // --- Universal Local Update & YRS Commit ---
+        // 4. UPDATE VISUALS & LOGICAL STATE: Apply changes to all relevant components.
+        // This block is now universal for all modifications.
         let new_cursor = editor.cursor();
         let new_cursor_pos = editor.with_buffer(|b| cosmic_cursor_to_global_index(b, new_cursor));
         cursor_state.position = new_cursor_pos;
@@ -135,6 +133,7 @@ pub(crate) fn text_editing_system(
         });
         commands.entity(entity).insert(TextLayoutOutput { glyphs: positioned_glyphs });
 
+        // 5. COMMIT TO TRUTH & SIGNAL: Apply the calculated diff to YRS and send the event.
         if let Some(yrs_text) = yrs_doc_res.text_map.lock().unwrap().get(&entity) {
             let mut txn = yrs_doc_res.doc.transact_mut();
             let diff = TextDiff::from_chars(&text_before, &text_after);
@@ -150,7 +149,8 @@ pub(crate) fn text_editing_system(
         yrs_text_changed_writer.send(YrsTextChanged { entity });
 
     } else {
-        // --- Path 2: Handle Navigation (Arrow Keys) ---
+        // --- Path 2: Navigation ---
+        // This logic remains unchanged.
         let mut motion_to_perform: Option<(Motion, bool)> = None;
         if keyboard_input.just_pressed(KeyCode::ArrowLeft) { motion_to_perform = Some((Motion::Left, false)); }
         if keyboard_input.just_pressed(KeyCode::ArrowRight) { motion_to_perform = Some((Motion::Right, false)); }

@@ -37,12 +37,13 @@ bevy_hierarchy = "0.15"
 cosmic-text = "0.14" # For text layout and shaping
 fontdb = "0.23"      # Database for loading system fonts (used by cosmic-text)
 swash = "0.2"       # For glyph rasterization
-rectangle-pack = "0.4" # For packing glyphs into an atlas texture
+rectangle-pack = "0.4" # For packinG glyphs into an atlas texture
 yrs = "0.23" #CRDT 
 
 #Assorted variety fun pack
 toml = "0.8"
 thiserror = "2.0"
+similar = "2.7.0"
 
 [build-dependencies]
 walkdir = "2"

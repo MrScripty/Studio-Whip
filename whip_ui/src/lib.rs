@@ -8,6 +8,7 @@ use bevy_color::Color;
 
 pub mod gui_framework;
 pub mod widgets;
+pub mod layout;
 
 // Re-export commonly used types and components
 pub use gui_framework::{
@@ -26,6 +27,17 @@ pub use widgets::{
     blueprint::*,
     components::*,
     systems::*,
+};
+
+// Re-export layout system
+pub use layout::{
+    UiNode,
+    Styleable,
+    TaffyNode,
+    TaffyResource,
+    LayoutBundle,
+    TaffyBundle,
+    LayoutSet,
 };
 
 // Keep Vertex definition accessible

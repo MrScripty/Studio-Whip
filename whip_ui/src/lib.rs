@@ -6,6 +6,20 @@ use std::collections::HashMap;
 use yrs::TextRef;
 use bevy_color::Color;
 
+pub mod gui_framework;
+
+// Re-export commonly used types and components
+pub use gui_framework::{
+    VulkanContext,
+    components::{ShapeData, Visibility, Interaction, Text, TextAlignment, EditableText},
+    plugins::{
+        core::GuiFrameworkCorePlugin,
+        interaction::GuiFrameworkInteractionPlugin,
+        movement::GuiFrameworkDefaultMovementPlugin,
+        bindings::GuiFrameworkDefaultBindingsPlugin,
+    },
+};
+
 // Keep Vertex definition accessible
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Reflect)]
@@ -109,4 +123,3 @@ pub struct RenderCommandData {
     pub depth: f32, // For sorting
     pub vertices_changed: bool, // For background quad resizing
 }
-

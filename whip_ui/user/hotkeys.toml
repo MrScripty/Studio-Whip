@@ -1,0 +1,3 @@
+"Escape" = "CloseRequested" # Action for the Escape key (currently hardcoded in controller too)
+"Ctrl+S" = "SaveProject"    # Example - requires modifier tracking implementation
+"Alt+P" = "TogglePause"     # Example - requires modifier tracking implementation

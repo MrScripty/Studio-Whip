@@ -6,6 +6,7 @@
 
 #Binarys
 /rust/target/
+/target/
 *.pyc
 *.spv
 
@@ -14,6 +15,11 @@
 .idea/
 *.swp
 *.swo
+
+#Claude Code
+.claude/
+claude_chat/
+*.claude
 
 #OS
 .DS_Store

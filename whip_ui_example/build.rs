@@ -1,7 +1,7 @@
 // Build script for whip_ui_example
 // Copies shaders and user files needed by the example
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::fs;
 use std::process::{Command, Stdio};
 use std::env;

@@ -1,6 +1,5 @@
 use ash::vk;
 use std::fs;
-use std::path::PathBuf;
 use std::marker::PhantomData;
 
 pub fn load_shader(device: &ash::Device, filename: &str) -> vk::ShaderModule {

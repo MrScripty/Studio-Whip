@@ -1,0 +1,94 @@
+# Main layout file that recreates the current hardcoded scene
+# Uses Include directives to instance widget blueprints with overridden properties
+# Positioned using Taffy's absolute positioning styles
+
+[layout]
+# Layout configuration
+size = [600.0, 300.0]  # Window size from main.rs
+position = [0.0, 0.0, 0.0]
+
+# Background container (fullscreen)
+[widgets.background]
+widget_type = { type = "Shape", shape_type = "Rectangle" }
+layout = { 
+    size = [600.0, 300.0], 
+    position = [0.0, 0.0, 0.0] 
+}
+style = { 
+    background_color = { Rgba = { r = 33, g = 41, b = 42, a = 1.0 } }  # Dark grey from main.rs
+}
+behavior = { 
+    visible = true, 
+    interactive = false,
+    z_index = 0
+}
+children = []
+
+# Triangle - Orange draggable shape (includes draggable_shape blueprint)
+[widgets.triangle]
+include = "widgets/draggable_shape.toml"
+# Override properties from the blueprint
+widget_type = { type = "Shape", shape_type = "Triangle" }
+layout = { 
+    size = [50.0, 50.0],
+    position = [300.0, 150.0, -1.0]  # Absolute position from main.rs
+}
+style = { 
+    background_color = { Rgba = { r = 255, g = 152, b = 0, a = 1.0 } }  # Orange color from main.rs
+}
+behavior = {
+    visible = true,
+    interactive = true, 
+    draggable = true,
+    clickable = true,
+    z_index = -1
+}
+children = []
+
+# Square - Green draggable shape (includes draggable_shape blueprint)  
+[widgets.square]
+include = "widgets/draggable_shape.toml"
+# Override properties from the blueprint
+widget_type = { type = "Shape", shape_type = "Rectangle" }
+layout = { 
+    size = [50.0, 50.0],
+    position = [125.0, 75.0, -2.0]  # Absolute position from main.rs
+}
+style = { 
+    background_color = { Rgba = { r = 66, g = 201, b = 34, a = 1.0 } }  # Green color from main.rs
+}
+behavior = {
+    visible = true,
+    interactive = true,
+    draggable = true, 
+    clickable = true,
+    z_index = -2
+}
+children = []
+
+# Sample Text - Editable collaborative text (includes editable_label blueprint)
+[widgets.sample_text]
+include = "widgets/editable_label.toml"
+# Override properties from the blueprint
+widget_type = { type = "Text", content = "Hello, whip_ui!\nThis is collaborative text.", editable = true }
+layout = {
+    size = [200.0, 48.0],  # Accommodate two lines
+    position = [50.0, 250.0, -2.0]  # Absolute position from main.rs
+}
+style = {
+    text_color = { Named = "black" },
+    text_size = 24.0,  # Size from main.rs
+    background_color = { Rgba = { r = 0, g = 0, b = 0, a = 0.0 } }  # Transparent background
+}
+behavior = {
+    visible = true,
+    interactive = true,
+    clickable = true,
+    focusable = true,
+    draggable = false,
+    z_index = -2
+}
+children = []
+
+# Root widget list (defines rendering order)
+root_widgets = ["background", "triangle", "square", "sample_text"]

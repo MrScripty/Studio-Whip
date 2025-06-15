@@ -1,0 +1,30 @@
+# Reusable draggable shape widget blueprint
+# This widget defines a basic shape that can be dragged and clicked
+# Properties can be overridden when included in layouts
+
+[widget]
+widget_type = { type = "Shape", shape_type = "Rectangle" }
+
+# Default layout - will be overridden by layout files
+layout = { 
+    size = [50.0, 50.0],
+    position = [0.0, 0.0, 0.0]
+}
+
+# Default style - colors and appearance can be overridden
+style = { 
+    background_color = { Hex = "#808080" },  # Default gray
+    opacity = 1.0
+}
+
+# Behavior - this widget is interactive by default
+behavior = { 
+    visible = true, 
+    interactive = true, 
+    draggable = true, 
+    clickable = true,
+    z_index = -1
+}
+
+# No children by default
+children = []

@@ -1,0 +1,35 @@
+# Reusable editable text label widget blueprint
+# This widget defines text that can be edited and focused
+# Content and styling can be overridden when included in layouts
+
+[widget]
+widget_type = { type = "Text", content = "Default Text", editable = true }
+
+# Default layout - position and size will be overridden by layout files  
+layout = {
+    size = [200.0, 30.0],
+    position = [0.0, 0.0, 0.0]
+}
+
+# Default style - text appearance can be customized
+style = {
+    text_color = { Named = "black" },
+    text_size = 16.0,
+    background_color = { Named = "white" },
+    border_width = 1.0,
+    border_color = { Hex = "#CCCCCC" },
+    opacity = 1.0
+}
+
+# Behavior - editable and focusable by default
+behavior = {
+    visible = true,
+    interactive = true,
+    clickable = true,
+    focusable = true,
+    draggable = false,
+    z_index = -2
+}
+
+# No children by default
+children = []

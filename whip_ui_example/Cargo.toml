@@ -27,6 +27,8 @@ bevy_input = { workspace = true }
 bevy_a11y = { workspace = true }
 bevy_time = { workspace = true }
 bevy_hierarchy = { workspace = true }
+bevy_asset = { workspace = true }
+bevy_tasks = { workspace = true }
 
 # Text collaborative editing
 yrs = { workspace = true }

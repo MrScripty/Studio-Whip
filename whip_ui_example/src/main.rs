@@ -12,6 +12,9 @@ use bevy_a11y::AccessibilityPlugin;
 use bevy_transform::prelude::Transform;
 use bevy_transform::TransformPlugin;
 use bevy_hierarchy::HierarchyPlugin;
+use bevy_asset::AssetPlugin;
+use bevy_tasks::IoTaskPool;
+use bevy_core::TaskPoolPlugin;
 
 // Import from whip_ui library
 use whip_ui::{
@@ -29,6 +32,8 @@ use whip_ui::{
     GuiFrameworkInteractionPlugin,
     GuiFrameworkDefaultMovementPlugin,
     GuiFrameworkDefaultBindingsPlugin,
+    UiAssetPlugin,
+    LoadUiRequest,
 };
 
 // Import Bevy Name for debugging entities
@@ -45,6 +50,11 @@ struct BackgroundQuad;
 fn main() {
     info!("Starting whip_ui example...");
 
+    // Initialize IoTaskPool manually
+    IoTaskPool::get_or_init(|| {
+        bevy_tasks::TaskPool::new()
+    });
+
     // --- Initialize Vulkan Context ---
     let vulkan_context = Arc::new(Mutex::new(VulkanContext::new()));
 
@@ -52,6 +62,7 @@ fn main() {
     App::new()
         .add_plugins((
             LogPlugin { level: Level::DEBUG, filter: "wgpu=error,naga=warn,bevy_app=info,bevy_ecs=info,whip_ui=debug".to_string(), ..default() },
+            TaskPoolPlugin::default(),
             bevy_time::TimePlugin::default(),
             TransformPlugin::default(),
             InputPlugin::default(),
@@ -67,6 +78,7 @@ fn main() {
             AccessibilityPlugin,
             WinitPlugin::<WakeUp>::default(),
             HierarchyPlugin::default(),
+            AssetPlugin::default(),
         ))
         // == Resources ==
         .insert_resource(VulkanContextResource(vulkan_context))
@@ -79,9 +91,10 @@ fn main() {
         .add_plugins(GuiFrameworkInteractionPlugin)
         .add_plugins(GuiFrameworkDefaultMovementPlugin)
         .add_plugins(GuiFrameworkDefaultBindingsPlugin)
+        .add_plugins(UiAssetPlugin)
 
         // == Startup Systems ==
-        .add_systems(Startup, setup_scene_ecs)
+        .add_systems(Startup, (setup_scene_ecs, test_asset_loading))
         // == Update Systems ==
         .add_systems(Update, background_resize_system)
         // == Run the App ==
@@ -213,4 +226,16 @@ fn background_resize_system(
             }
         }
     }
+}
+
+/// Test system to load UI assets and verify Milestone 2 functionality
+fn test_asset_loading(
+    mut load_ui_events: EventWriter<LoadUiRequest>,
+) {
+    info!("Testing asset loading - sending LoadUiRequest for layouts/main.toml");
+    
+    // Test loading the main layout file
+    load_ui_events.send(LoadUiRequest::new("layouts/main.toml"));
+    
+    info!("LoadUiRequest sent - asset loading system should process it");
 }

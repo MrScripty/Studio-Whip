@@ -79,7 +79,7 @@ pub fn spawn_widget_system(
 }
 
 /// Recursively spawn a widget and its children
-fn spawn_widget_recursive(
+pub fn spawn_widget_recursive(
     commands: &mut Commands,
     blueprint: &WidgetBlueprint,
     collection: &WidgetCollection,

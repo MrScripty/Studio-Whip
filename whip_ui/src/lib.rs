@@ -9,6 +9,7 @@ use bevy_color::Color;
 pub mod gui_framework;
 pub mod widgets;
 pub mod layout;
+pub mod assets;
 
 // Re-export commonly used types and components
 pub use gui_framework::{
@@ -38,6 +39,19 @@ pub use layout::{
     LayoutBundle,
     TaffyBundle,
     LayoutSet,
+};
+
+// Re-export asset system
+pub use assets::{
+    UiTree,
+    UiAssetLoader,
+    LoadUiRequest,
+    LoadingUiAssets,
+    UiLoader,
+    UiAssetPlugin,
+    ui_asset_request_system,
+    ui_asset_loaded_system,
+    ui_asset_error_system,
 };
 
 // Keep Vertex definition accessible

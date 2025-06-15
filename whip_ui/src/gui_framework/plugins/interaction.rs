@@ -15,7 +15,7 @@ use std::env;
 // warning: unused import: `swash::Metrics as SwashMetrics` - REMOVED
 use cosmic_text::Cursor;
 use crate::gui_framework::components::{CursorState, TextSelection, CursorVisual};
-use crate::{HotkeyResource, FontServerResource};
+use crate::HotkeyResource;
 use crate::gui_framework::interaction::utils::get_cursor_at_position;
 use crate::gui_framework::interaction::text_drag::text_drag_selection_system;
 use crate::gui_framework::interaction::text_editing::text_editing_system;
@@ -165,7 +165,7 @@ fn load_hotkeys_system(mut commands: Commands) {
 // Processes mouse input for clicks, drags, and text focus.
 pub(crate) fn interaction_system(
     // Input resources
-    mut yrs_text_changed_writer: EventWriter<YrsTextChanged>,
+    _yrs_text_changed_writer: EventWriter<YrsTextChanged>,
     mut mouse_button_input_events: EventReader<MouseButtonInput>,
     mut cursor_moved_events: EventReader<CursorMoved>,
     windows: Query<&Window, With<PrimaryWindow>>,

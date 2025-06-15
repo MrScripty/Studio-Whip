@@ -359,7 +359,7 @@ pub fn cleanup_vulkan(mut app: VulkanContext) {
     }
 
     // Destroy the surface and debug messenger (they depend on the instance).
-    if let (Some(instance), Some(surface_loader), Some(surface)) =
+    if let (Some(_instance), Some(surface_loader), Some(surface)) =
         (&instance_to_destroy, surface_loader_to_drop, surface_to_destroy)
     {
         info!("[cleanup_vulkan] Destroying surface...");

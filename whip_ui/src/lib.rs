@@ -7,6 +7,7 @@ use yrs::TextRef;
 use bevy_color::Color;
 
 pub mod gui_framework;
+pub mod widgets;
 
 // Re-export commonly used types and components
 pub use gui_framework::{
@@ -18,6 +19,13 @@ pub use gui_framework::{
         movement::GuiFrameworkDefaultMovementPlugin,
         bindings::GuiFrameworkDefaultBindingsPlugin,
     },
+};
+
+// Re-export widget system
+pub use widgets::{
+    blueprint::*,
+    components::*,
+    systems::*,
 };
 
 // Keep Vertex definition accessible

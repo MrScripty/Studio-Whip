@@ -6,7 +6,8 @@ use bevy_ecs::prelude::*;
 use bevy_reflect::TypePath;
 use std::collections::HashMap;
 use thiserror::Error;
-use crate::widgets::blueprint::{WidgetBlueprint, WidgetCollection};
+use serde::{Deserialize, de::Error as DeError};
+use crate::widgets::blueprint::{WidgetBlueprint, WidgetCollection, WidgetType, LayoutConfig, StyleConfig, BehaviorConfig};
 
 // Re-export modules
 pub use systems::*;
@@ -92,8 +93,9 @@ impl AssetLoader for UiAssetLoader {
         let toml_str = std::str::from_utf8(&bytes)
             .map_err(|e| UiAssetLoaderError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
 
-        // Parse the TOML into a widget collection
-        let mut collection: WidgetCollection = toml::from_str(toml_str)?;
+        // Parse the TOML using custom structure
+        let parsed_toml: toml::Value = toml::from_str(toml_str)?;
+        let mut collection = parse_custom_toml_structure(parsed_toml)?;
 
         // Process includes and resolve widget blueprints
         let resolved_widgets = self.resolve_includes(&mut collection, load_context).await?;
@@ -106,7 +108,7 @@ impl AssetLoader for UiAssetLoader {
     }
 
     fn extensions(&self) -> &[&str] {
-        &["ui.toml", "layout.toml"]
+        &["toml"]
     }
 }
 
@@ -166,4 +168,96 @@ impl LoadUiRequest {
         self.position_override = Some(position);
         self
     }
+}
+
+/// Parse the custom TOML structure used by our layout files
+fn parse_custom_toml_structure(toml_value: toml::Value) -> Result<WidgetCollection, UiAssetLoaderError> {
+    let table = toml_value.as_table()
+        .ok_or_else(|| UiAssetLoaderError::TomlParse(DeError::custom("Root must be a table")))?;
+    
+    let mut widgets = HashMap::new();
+    let mut root = None;
+    
+    // Extract root widgets list if present
+    if let Some(root_widgets) = table.get("root_widgets") {
+        if let Some(root_list) = root_widgets.as_array() {
+            if let Some(first_root) = root_list.first() {
+                if let Some(root_name) = first_root.as_str() {
+                    root = Some(root_name.to_string());
+                }
+            }
+        }
+    }
+    
+    // Parse widgets section
+    if let Some(widgets_section) = table.get("widgets") {
+        if let Some(widgets_table) = widgets_section.as_table() {
+            for (widget_id, widget_data) in widgets_table {
+                let widget = parse_widget_from_toml(widget_id, widget_data)?;
+                widgets.insert(widget_id.clone(), widget);
+            }
+        }
+    }
+    
+    Ok(WidgetCollection { widgets, root })
+}
+
+/// Parse a single widget from TOML data
+fn parse_widget_from_toml(id: &str, toml_data: &toml::Value) -> Result<WidgetBlueprint, UiAssetLoaderError> {
+    let table = toml_data.as_table()
+        .ok_or_else(|| UiAssetLoaderError::TomlParse(DeError::custom("Widget must be a table")))?;
+    
+    // Parse widget_type using serde deserializer
+    let widget_type = if let Some(wt) = table.get("widget_type") {
+        WidgetType::deserialize(wt.clone())
+            .map_err(|e| UiAssetLoaderError::TomlParse(DeError::custom(format!("Invalid widget_type: {}", e))))?
+    } else {
+        return Err(UiAssetLoaderError::TomlParse(DeError::custom("Missing widget_type")));
+    };
+    
+    // Parse layout section
+    let layout = if let Some(layout_section) = table.get("layout") {
+        LayoutConfig::deserialize(layout_section.clone())
+            .map_err(|e| UiAssetLoaderError::TomlParse(DeError::custom(format!("Invalid layout: {}", e))))?
+    } else {
+        LayoutConfig::default()
+    };
+    
+    // Parse style section
+    let style = if let Some(style_section) = table.get("style") {
+        StyleConfig::deserialize(style_section.clone())
+            .map_err(|e| UiAssetLoaderError::TomlParse(DeError::custom(format!("Invalid style: {}", e))))?
+    } else {
+        StyleConfig::default()
+    };
+    
+    // Parse behavior section
+    let behavior = if let Some(behavior_section) = table.get("behavior") {
+        BehaviorConfig::deserialize(behavior_section.clone())
+            .map_err(|e| UiAssetLoaderError::TomlParse(DeError::custom(format!("Invalid behavior: {}", e))))?
+    } else {
+        BehaviorConfig::default()
+    };
+    
+    // Parse children
+    let children = if let Some(children_section) = table.get("children") {
+        if let Some(children_array) = children_section.as_array() {
+            children_array.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    
+    Ok(WidgetBlueprint {
+        id: id.to_string(),
+        widget_type,
+        layout,
+        style,
+        behavior,
+        children,
+    })
 }

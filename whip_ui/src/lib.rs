@@ -14,7 +14,7 @@ pub mod assets;
 // Re-export commonly used types and components
 pub use gui_framework::{
     VulkanContext,
-    components::{ShapeData, Visibility, Interaction, Text, TextAlignment, EditableText},
+    components::{ShapeData, ShapeScaling, Visibility, Interaction, Text, TextAlignment, EditableText},
     plugins::{
         core::GuiFrameworkCorePlugin,
         interaction::GuiFrameworkInteractionPlugin,
@@ -39,6 +39,9 @@ pub use layout::{
     LayoutBundle,
     TaffyBundle,
     LayoutSet,
+    TaffyLayoutPlugin,
+    PositionControl,
+    LayoutPositioned,
 };
 
 // Re-export asset system
@@ -56,7 +59,7 @@ pub use assets::{
 
 // Keep Vertex definition accessible
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Reflect)]
+#[derive(Debug, Clone, Copy, Reflect, PartialEq)]
 pub struct Vertex {
     pub position: [f32; 2],
 }

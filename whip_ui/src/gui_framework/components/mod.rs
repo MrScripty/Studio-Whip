@@ -4,7 +4,7 @@ pub mod interaction;
 mod text_data;
 mod text_layout;
 
-pub use shape_data::ShapeData;
+pub use shape_data::{ShapeData, ShapeScaling};
 pub use visibility::Visibility;
 pub use interaction::Interaction;
 pub use text_data::{Text, FontId, TextAlignment, EditableText, Focus, CursorState, CursorVisual, TextSelection};

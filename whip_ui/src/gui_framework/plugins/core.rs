@@ -599,22 +599,16 @@ fn manage_cursor_visual_system(
         // Spawn the visual cursor entity as a child
         let cursor_entity = commands.spawn((
             CursorVisual,
-            ShapeData {
-                // Define a 1x1 unit quad centered at the origin.
-                // It will be scaled and positioned dynamically by `update_cursor_transform_system`
-                // using the Rect from cosmic-text's `layout_cursor` function.
-                vertices: Arc::new(vec![
-                    // Triangle 1
-                    Vertex { position: [-0.5, -0.5] },
-                    Vertex { position: [0.5, 0.5] },
-                    Vertex { position: [0.5, -0.5] },
-                    // Triangle 2
-                    Vertex { position: [-0.5, -0.5] },
-                    Vertex { position: [-0.5, 0.5] },
-                    Vertex { position: [0.5, 0.5] },
-                ]),
-                color: Color::BLACK,
-            },
+            ShapeData::new(vec![
+                // Triangle 1
+                Vertex { position: [-0.5, -0.5] },
+                Vertex { position: [0.5, 0.5] },
+                Vertex { position: [0.5, -0.5] },
+                // Triangle 2
+                Vertex { position: [-0.5, -0.5] },
+                Vertex { position: [-0.5, 0.5] },
+                Vertex { position: [0.5, 0.5] },
+            ], Color::BLACK),
             Transform::from_xyz(0.0, 0.0, -0.1),
             Visibility(initial_visibility),
             Interaction::default(),

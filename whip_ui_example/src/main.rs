@@ -34,6 +34,10 @@ use whip_ui::{
     GuiFrameworkDefaultBindingsPlugin,
     UiAssetPlugin,
     LoadUiRequest,
+    TaffyLayoutPlugin,
+    UiNode,
+    Styleable,
+    PositionControl,
 };
 
 // Import Bevy Name for debugging entities
@@ -43,6 +47,8 @@ use bevy_color::Color;
 use yrs::{Doc, Text as YrsText}; // Alias YrsText to avoid conflict
 use yrs::Transact;
 use std::sync::{Arc, Mutex};
+// Import Taffy for layout styles
+use taffy;
 
 #[derive(Component)]
 struct BackgroundQuad;
@@ -92,6 +98,7 @@ fn main() {
         .add_plugins(GuiFrameworkDefaultMovementPlugin)
         .add_plugins(GuiFrameworkDefaultBindingsPlugin)
         .add_plugins(UiAssetPlugin)
+        .add_plugins(TaffyLayoutPlugin)
 
         // == Startup Systems ==
         .add_systems(Startup, (setup_scene_ecs, test_asset_loading))
@@ -118,21 +125,18 @@ fn setup_scene_ecs(
 
    info!("Using logical dimensions for background: {}x{}", logical_width, logical_height);
 
-    // Background (Not interactive, covers full screen)
+    // Background (Not interactive, covers full screen) - Use custom vertices for exact fit
     commands.spawn((
-        ShapeData {
-            vertices: Arc::new(vec![
-                // Triangle 1
-                Vertex { position: [0.0, 0.0] },
-                Vertex { position: [0.0, logical_height] },
-                Vertex { position: [logical_width, 0.0] },
-                // Triangle 2
-                Vertex { position: [logical_width, 0.0] },
-                Vertex { position: [0.0, logical_height] },
-                Vertex { position: [logical_width, logical_height] },
-            ]),
-            color: Color::srgba(0.129, 0.161, 0.165, 1.0),
-        },
+        ShapeData::new(vec![
+            // Triangle 1
+            Vertex { position: [0.0, 0.0] },
+            Vertex { position: [0.0, logical_height] },
+            Vertex { position: [logical_width, 0.0] },
+            // Triangle 2
+            Vertex { position: [logical_width, 0.0] },
+            Vertex { position: [0.0, logical_height] },
+            Vertex { position: [logical_width, logical_height] },
+        ], Color::srgba(0.129, 0.161, 0.165, 1.0)),
         Transform::from_xyz(0.0, 0.0, 0.0),
         Visibility(true),
         Interaction::default(),
@@ -140,39 +144,23 @@ fn setup_scene_ecs(
         BackgroundQuad,
     ));
 
-    // Triangle (Draggable and Clickable) - Orange  
+    // Triangle (Draggable and Clickable) - Orange - Manual positioning  
     commands.spawn((
-        ShapeData {
-            vertices: Arc::new(vec![
-                Vertex { position: [-25.0, -25.0] },
-                Vertex { position: [0.0, 25.0] },
-                Vertex { position: [25.0, -25.0] },
-            ]),
-            color: Color::srgba(1.0, 0.596, 0.0, 1.0),
-        },
+        ShapeData::triangle(50.0, 50.0, Color::srgba(1.0, 0.596, 0.0, 1.0)),
         Transform::from_xyz(300.0, 150.0, -1.0),
         Visibility(true),
         Interaction { clickable: true, draggable: true },
+        PositionControl::Manual, // Manual positioning for draggable shapes
         Name::new("Triangle"),
     ));
 
-    // Square (Draggable and Clickable) - Green
+    // Square (Draggable and Clickable) - Green - Manual positioning
     commands.spawn((
-        ShapeData {
-            vertices: Arc::new(vec![
-                Vertex { position: [-25.0, -25.0] },
-                Vertex { position: [-25.0, 25.0] },
-                Vertex { position: [25.0, -25.0] },
-                // Triangle 2
-                Vertex { position: [25.0, -25.0] },
-                Vertex { position: [-25.0, 25.0] },
-                Vertex { position: [25.0, 25.0] },
-            ]),
-            color: Color::srgba(0.259, 0.788, 0.133, 1.0),
-        },
+        ShapeData::rectangle(50.0, 50.0, Color::srgba(0.259, 0.788, 0.133, 1.0)),
         Transform::from_xyz(125.0, 75.0, -2.0),
         Visibility(true),
         Interaction { clickable: true, draggable: true },
+        PositionControl::Manual, // Manual positioning for draggable shapes
         Name::new("Square"),
     ));
 
@@ -196,6 +184,22 @@ fn setup_scene_ecs(
         Visibility(true),
         Name::new("SampleText"),
         EditableText,
+        PositionControl::Layout, // Use layout positioning for text
+        UiNode::default(),
+        Styleable(taffy::Style {
+            position: taffy::Position::Absolute,
+            inset: taffy::Rect {
+                left: taffy::LengthPercentageAuto::Length(50.0),
+                top: taffy::LengthPercentageAuto::Length(50.0), // Top-left coordinate system
+                right: taffy::LengthPercentageAuto::Auto,
+                bottom: taffy::LengthPercentageAuto::Auto,
+            },
+            size: taffy::Size {
+                width: taffy::Dimension::Length(200.0), // Explicit width for text
+                height: taffy::Dimension::Length(48.0), // Explicit height for text  
+            },
+            ..Default::default()
+        }),
     )).id();
 
     yrs_res.text_map.lock().expect("Failed to lock text_map mutex in setup").insert(text_entity, text_handle);
@@ -232,10 +236,10 @@ fn background_resize_system(
 fn test_asset_loading(
     mut load_ui_events: EventWriter<LoadUiRequest>,
 ) {
-    info!("Testing asset loading - sending LoadUiRequest for layouts/main.toml");
+    info!("Testing asset loading - sending LoadUiRequest for ui/layouts/main.toml");
     
     // Test loading the main layout file
-    load_ui_events.send(LoadUiRequest::new("layouts/main.toml"));
+    load_ui_events.send(LoadUiRequest::new("ui/layouts/main.toml"));
     
     info!("LoadUiRequest sent - asset loading system should process it");
 }

@@ -8,11 +8,12 @@ use crate::{
         components::*,
     },
     gui_framework::components::{ShapeData, Visibility, Interaction, Text, TextAlignment, EditableText},
+    layout::{PositionControl, UiNode, Styleable},
     Vertex, YrsDocResource,
 };
 use bevy_color::Color;
 use bevy_math::Vec2;
-use std::sync::Arc;
+use taffy;
 
 /// Resource containing loaded widget collections
 #[derive(Resource)]
@@ -125,6 +126,9 @@ fn spawn_widget_entity(
         draggable: behavior.draggable,
     };
     
+    // Get position control from behavior config, default to Layout
+    let position_control = blueprint.behavior.position_control.clone().unwrap_or(PositionControl::Layout);
+    
     // Store values we'll need later before they're moved
     let computed_size = layout.computed_size;
     let background_color = style.background_color;
@@ -143,6 +147,9 @@ fn spawn_widget_entity(
         transform,
         visibility,
         interaction,
+        position_control,
+        UiNode::default(),
+        Styleable(taffy::Style::default()), // TODO: Convert from LayoutConfig to taffy::Style
     ));
     
     // Add widget-type-specific components
@@ -165,10 +172,11 @@ fn spawn_widget_entity(
             
             // Add visual representation - for now, use a simple rectangle
             if let Some(bg_color) = background_color {
-                entity_commands.insert(ShapeData {
-                    vertices: Arc::new(create_rectangle_vertices(computed_size)),
-                    color: bg_color,
-                });
+                entity_commands.insert(ShapeData::rectangle(
+                    computed_size.x, 
+                    computed_size.y, 
+                    bg_color
+                ));
             }
         }
         
@@ -212,10 +220,8 @@ fn spawn_widget_entity(
             });
             
             if let Some(bg_color) = background_color {
-                entity_commands.insert(ShapeData {
-                    vertices: Arc::new(create_shape_vertices(shape_type, computed_size)),
-                    color: bg_color,
-                });
+                let vertices = create_shape_vertices(shape_type, computed_size);
+                entity_commands.insert(ShapeData::new(vertices, bg_color));
             }
         }
         

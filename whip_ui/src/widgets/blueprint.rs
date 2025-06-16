@@ -3,6 +3,7 @@ use bevy_math::{Vec2, Vec3};
 use bevy_color::Color;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::layout::PositionControl;
 
 /// Represents a widget definition loaded from TOML
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +73,7 @@ pub struct BehaviorConfig {
     pub clickable: Option<bool>,
     pub focusable: Option<bool>,
     pub z_index: Option<i32>,
+    pub position_control: Option<PositionControl>,
 }
 
 /// Flexible layout direction
@@ -159,6 +161,7 @@ impl Default for BehaviorConfig {
             clickable: Some(false),
             focusable: Some(false),
             z_index: Some(0),
+            position_control: Some(PositionControl::Layout), // Default to layout control
         }
     }
 }

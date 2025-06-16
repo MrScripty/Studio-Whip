@@ -33,5 +33,8 @@ bevy_tasks = { workspace = true }
 # Text collaborative editing
 yrs = { workspace = true }
 
+# Layout Engine
+taffy = { workspace = true }
+
 [build-dependencies]
 walkdir = { workspace = true }

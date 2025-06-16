@@ -6,6 +6,8 @@ use bevy_transform::prelude::Transform;
 use crate::gui_framework::events::EntityDragged;
 // Import sets from other plugins for ordering
 use super::interaction::InteractionSet; // Use super:: to access sibling module
+// Import layout position control
+use crate::layout::{PositionControl, LayoutPositioned};
 
 // --- System Sets ---
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -32,30 +34,44 @@ info!("GuiFrameworkDefaultMovementPlugin built.");
 /// Update system: Applies movement deltas from EntityDragged events to Transform components.
 fn movement_system(
     mut drag_evr: EventReader<EntityDragged>,
-    mut query: Query<&mut Transform>,
+    mut query: Query<(&mut Transform, Option<&mut PositionControl>)>,
+    mut commands: Commands,
 ) {
     // Check if the system is running at all
     for ev in drag_evr.read() {
         info!("[MovementSystem] Received EntityDragged: Entity={:?}, Delta={:?}", ev.entity, ev.delta);
 
-        info!("[MovementSystem] Attempting to get Transform for {:?}", ev.entity);
-        if let Ok(mut transform) = query.get_mut(ev.entity) {
+        info!("[MovementSystem] Attempting to get Transform and PositionControl for {:?}", ev.entity);
+        if let Ok((mut transform, position_control)) = query.get_mut(ev.entity) {
             let old_pos = transform.translation; // Store old position for logging
             info!("[MovementSystem] Got Transform for {:?}. Before: {:?}", ev.entity, old_pos);
 
-            // Apply delta directly based on Y-up world coordinates
-            transform.translation.x += ev.delta.x;
-            transform.translation.y += ev.delta.y; // Ensure Y-inversion is active
+            // Check if this entity allows manual positioning
+            let allows_manual = match position_control.as_ref() {
+                Some(control) => control.allows_manual(),
+                None => true, // Default to allowing manual control if no PositionControl component
+            };
 
-            info!("[MovementSystem] Transform modified for {:?}. After: {:?}", ev.entity, transform.translation);
+            if allows_manual {
+                // Handle LayoutThenManual transition to Manual
+                if let Some(mut control) = position_control {
+                    control.take_manual_control();
+                    if matches!(*control, PositionControl::Manual) {
+                        // Remove LayoutPositioned marker if present
+                        commands.entity(ev.entity).remove::<LayoutPositioned>();
+                    }
+                }
+
+                // Apply delta directly based on Y-up world coordinates
+                transform.translation.x += ev.delta.x;
+                transform.translation.y += ev.delta.y; // Ensure Y-inversion is active
+
+                info!("[MovementSystem] Transform modified for {:?}. After: {:?}", ev.entity, transform.translation);
+            } else {
+                info!("[MovementSystem] Entity {:?} has PositionControl::Layout, ignoring drag", ev.entity);
+            }
         } else {
             warn!("[MovementSystem] Could not get Transform for entity {:?}", ev.entity);
         }
     }
-    // Log if the system ran but processed no events (useful for debugging event flow)
-    // if !ran && !drag_evr.is_empty() { // This check might be tricky with event consumption
-    //     info!("[MovementSystem] Ran, but no events read this frame (might have been consumed).");
-    // } else if !ran {
-    //      info!("[MovementSystem] Ran, no events found.");
-    // }
 }

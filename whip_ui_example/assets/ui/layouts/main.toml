@@ -1,28 +1,11 @@
 # Main layout file that recreates the current hardcoded scene
-# Uses Include directives to instance widget blueprints with overridden properties
-# Positioned using Taffy's absolute positioning styles
+# Window is the implicit root container for all widgets
+# Background quad is automatically created with the window (not defined here)
 
-[layout]
-# Layout configuration
+[window]
+# Window configuration - defines the implicit root container
 size = [600.0, 300.0]  # Window size from main.rs
-position = [0.0, 0.0, 0.0]
-
-# Background container (fullscreen)
-[widgets.background]
-widget_type = { type = "Shape", shape_type = "Rectangle" }
-
-[widgets.background.layout]
-size = [600.0, 300.0]
-position = [0.0, 0.0, 0.0]
-
-[widgets.background.style]
-background_color = { r = 33, g = 41, b = 42, a = 1.0 }  # Dark grey from main.rs
-
-[widgets.background.behavior]
-visible = true
-interactive = false
-z_index = 0
-children = []
+background_color = { r = 33, g = 41, b = 42, a = 1.0 }  # Dark grey background
 
 # Triangle - Orange draggable shape (includes draggable_shape blueprint)
 [widgets.triangle]
@@ -31,7 +14,7 @@ widget_type = { type = "Shape", shape_type = "Triangle" }
 
 [widgets.triangle.layout]
 size = [50.0, 50.0]
-position = [300.0, 150.0, -1.0]  # Absolute position from main.rs
+position = [300.0, 150.0, -1.0]  # Original Bevy coordinates for testing
 
 [widgets.triangle.style]
 background_color = { r = 255, g = 152, b = 0, a = 1.0 }  # Orange color from main.rs
@@ -42,6 +25,7 @@ interactive = true
 draggable = true
 clickable = true
 z_index = -1
+position_control = "Manual"
 children = []
 
 # Square - Green draggable shape (includes draggable_shape blueprint)  
@@ -51,7 +35,7 @@ widget_type = { type = "Shape", shape_type = "Rectangle" }
 
 [widgets.square.layout]
 size = [50.0, 50.0]
-position = [125.0, 75.0, -2.0]  # Absolute position from main.rs
+position = [125.0, 75.0, -2.0]  # Original Bevy coordinates for testing
 
 [widgets.square.style]
 background_color = { r = 66, g = 201, b = 34, a = 1.0 }  # Green color from main.rs
@@ -62,6 +46,7 @@ interactive = true
 draggable = true
 clickable = true
 z_index = -2
+position_control = "Manual"
 children = []
 
 # Sample Text - Editable collaborative text (includes editable_label blueprint)
@@ -70,8 +55,8 @@ include = "widgets/editable_label.toml"
 widget_type = { type = "Text", content = "Hello, whip_ui!\nThis is collaborative text.", editable = true }
 
 [widgets.sample_text.layout]
-size = [200.0, 48.0]  # Accommodate two lines
-position = [50.0, 250.0, -2.0]  # Absolute position from main.rs
+size = [200.0, 60.0]  # Increased height for two lines of 24pt text
+position = [50.0, 250.0, -2.0]  # Original Bevy coordinates for testing
 
 [widgets.sample_text.style]
 text_color = "black"
@@ -87,5 +72,5 @@ draggable = false
 z_index = -2
 children = []
 
-# Root widget list (defines rendering order)
-root_widgets = ["background", "triangle", "square", "sample_text"]
+# All widgets are implicit children of the window root container
+# Rendering order is determined by z_index values

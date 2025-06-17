@@ -47,6 +47,7 @@ pub use layout::{
 // Re-export asset system
 pub use assets::{
     UiTree,
+    WindowConfig,
     UiAssetLoader,
     LoadUiRequest,
     LoadingUiAssets,

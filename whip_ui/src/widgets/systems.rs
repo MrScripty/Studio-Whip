@@ -2,6 +2,7 @@ use bevy_ecs::prelude::*;
 use bevy_transform::prelude::Transform;
 use std::collections::HashMap;
 use yrs::{Transact, Text as YrsTextTrait};
+use bevy_math::Vec3;
 use crate::{
     widgets::{
         blueprint::{WidgetBlueprint, WidgetCollection, WidgetType},
@@ -119,15 +120,18 @@ fn spawn_widget_entity(
     let style = WidgetStyle::from(&blueprint.style);
     let behavior = WidgetBehavior::from(&blueprint.behavior);
     
-    let transform = Transform::from_translation(layout.computed_position);
+    // Get position control from behavior config, default to Layout
+    let position_control = blueprint.behavior.position_control.clone().unwrap_or(PositionControl::Layout);
+    
+    // Use the computed position from TOML as the initial Transform
+    // Taffy will override this for Layout and LayoutThenManual entities
+    let initial_position = layout.computed_position;
+    let transform = Transform::from_translation(initial_position);
     let visibility = Visibility(behavior.visible);
     let interaction = Interaction {
         clickable: behavior.clickable,
         draggable: behavior.draggable,
     };
-    
-    // Get position control from behavior config, default to Layout
-    let position_control = blueprint.behavior.position_control.clone().unwrap_or(PositionControl::Layout);
     
     // Store values we'll need later before they're moved
     let computed_size = layout.computed_size;
@@ -149,7 +153,7 @@ fn spawn_widget_entity(
         interaction,
         position_control,
         UiNode::default(),
-        Styleable(taffy::Style::default()), // TODO: Convert from LayoutConfig to taffy::Style
+        Styleable(convert_layout_config_to_taffy_style(&blueprint.layout)),
     ));
     
     // Add widget-type-specific components
@@ -200,16 +204,22 @@ fn spawn_widget_entity(
             if *editable {
                 entity_commands.insert(EditableText);
                 
-                // Create YRS text reference for collaborative editing
-                let _text_handle = {
+                // Create YRS text reference for collaborative editing and store for later mapping
+                let text_handle = {
                     let text_ref = yrs_res.doc.get_or_insert_text(blueprint.id.as_str());
                     let mut txn = yrs_res.doc.transact_mut();
                     text_ref.insert(&mut txn, 0, content);
                     text_ref
                 };
                 
-                // Note: YRS mapping will be handled after entity is spawned
-                // yrs_res.text_map.lock().unwrap().insert(entity_id, text_handle);
+                // Get the entity ID and map it to the YRS text handle
+                let entity_id = entity_commands.id();
+                if let Ok(mut text_map) = yrs_res.text_map.lock() {
+                    text_map.insert(entity_id, text_handle);
+                    bevy_log::info!("Mapped Entity {:?} to YrsText '{}'", entity_id, blueprint.id);
+                } else {
+                    bevy_log::error!("Failed to lock text_map mutex for entity {:?}", entity_id);
+                }
             }
         }
         
@@ -343,6 +353,61 @@ pub fn widget_interaction_system(
             }
         }
     }
+}
+
+/// Convert LayoutConfig to Taffy Style for layout calculations
+fn convert_layout_config_to_taffy_style(layout_config: &crate::widgets::blueprint::LayoutConfig) -> taffy::Style {
+    let mut style = taffy::Style::default();
+    
+    // Convert position to absolute positioning if specified
+    if let Some(position) = layout_config.position {
+        style.position = taffy::Position::Absolute;
+        style.inset = taffy::Rect {
+            left: taffy::LengthPercentageAuto::Length(position.x),
+            top: taffy::LengthPercentageAuto::Length(position.y),
+            right: taffy::LengthPercentageAuto::Auto,
+            bottom: taffy::LengthPercentageAuto::Auto,
+        };
+    }
+    
+    // Convert size if specified
+    if let Some(size) = layout_config.size {
+        style.size = taffy::Size {
+            width: taffy::Dimension::Length(size.x),
+            height: taffy::Dimension::Length(size.y),
+        };
+    }
+    
+    // Convert margin if specified
+    if let Some(margin) = &layout_config.margin {
+        style.margin = taffy::Rect {
+            left: taffy::LengthPercentageAuto::Length(margin.left),
+            right: taffy::LengthPercentageAuto::Length(margin.right),
+            top: taffy::LengthPercentageAuto::Length(margin.top),
+            bottom: taffy::LengthPercentageAuto::Length(margin.bottom),
+        };
+    }
+    
+    // Convert padding if specified
+    if let Some(padding) = &layout_config.padding {
+        style.padding = taffy::Rect {
+            left: taffy::LengthPercentage::Length(padding.left),
+            right: taffy::LengthPercentage::Length(padding.right),
+            top: taffy::LengthPercentage::Length(padding.top),
+            bottom: taffy::LengthPercentage::Length(padding.bottom),
+        };
+    }
+    
+    // Convert flex properties if specified
+    if let Some(flex_grow) = layout_config.flex_grow {
+        style.flex_grow = flex_grow;
+    }
+    
+    if let Some(flex_shrink) = layout_config.flex_shrink {
+        style.flex_shrink = flex_shrink;
+    }
+    
+    style
 }
 
 /// System to handle widget actions

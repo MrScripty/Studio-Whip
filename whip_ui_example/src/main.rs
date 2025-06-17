@@ -25,9 +25,6 @@ use whip_ui::{
     ShapeData, 
     Visibility, 
     Interaction, 
-    Text, 
-    TextAlignment, 
-    EditableText,
     GuiFrameworkCorePlugin,
     GuiFrameworkInteractionPlugin,
     GuiFrameworkDefaultMovementPlugin,
@@ -35,26 +32,95 @@ use whip_ui::{
     UiAssetPlugin,
     LoadUiRequest,
     TaffyLayoutPlugin,
-    UiNode,
-    Styleable,
-    PositionControl,
+    WindowConfig,
 };
 
 // Import Bevy Name for debugging entities
 use bevy_core::Name;
 use bevy_color::Color;
 // Import Yrs types needed for resource initialization
-use yrs::{Doc, Text as YrsText}; // Alias YrsText to avoid conflict
-use yrs::Transact;
+use yrs::Doc;
 use std::sync::{Arc, Mutex};
-// Import Taffy for layout styles
-use taffy;
 
 #[derive(Component)]
 struct BackgroundQuad;
 
+/// Load window configuration from TOML file synchronously
+fn load_window_config() -> WindowConfig {
+    let toml_path = "assets/ui/layouts/main.toml";
+    
+    match std::fs::read_to_string(toml_path) {
+        Ok(toml_content) => {
+            match toml::from_str::<toml::Value>(&toml_content) {
+                Ok(parsed_toml) => {
+                    parse_window_config_direct(&parsed_toml).unwrap_or_else(|e| {
+                        bevy_log::warn!("Failed to parse window config: {}, using defaults", e);
+                        WindowConfig::default()
+                    })
+                }
+                Err(e) => {
+                    bevy_log::warn!("Failed to parse TOML: {}, using default window config", e);
+                    WindowConfig::default()
+                }
+            }
+        }
+        Err(e) => {
+            bevy_log::warn!("Failed to read TOML file {}: {}, using default window config", toml_path, e);
+            WindowConfig::default()
+        }
+    }
+}
+
+/// Parse window configuration directly from TOML value
+fn parse_window_config_direct(toml_value: &toml::Value) -> Result<WindowConfig, String> {
+    let table = toml_value.as_table()
+        .ok_or_else(|| "Root must be a table".to_string())?;
+    
+    let mut window_config = WindowConfig::default();
+    
+    if let Some(window_section) = table.get("window") {
+        if let Some(window_table) = window_section.as_table() {
+            // Parse window size
+            if let Some(size_array) = window_table.get("size") {
+                if let Some(size_arr) = size_array.as_array() {
+                    if size_arr.len() == 2 {
+                        if let (Some(width), Some(height)) = (size_arr[0].as_float(), size_arr[1].as_float()) {
+                            window_config.size = [width as f32, height as f32];
+                        }
+                    }
+                }
+            }
+            
+            // Parse background color
+            if let Some(bg_color) = window_table.get("background_color") {
+                if let Some(color_table) = bg_color.as_table() {
+                    if let (Some(r), Some(g), Some(b), Some(a)) = (
+                        color_table.get("r").and_then(|v| v.as_integer()),
+                        color_table.get("g").and_then(|v| v.as_integer()),
+                        color_table.get("b").and_then(|v| v.as_integer()),
+                        color_table.get("a").and_then(|v| v.as_float()),
+                    ) {
+                        window_config.background_color = Some(Color::srgba(
+                            r as f32 / 255.0,
+                            g as f32 / 255.0,
+                            b as f32 / 255.0,
+                            a as f32,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(window_config)
+}
+
 fn main() {
     info!("Starting whip_ui example...");
+
+    // Load window configuration from TOML
+    let window_config = load_window_config();
+    info!("Loaded window config: {}x{}", window_config.size[0], window_config.size[1]);
 
     // Initialize IoTaskPool manually
     IoTaskPool::get_or_init(|| {
@@ -75,7 +141,7 @@ fn main() {
             WindowPlugin {
                 primary_window: Some(Window {
                     title: "whip_ui Example".into(),
-                    resolution: WindowResolution::new(600.0, 300.0),
+                    resolution: WindowResolution::new(window_config.size[0], window_config.size[1]),
                     present_mode: PresentMode::AutoVsync,
                     ..default()
                 }),
@@ -92,6 +158,7 @@ fn main() {
             doc: Arc::new(Doc::new()),
             text_map: Arc::new(Mutex::new(std::collections::HashMap::new())),
         })
+        .insert_resource(window_config.clone())
         // == Add Framework Plugins ==
         .add_plugins(GuiFrameworkCorePlugin)
         .add_plugins(GuiFrameworkInteractionPlugin)
@@ -112,7 +179,8 @@ fn main() {
 fn setup_scene_ecs(
     mut commands: Commands,
     primary_window_q: Query<&Window, With<PrimaryWindow>>,
-    yrs_res: ResMut<YrsDocResource>,
+    _yrs_res: ResMut<YrsDocResource>,
+    window_config: Res<WindowConfig>,
 ) {
     info!("Running setup_scene_ecs...");
     
@@ -125,6 +193,9 @@ fn setup_scene_ecs(
 
    info!("Using logical dimensions for background: {}x{}", logical_width, logical_height);
 
+    // Background color from window config
+    let background_color = window_config.background_color.unwrap_or(Color::srgba(0.129, 0.161, 0.165, 1.0));
+
     // Background (Not interactive, covers full screen) - Use custom vertices for exact fit
     commands.spawn((
         ShapeData::new(vec![
@@ -136,7 +207,7 @@ fn setup_scene_ecs(
             Vertex { position: [logical_width, 0.0] },
             Vertex { position: [0.0, logical_height] },
             Vertex { position: [logical_width, logical_height] },
-        ], Color::srgba(0.129, 0.161, 0.165, 1.0)),
+        ], background_color),
         Transform::from_xyz(0.0, 0.0, 0.0),
         Visibility(true),
         Interaction::default(),
@@ -144,66 +215,8 @@ fn setup_scene_ecs(
         BackgroundQuad,
     ));
 
-    // Triangle (Draggable and Clickable) - Orange - Manual positioning  
-    commands.spawn((
-        ShapeData::triangle(50.0, 50.0, Color::srgba(1.0, 0.596, 0.0, 1.0)),
-        Transform::from_xyz(300.0, 150.0, -1.0),
-        Visibility(true),
-        Interaction { clickable: true, draggable: true },
-        PositionControl::Manual, // Manual positioning for draggable shapes
-        Name::new("Triangle"),
-    ));
-
-    // Square (Draggable and Clickable) - Green - Manual positioning
-    commands.spawn((
-        ShapeData::rectangle(50.0, 50.0, Color::srgba(0.259, 0.788, 0.133, 1.0)),
-        Transform::from_xyz(125.0, 75.0, -2.0),
-        Visibility(true),
-        Interaction { clickable: true, draggable: true },
-        PositionControl::Manual, // Manual positioning for draggable shapes
-        Name::new("Square"),
-    ));
-
-    // --- Spawn Sample Text ---
-    let yrs_text_content = "Hello, whip_ui!\nThis is collaborative text.".to_string();
-    let text_handle: yrs::TextRef = {
-        let text_ref = yrs_res.doc.get_or_insert_text("sample_text");
-        let mut txn = yrs_res.doc.transact_mut();
-        text_ref.insert(&mut txn, 0, &yrs_text_content);
-        text_ref
-    };
-
-    let text_entity = commands.spawn((
-        Text {
-            size: 24.0,
-            color: Color::BLACK,
-            alignment: TextAlignment::Left,
-            bounds: None,
-        },
-        Transform::from_xyz(50.0, 250.0, -2.0),
-        Visibility(true),
-        Name::new("SampleText"),
-        EditableText,
-        PositionControl::Layout, // Use layout positioning for text
-        UiNode::default(),
-        Styleable(taffy::Style {
-            position: taffy::Position::Absolute,
-            inset: taffy::Rect {
-                left: taffy::LengthPercentageAuto::Length(50.0),
-                top: taffy::LengthPercentageAuto::Length(50.0), // 50px from top of window = Y=250 in Bevy
-                right: taffy::LengthPercentageAuto::Auto,
-                bottom: taffy::LengthPercentageAuto::Auto,
-            },
-            size: taffy::Size {
-                width: taffy::Dimension::Length(200.0), // Explicit width for text
-                height: taffy::Dimension::Length(48.0), // Explicit height for text  
-            },
-            ..Default::default()
-        }),
-    )).id();
-
-    yrs_res.text_map.lock().expect("Failed to lock text_map mutex in setup").insert(text_entity, text_handle);
-    info!("Mapped Entity {:?} to YrsText 'sample_text'", text_entity);
+    // All UI widgets will now be loaded from TOML via the asset loading system
+    // The test_asset_loading system will trigger the LoadUiRequest event
 }
 
 // System to update background vertices on resize (App specific)

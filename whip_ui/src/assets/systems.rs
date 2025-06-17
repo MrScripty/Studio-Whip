@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use bevy_asset::{Assets, AssetServer, Handle};
-use bevy_log::{info, warn, error};
+use bevy_log::{info, error};
 use std::collections::HashMap;
 use crate::assets::{UiTree, LoadUiRequest};
 use crate::widgets::{
@@ -67,43 +67,32 @@ fn spawn_ui_tree(
     request: &LoadUiRequest,
     yrs_res: &YrsDocResource,
 ) {
-    // Find the root widget to spawn
-    let root_widget_id = ui_tree.root.as_ref().or_else(|| {
-        // If no root specified, try to find a reasonable default
-        ui_tree.resolved_widgets.keys().next()
-    });
-    
-    let Some(root_id) = root_widget_id else {
-        warn!("No root widget found in UI tree: {}", request.asset_path);
-        return;
-    };
-    
-    let Some(root_widget) = ui_tree.get_widget(root_id) else {
-        error!("Root widget '{}' not found in UI tree: {}", root_id, request.asset_path);
-        return;
-    };
-    
-    info!("Spawning UI tree with root widget: {}", root_id);
+    info!("Spawning UI tree from: {}", request.asset_path);
     
     // Create a temporary widget collection for the spawning system
     let temp_collection = crate::widgets::blueprint::WidgetCollection {
         widgets: ui_tree.resolved_widgets.clone(),
-        root: Some(root_id.clone()),
+        root: ui_tree.root.clone(),
     };
     
-    // Spawn the root widget and its hierarchy
-    let root_entity = spawn_widget_recursive(
-        commands,
-        root_widget,
-        &temp_collection,
-        yrs_res,
-        request.parent,
-    );
-    
-    // Apply position override if specified
-    if let Some(position) = request.position_override {
-        if let Some(mut entity_commands) = commands.get_entity(root_entity) {
-            entity_commands.insert(bevy_transform::prelude::Transform::from_translation(position));
+    // Spawn all widgets as children of the window (no explicit root)
+    // All widgets in the TOML are implicitly children of the window
+    for (widget_id, widget_blueprint) in &ui_tree.resolved_widgets {
+        info!("Spawning widget: {}", widget_id);
+        
+        let widget_entity = spawn_widget_recursive(
+            commands,
+            widget_blueprint,
+            &temp_collection,
+            yrs_res,
+            request.parent, // This will be None for top-level widgets (children of window)
+        );
+        
+        // Apply position override if specified and this is the first widget
+        if let Some(position) = request.position_override {
+            if let Some(mut entity_commands) = commands.get_entity(widget_entity) {
+                entity_commands.insert(bevy_transform::prelude::Transform::from_translation(position));
+            }
         }
     }
     

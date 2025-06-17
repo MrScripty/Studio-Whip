@@ -36,5 +36,8 @@ yrs = { workspace = true }
 # Layout Engine
 taffy = { workspace = true }
 
+# TOML parsing
+toml = { workspace = true }
+
 [build-dependencies]
 walkdir = { workspace = true }

@@ -5,8 +5,9 @@
 /python/
 
 #Binarys
-/rust/target/
 /target/
+/whip_ui/target/
+/whip_ui_example/target/
 *.pyc
 *.spv
 

@@ -41,7 +41,7 @@ position = [125.0, 75.0, -2.0]  # Original Bevy coordinates for testing
 background_color = { r = 66, g = 201, b = 34, a = 1.0 }  # Green color from main.rs
 
 [widgets.square.behavior]
-visible = true
+#visible = true
 interactive = true
 draggable = true
 clickable = true

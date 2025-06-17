@@ -1,0 +1,31 @@
+# Configuration for generating high-level architecture documentation
+
+# Module filtering
+# include_modules = ["gui_framework", "rendering", "components"]  # Optional: only include these modules
+exclude_modules = []  # Modules to exclude
+
+# Visibility filtering
+include_private = false  # Only include public items for architecture overview
+
+# Item type extraction
+extract_structs = true
+extract_enums = false      # Not needed for high-level architecture
+extract_functions = false  # Too detailed for architecture
+extract_impls = false      # Implementation details not needed
+extract_traits = true
+extract_modules = true
+
+# Bevy-specific extractions
+extract_components = true
+extract_resources = true
+extract_systems = true
+extract_plugins = true
+extract_events = true
+
+# Analysis options
+analyze_dependencies = true
+analyze_function_calls = false  # Expensive and not needed for architecture
+
+# Output options
+include_documentation = true
+include_source_locations = false  # Not needed for high-level view

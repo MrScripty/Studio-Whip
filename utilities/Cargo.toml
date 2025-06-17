@@ -1,0 +1,28 @@
+[package]
+name = "whip-doc-parser"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "whip-doc-parser"
+path = "src/main.rs"
+
+[dependencies]
+# Core parsing - from workspace
+syn = { workspace = true }
+quote = { workspace = true }
+
+# CLI and config - from workspace
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# Error handling - from workspace
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# File system and utilities - from workspace
+walkdir = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

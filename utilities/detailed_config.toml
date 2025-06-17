@@ -1,0 +1,31 @@
+# Configuration for generating detailed code documentation
+
+# Module filtering
+# include_modules = []  # Include all modules
+exclude_modules = ["target"]  # Exclude build artifacts
+
+# Visibility filtering
+include_private = true  # Include private items for detailed documentation
+
+# Item type extraction
+extract_structs = true
+extract_enums = true
+extract_functions = true
+extract_impls = true
+extract_traits = true
+extract_modules = true
+
+# Bevy-specific extractions
+extract_components = true
+extract_resources = true
+extract_systems = true
+extract_plugins = true
+extract_events = true
+
+# Analysis options
+analyze_dependencies = true
+analyze_function_calls = true  # Include for detailed analysis
+
+# Output options
+include_documentation = true
+include_source_locations = true  # Include for detailed documentation

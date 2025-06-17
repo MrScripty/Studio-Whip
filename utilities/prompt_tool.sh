@@ -14,6 +14,81 @@ DOCS_DIR="$SCRIPT_DIR/documentation"
 temp_file=$(mktemp)
 file_list=$(mktemp)
 
+# Function to check and optionally install Rust
+check_and_install_rust() {
+    if command -v cargo >/dev/null 2>&1; then
+        return 0  # Cargo found, success
+    fi
+    
+    echo "Cargo not found in this environment."
+    
+    # Check if we're in WSL
+    if grep -q Microsoft /proc/version 2>/dev/null || grep -q WSL /proc/version 2>/dev/null; then
+        echo "Detected WSL environment. Rust may be installed on Windows but not accessible in WSL."
+        echo ""
+        echo "Options:"
+        echo "1) Install Rust in this WSL/Ubuntu environment"
+        echo "2) Use Windows terminal to run this script natively"
+        echo "3) Continue without automated parsing"
+        echo ""
+    else
+        echo "Would you like to install Rust for automated code parsing?"
+        echo ""
+        echo "Options:"
+        echo "1) Install Rust via rustup"
+        echo "2) Continue without automated parsing"
+        echo ""
+    fi
+    
+    read -p "Enter your choice (1-3 or 1-2): " rust_choice
+    
+    case "$rust_choice" in
+        1)
+            echo "Installing Rust via rustup..."
+            echo "This may take a few minutes..."
+            
+            # Download and install rustup
+            if curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; then
+                echo "Rust installed successfully!"
+                echo "Setting up environment..."
+                
+                # Source the cargo environment
+                if [ -f "$HOME/.cargo/env" ]; then
+                    source "$HOME/.cargo/env"
+                fi
+                
+                # Verify installation
+                if command -v cargo >/dev/null 2>&1; then
+                    echo "Cargo is now available. Continuing with automated parsing..."
+                    return 0  # Success
+                else
+                    echo "Warning: Rust installed but cargo not found in PATH."
+                    echo "You may need to restart your terminal or run: source ~/.cargo/env"
+                    return 1  # Failed
+                fi
+            else
+                echo "Error: Failed to install Rust."
+                return 1  # Failed
+            fi
+            ;;
+        2)
+            if grep -q Microsoft /proc/version 2>/dev/null || grep -q WSL /proc/version 2>/dev/null; then
+                echo "Please run this script from Windows terminal instead of WSL."
+            fi
+            echo "Continuing without automated parsing..."
+            return 1  # User chose not to install
+            ;;
+        3)
+            echo "Continuing without automated parsing..."
+            return 1  # User chose not to install
+            ;;
+        *)
+            echo "Invalid choice. Continuing without automated parsing..."
+            return 1  # Invalid choice
+            ;;
+    esac
+}
+
 # Function to append content, with conditional code block markup
 append_content() {
     local filepath="$1"
@@ -45,7 +120,9 @@ echo "2) Get All Code"
 echo "3) Generate Documentation"
 echo "4) Custom Code List"
 echo "5) Debug Log Analysis"
-read -p "Enter option (1-5): " option
+echo "6) Generate Parsed Architecture Data"
+echo "7) Generate Custom Parsed Documentation"
+read -p "Enter option (1-7): " option
 
 # Process files based on user option
 case "$option" in
@@ -355,6 +432,139 @@ case "$option" in
             append_content "$log_prompt" "markdown"
         else
             echo "Warning: $log_prompt not found or is empty"
+        fi
+        ;;
+
+    6) # Generate Parsed Architecture Data
+        echo "Generating parsed architecture data..."
+        
+        # Check and optionally install Rust
+        if check_and_install_rust; then
+            echo "Running Rust parser for architecture analysis..."
+            cd "$BASE_DIR"
+            
+            # Try to build and run the parser using workspace
+            echo "Building parser..."
+            if cargo build --release --bin whip-doc-parser >/dev/null 2>&1; then
+                echo "Parser built successfully, running analysis..."
+                
+                # Run the parser with architecture config
+                echo "Analyzing whip_ui codebase..."
+                parser_output=$(cargo run --release --bin whip-doc-parser -- architecture --project-path whip_ui --format markdown 2>/dev/null)
+                exit_code=$?
+                
+                if [ $exit_code -eq 0 ] && [ -n "$parser_output" ]; then
+                    echo "# Parsed Architecture Data" >> "$temp_file"
+                    echo "" >> "$temp_file"
+                    echo "$parser_output" >> "$temp_file"
+                    echo "" >> "$temp_file"
+                    echo "Successfully generated parsed architecture data."
+                else
+                    echo "Warning: Parser execution failed (exit code: $exit_code)"
+                    echo "Parser output: $parser_output"
+                    echo "# Architecture Analysis" >> "$temp_file"
+                    echo "" >> "$temp_file"
+                    echo "Automated parsing failed. Error details:" >> "$temp_file"
+                    echo "\`\`\`" >> "$temp_file"
+                    echo "$parser_output" >> "$temp_file"
+                    echo "\`\`\`" >> "$temp_file"
+                fi
+            else
+                echo "Warning: Parser build failed"
+                echo "# Architecture Analysis" >> "$temp_file"
+                echo "" >> "$temp_file"
+                echo "Automated parsing unavailable. Parser build failed." >> "$temp_file"
+                echo "Please try: cargo build --bin whip-doc-parser" >> "$temp_file"
+            fi
+            
+            # Return to original directory
+            cd "$SCRIPT_DIR" >/dev/null
+        else
+            echo "# Architecture Analysis" >> "$temp_file"
+            echo "" >> "$temp_file"
+            echo "Automated parsing requires Rust and Cargo to be installed." >> "$temp_file"
+            echo "Run this script again and choose option 1 to install Rust automatically." >> "$temp_file"
+        fi
+        ;;
+
+    7) # Generate Custom Parsed Documentation
+        echo "Generate Custom Parsed Documentation"
+        echo "Available configurations:"
+        echo "  1) Architecture (high-level overview)"
+        echo "  2) Detailed (comprehensive analysis)"
+        echo "  3) Custom config file"
+        read -p "Select configuration (1-3): " config_choice
+        
+        config_file=""
+        case "$config_choice" in
+            1)
+                config_file="$SCRIPT_DIR/architecture_config.toml"
+                ;;
+            2)
+                config_file="$SCRIPT_DIR/detailed_config.toml"
+                ;;
+            3)
+                echo "Enter path to custom config file:"
+                read -r custom_config
+                if [ -f "$custom_config" ]; then
+                    config_file="$custom_config"
+                else
+                    echo "Warning: Config file not found: $custom_config"
+                    echo "Using default configuration instead."
+                fi
+                ;;
+        esac
+        
+        # Check and optionally install Rust
+        if check_and_install_rust; then
+            echo "Running custom Rust parser analysis..."
+            cd "$BASE_DIR"
+            
+            # Try to build and run the parser using workspace
+            echo "Building parser..."
+            if cargo build --release --bin whip-doc-parser >/dev/null 2>&1; then
+                echo "Parser built successfully, running analysis..."
+                
+                # Run the parser with custom config
+                echo "Analyzing whip_ui codebase..."
+                if [ -n "$config_file" ] && [ -f "$config_file" ]; then
+                    parser_output=$(cargo run --release --bin whip-doc-parser -- parse --project-path whip_ui --config "$config_file" --format markdown 2>/dev/null)
+                else
+                    parser_output=$(cargo run --release --bin whip-doc-parser -- parse --project-path whip_ui --format markdown 2>/dev/null)
+                fi
+                exit_code=$?
+                
+                if [ $exit_code -eq 0 ] && [ -n "$parser_output" ]; then
+                    echo "# Custom Parsed Documentation" >> "$temp_file"
+                    echo "" >> "$temp_file"
+                    echo "$parser_output" >> "$temp_file"
+                    echo "" >> "$temp_file"
+                    echo "Successfully generated custom parsed documentation."
+                else
+                    echo "Warning: Parser execution failed (exit code: $exit_code)"
+                    echo "Parser output: $parser_output"
+                    echo "# Custom Documentation Analysis" >> "$temp_file"
+                    echo "" >> "$temp_file"
+                    echo "Automated parsing failed. Error details:" >> "$temp_file"
+                    echo "\`\`\`" >> "$temp_file"
+                    echo "$parser_output" >> "$temp_file"
+                    echo "\`\`\`" >> "$temp_file"
+                fi
+            else
+                echo "Warning: Parser build failed"
+                echo "# Custom Documentation Analysis" >> "$temp_file"
+                echo "" >> "$temp_file"
+                echo "Automated parsing unavailable. Parser build failed." >> "$temp_file"
+                echo "Please try: cargo build --bin whip-doc-parser" >> "$temp_file"
+            fi
+            
+            # Return to original directory
+            cd "$SCRIPT_DIR" >/dev/null
+        else
+            echo "# Custom Documentation Analysis" >> "$temp_file"
+            echo "" >> "$temp_file"
+            echo "Automated parsing requires Rust and Cargo to be installed." >> "$temp_file"
+            echo "Run this script again and choose option 1 to install Rust automatically." >> "$temp_file"
         fi
         ;;
 esac

@@ -1,7 +1,7 @@
 pub mod systems;
 pub mod plugin;
 
-use bevy_asset::{Asset, AssetLoader, AsyncReadExt, LoadContext};
+use bevy_asset::{Asset, AssetLoader, LoadContext};
 use bevy_ecs::prelude::*;
 use bevy_reflect::TypePath;
 use std::collections::HashMap;

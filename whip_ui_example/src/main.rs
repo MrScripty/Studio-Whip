@@ -190,7 +190,7 @@ fn setup_scene_ecs(
             position: taffy::Position::Absolute,
             inset: taffy::Rect {
                 left: taffy::LengthPercentageAuto::Length(50.0),
-                top: taffy::LengthPercentageAuto::Length(50.0), // Top-left coordinate system
+                top: taffy::LengthPercentageAuto::Length(50.0), // 50px from top of window = Y=250 in Bevy
                 right: taffy::LengthPercentageAuto::Auto,
                 bottom: taffy::LengthPercentageAuto::Auto,
             },

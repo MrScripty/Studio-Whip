@@ -197,7 +197,7 @@ fn spawn_widget_entity(
                     size: text_size,
                     color: text_color,
                     alignment: TextAlignment::Left,
-                    bounds: Some(computed_size),
+                    bounds: None, // Let text system calculate dynamic bounds
                 },
             ));
             

@@ -26,7 +26,7 @@ use crate::gui_framework::interaction::text_editing::text_editing_system;
 // Import types/functions from the gui_framework
 use crate::gui_framework::{
     interaction::hotkeys::{HotkeyConfig, HotkeyError},
-    components::{Interaction, Visibility, Focus, EditableText, TextBufferCache},
+    components::{Interaction, Visibility, Focus, EditableText, TextBufferCache, ShapeData},
     events::{EntityClicked, EntityDragged, HotkeyActionTriggered, YrsTextChanged, TextFocusChanged},
 };
 
@@ -109,6 +109,33 @@ impl Plugin for GuiFrameworkInteractionPlugin {
     }
 }
 
+// --- Helper Functions ---
+
+/// Calculate bounding box for a shape based on its vertices
+fn calculate_shape_bounds(shape_data: &ShapeData) -> Rect {
+    if shape_data.vertices.is_empty() {
+        return Rect::from_center_half_size(Vec2::ZERO, Vec2::new(25.0, 25.0));
+    }
+    
+    let mut min_x = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut min_y = f32::MAX;
+    let mut max_y = f32::MIN;
+    
+    // Find the bounding box of all vertices
+    for vertex in shape_data.vertices.iter() {
+        min_x = min_x.min(vertex.position[0]);
+        max_x = max_x.max(vertex.position[0]);
+        min_y = min_y.min(vertex.position[1]);
+        max_y = max_y.max(vertex.position[1]);
+    }
+    
+    let min = Vec2::new(min_x, min_y);
+    let max = Vec2::new(max_x, max_y);
+    
+    Rect { min, max }
+}
+
 // --- Systems Moved/Created for this Plugin ---
 
 /// Startup system: Loads hotkey configuration from file and inserts it as a resource.
@@ -174,7 +201,7 @@ pub(crate) fn interaction_system(
     mut entity_dragged_writer: EventWriter<EntityDragged>,
     mut text_focus_writer: EventWriter<TextFocusChanged>,
     // Queries for entities
-    interaction_query: Query<(Entity, &GlobalTransform, &Interaction, &Visibility), (Without<EditableText>, Without<CursorVisual>)>,
+    interaction_query: Query<(Entity, &GlobalTransform, &Interaction, &Visibility, Option<&crate::gui_framework::components::ShapeData>), (Without<EditableText>, Without<CursorVisual>)>,
     editable_text_query: Query<(Entity, &GlobalTransform, &TextBufferCache, &Visibility), With<EditableText>>,
     focus_query: Query<Entity, With<Focus>>,
     // Resources
@@ -248,11 +275,18 @@ pub(crate) fn interaction_system(
                         }
 
                         // Second, check for shape hits
-                        for (entity, transform, interaction, visibility) in interaction_query.iter() {
+                        for (entity, transform, interaction, visibility, shape_data_opt) in interaction_query.iter() {
                             if !visibility.is_visible() { continue; }
                             let inverse_transform: Affine3A = transform.affine().inverse();
                             let cursor_pos_local = inverse_transform.transform_point3(cursor_pos_world.extend(0.0)).truncate();
-                            let bounds = Rect::from_center_half_size(Vec2::ZERO, Vec2::new(50.0, 50.0));
+                            
+                            // Calculate bounds based on actual shape data or use default
+                            let bounds = if let Some(shape_data) = shape_data_opt {
+                                calculate_shape_bounds(shape_data)
+                            } else {
+                                // Fallback for entities without ShapeData
+                                Rect::from_center_half_size(Vec2::ZERO, Vec2::new(25.0, 25.0))
+                            };
 
                             if bounds.contains(cursor_pos_local) {
                                 let z_depth = transform.translation().z;

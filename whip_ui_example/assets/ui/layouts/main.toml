@@ -55,8 +55,8 @@ include = "widgets/editable_label.toml"
 widget_type = { type = "Text", content = "Hello, whip_ui!\nThis is collaborative text.", editable = true }
 
 [widgets.sample_text.layout]
-size = [200.0, 60.0]  # Increased height for two lines of 24pt text
-position = [50.0, 250.0, -2.0]  # Original Bevy coordinates for testing
+size = [200.0, 48.0]  # Taffy layout size (dynamic text bounds calculated separately)
+position = [50.0, 50.0, -2.0]  # Testing if text coordinates are inverted
 
 [widgets.sample_text.style]
 text_color = "black"

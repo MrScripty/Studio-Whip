@@ -191,33 +191,40 @@ case "$option" in
         # Create separate lists for .rs files from both directories
         whip_ui_rs_list=$(mktemp)
         whip_ui_example_rs_list=$(mktemp)
+        whip_ui_example_toml_list=$(mktemp)
         
         # Find files in whip_ui
         find "$WHIP_UI_SRC_DIR" -type f -name "*.rs" | sort > "$whip_ui_rs_list"
         # Find files in whip_ui_example
         find "$WHIP_UI_EXAMPLE_SRC_DIR" -type f -name "*.rs" | sort > "$whip_ui_example_rs_list"
+        # Find TOML files in whip_ui_example/assets
+        find "$BASE_DIR/whip_ui_example/assets" -type f -name "*.toml" 2>/dev/null | sort > "$whip_ui_example_toml_list"
 
         first_file=true
         prev_dir=""
         
-        # Process whip_ui files first
-        echo "Processing whip_ui files..."
+        # Process whip_ui Cargo.toml first
+        whip_ui_cargo="$BASE_DIR/whip_ui/Cargo.toml"
+        if [ -f "$whip_ui_cargo" ]; then
+            echo "Processing $whip_ui_cargo"
+            append_content "$whip_ui_cargo" "toml"
+            first_file=false
+        fi
+        
+        # Process whip_ui source files
+        echo "Processing whip_ui source files..."
         while read -r file; do
             if [ -f "$file" ]; then  # Ensure file exists
                 current_dir=$(dirname "$file")
-                # Special handling for first file (no leading divider)
+                # Add dividing line if switching directories
+                if ! $first_file && [ -n "$prev_dir" ] && [ "$current_dir" != "$prev_dir" ]; then
+                    echo "---" >> "$temp_file"
+                    echo "" >> "$temp_file"
+                fi
+                echo "Processing $file"
+                append_content "$file" "rust"
                 if $first_file; then
-                    echo "Processing $file"
-                    append_content "$file" "rust"
                     first_file=false
-                else
-                    # Add dividing line if switching directories
-                    if [ -n "$prev_dir" ] && [ "$current_dir" != "$prev_dir" ]; then
-                        echo "---" >> "$temp_file"
-                        echo "" >> "$temp_file"
-                    fi
-                    echo "Processing $file"
-                    append_content "$file" "rust"
                 fi
                 prev_dir="$current_dir"
             else
@@ -234,8 +241,15 @@ case "$option" in
             echo "" >> "$temp_file"
         fi
         
-        # Process whip_ui_example files
-        echo "Processing whip_ui_example files..."
+        # Process whip_ui_example Cargo.toml
+        whip_ui_example_cargo="$BASE_DIR/whip_ui_example/Cargo.toml"
+        if [ -f "$whip_ui_example_cargo" ]; then
+            echo "Processing $whip_ui_example_cargo"
+            append_content "$whip_ui_example_cargo" "toml"
+        fi
+        
+        # Process whip_ui_example source files
+        echo "Processing whip_ui_example source files..."
         prev_dir=""
         while read -r file; do
             if [ -f "$file" ]; then  # Ensure file exists
@@ -253,7 +267,34 @@ case "$option" in
             fi
         done < "$whip_ui_example_rs_list"
         
-        rm "$whip_ui_rs_list" "$whip_ui_example_rs_list"  # Clean up lists
+        # Process whip_ui_example TOML asset files
+        if [ -s "$whip_ui_example_toml_list" ]; then
+            echo "" >> "$temp_file"
+            echo "---" >> "$temp_file"
+            echo "# Asset Configuration Files" >> "$temp_file"
+            echo "---" >> "$temp_file"
+            echo "" >> "$temp_file"
+            
+            echo "Processing whip_ui_example asset TOML files..."
+            prev_dir=""
+            while read -r file; do
+                if [ -f "$file" ]; then  # Ensure file exists
+                    current_dir=$(dirname "$file")
+                    # Add dividing line if switching directories
+                    if [ -n "$prev_dir" ] && [ "$current_dir" != "$prev_dir" ]; then
+                        echo "---" >> "$temp_file"
+                        echo "" >> "$temp_file"
+                    fi
+                    echo "Processing $file"
+                    append_content "$file" "toml"
+                    prev_dir="$current_dir"
+                else
+                    echo "Warning: $file not found"
+                fi
+            done < "$whip_ui_example_toml_list"
+        fi
+        
+        rm "$whip_ui_rs_list" "$whip_ui_example_rs_list" "$whip_ui_example_toml_list"  # Clean up lists
         ;;
 
     3) # Generate Documentation

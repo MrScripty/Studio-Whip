@@ -1383,11 +1383,15 @@ pub enum UiRegistryError {
 
 // ==================== End UiRegistry ====================
 
-/// Asset loader for UI TOML files
+/// Legacy asset loader for UI TOML files (backward compatibility)
 #[derive(Default)]
 pub struct UiAssetLoader;
 
-/// Errors that can occur during UI asset loading
+/// New asset loader for hierarchical UI definitions
+#[derive(Default)]
+pub struct UiDefinitionLoader;
+
+/// Errors that can occur during legacy UI asset loading
 #[derive(Error, Debug)]
 pub enum UiAssetLoaderError {
     #[error("Failed to read UI file: {0}")]
@@ -1396,6 +1400,27 @@ pub enum UiAssetLoaderError {
     TomlParse(#[from] toml::de::Error),
     #[error("Failed to resolve include: {0}")]
     IncludeResolution(String),
+}
+
+/// Errors that can occur during UI definition loading
+#[derive(Error, Debug)]
+pub enum UiDefinitionLoaderError {
+    #[error("Failed to read UI definition file: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Failed to parse TOML: {0}")]
+    TomlParse(#[from] toml::de::Error),
+    #[error("Validation failed: {0}")]
+    Validation(#[from] UiDefinitionError),
+    #[error("Registry validation failed: {0}")]
+    RegistryValidation(#[from] UiRegistryError),
+    #[error("Invalid configuration: {0}")]
+    InvalidConfiguration(String),
+    #[error("Widget type validation failed: {0}")]
+    WidgetTypeValidation(String),
+    #[error("Action validation failed: {0}")]
+    ActionValidation(String),
+    #[error("Style validation failed: {0}")]
+    StyleValidation(String),
 }
 
 impl AssetLoader for UiAssetLoader {
@@ -1457,6 +1482,771 @@ impl UiAssetLoader {
         }
 
         Ok(resolved)
+    }
+}
+
+/// Implementation of the new UiDefinitionLoader
+impl AssetLoader for UiDefinitionLoader {
+    type Asset = UiDefinition;
+    type Settings = ();
+    type Error = UiDefinitionLoaderError;
+
+    async fn load(
+        &self,
+        reader: &mut dyn bevy_asset::io::Reader,
+        _settings: &(),
+        _load_context: &mut LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        let toml_str = std::str::from_utf8(&bytes)
+            .map_err(|e| UiDefinitionLoaderError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+
+        // Parse the TOML directly into UiDefinition using serde
+        let ui_definition: UiDefinition = toml::from_str(toml_str)
+            .map_err(|e| {
+                bevy_log::error!("Failed to parse UI definition TOML: {}", e);
+                UiDefinitionLoaderError::TomlParse(e)
+            })?;
+
+        bevy_log::info!("Successfully loaded UI definition with {} global styles and {} global actions", 
+                        ui_definition.styles.as_ref().map(|s| s.len()).unwrap_or(0),
+                        ui_definition.actions.as_ref().map(|a| a.len()).unwrap_or(0));
+
+        // Validate the loaded UI definition
+        ui_definition.validate()
+            .map_err(|e| {
+                bevy_log::error!("UI definition validation failed: {}", e);
+                UiDefinitionLoaderError::Validation(e)
+            })?;
+
+        bevy_log::info!("UI definition validation passed");
+
+        Ok(ui_definition)
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["toml"]
+    }
+}
+
+impl UiDefinitionLoader {
+    /// Load and validate a UI definition with registry validation
+    pub async fn load_with_registry(
+        &self,
+        reader: &mut dyn bevy_asset::io::Reader,
+        registry: &UiRegistry,
+        _settings: &(),
+        _load_context: &mut LoadContext<'_>,
+    ) -> Result<UiDefinition, UiDefinitionLoaderError> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        let toml_str = std::str::from_utf8(&bytes)
+            .map_err(|e| UiDefinitionLoaderError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+
+        // Parse the TOML with error recovery
+        let ui_definition = self.parse_with_error_recovery(toml_str)?;
+
+        bevy_log::info!("Successfully loaded UI definition with {} global styles and {} global actions", 
+                        ui_definition.styles.as_ref().map(|s| s.len()).unwrap_or(0),
+                        ui_definition.actions.as_ref().map(|a| a.len()).unwrap_or(0));
+
+        // Validate with registry
+        ui_definition.validate_with_registry(registry)
+            .map_err(|e| {
+                bevy_log::error!("UI definition registry validation failed: {}", e);
+                UiDefinitionLoaderError::Validation(e)
+            })?;
+
+        bevy_log::info!("UI definition validation with registry passed");
+
+        Ok(ui_definition)
+    }
+
+    /// Parse TOML with error recovery - attempts to parse valid parts and skip invalid nodes
+    fn parse_with_error_recovery(&self, toml_str: &str) -> Result<UiDefinition, UiDefinitionLoaderError> {
+        // First attempt: try to parse the entire TOML normally
+        match toml::from_str::<UiDefinition>(toml_str) {
+            Ok(ui_def) => {
+                bevy_log::info!("TOML parsed successfully on first attempt");
+                return Ok(ui_def);
+            }
+            Err(e) => {
+                bevy_log::warn!("Initial TOML parse failed, attempting error recovery: {}", e);
+            }
+        }
+
+        // Second attempt: parse as generic TOML value and manually construct UiDefinition
+        let toml_value: toml::Value = toml::from_str(toml_str)
+            .map_err(|e| {
+                bevy_log::error!("TOML is completely invalid: {}", e);
+                Self::create_detailed_parse_error(&e, toml_str)
+            })?;
+
+        let table = toml_value.as_table()
+            .ok_or_else(|| UiDefinitionLoaderError::InvalidConfiguration("Root must be a table".to_string()))?;
+
+        bevy_log::info!("TOML structure is valid, attempting manual parsing with error recovery");
+
+        // Parse each section with error recovery
+        let window = self.parse_window_section_safe(table.get("window"));
+        let styles = self.parse_styles_section_safe(table.get("styles"));
+        let actions = self.parse_actions_section_safe(table.get("actions"));
+        let root = self.parse_root_section_safe(table.get("root"), table)?;
+
+        let ui_definition = UiDefinition {
+            window,
+            root,
+            styles,
+            actions,
+        };
+
+        bevy_log::info!("Manual parsing with error recovery completed successfully");
+        Ok(ui_definition)
+    }
+
+    /// Parse window section with error recovery
+    fn parse_window_section_safe(&self, window_value: Option<&toml::Value>) -> Option<WindowConfig> {
+        match window_value {
+            Some(value) => {
+                match WindowConfig::deserialize(value.clone()) {
+                    Ok(config) => {
+                        bevy_log::debug!("Window configuration parsed successfully");
+                        Some(config)
+                    }
+                    Err(e) => {
+                        bevy_log::warn!("Failed to parse window configuration, using default: {}", e);
+                        Some(WindowConfig::default())
+                    }
+                }
+            }
+            None => {
+                bevy_log::debug!("No window configuration found, using default");
+                Some(WindowConfig::default())
+            }
+        }
+    }
+
+    /// Parse styles section with error recovery
+    fn parse_styles_section_safe(&self, styles_value: Option<&toml::Value>) -> Option<HashMap<String, StyleOverrides>> {
+        match styles_value {
+            Some(value) => {
+                if let Some(styles_table) = value.as_table() {
+                    let mut valid_styles = HashMap::new();
+                    let mut error_count = 0;
+
+                    for (style_name, style_value) in styles_table {
+                        match StyleOverrides::deserialize(style_value.clone()) {
+                            Ok(style_override) => {
+                                valid_styles.insert(style_name.clone(), style_override);
+                                bevy_log::debug!("Successfully parsed style: {}", style_name);
+                            }
+                            Err(e) => {
+                                error_count += 1;
+                                bevy_log::warn!("Failed to parse style '{}': {}", style_name, e);
+                            }
+                        }
+                    }
+
+                    if error_count > 0 {
+                        bevy_log::warn!("Parsed {} valid styles, skipped {} invalid styles", valid_styles.len(), error_count);
+                    }
+
+                    if valid_styles.is_empty() {
+                        None
+                    } else {
+                        Some(valid_styles)
+                    }
+                } else {
+                    bevy_log::warn!("Styles section is not a table, ignoring");
+                    None
+                }
+            }
+            None => None
+        }
+    }
+
+    /// Parse actions section with error recovery
+    fn parse_actions_section_safe(&self, actions_value: Option<&toml::Value>) -> Option<HashMap<String, ActionBinding>> {
+        match actions_value {
+            Some(value) => {
+                if let Some(actions_table) = value.as_table() {
+                    let mut valid_actions = HashMap::new();
+                    let mut error_count = 0;
+
+                    for (action_name, action_value) in actions_table {
+                        match ActionBinding::deserialize(action_value.clone()) {
+                            Ok(action_binding) => {
+                                valid_actions.insert(action_name.clone(), action_binding);
+                                bevy_log::debug!("Successfully parsed action: {}", action_name);
+                            }
+                            Err(e) => {
+                                error_count += 1;
+                                bevy_log::warn!("Failed to parse action '{}': {}", action_name, e);
+                            }
+                        }
+                    }
+
+                    if error_count > 0 {
+                        bevy_log::warn!("Parsed {} valid actions, skipped {} invalid actions", valid_actions.len(), error_count);
+                    }
+
+                    if valid_actions.is_empty() {
+                        None
+                    } else {
+                        Some(valid_actions)
+                    }
+                } else {
+                    bevy_log::warn!("Actions section is not a table, ignoring");
+                    None
+                }
+            }
+            None => None
+        }
+    }
+
+    /// Parse root section with error recovery
+    fn parse_root_section_safe(&self, root_value: Option<&toml::Value>, table: &toml::value::Table) -> Result<WidgetNode, UiDefinitionLoaderError> {
+        match root_value {
+            Some(value) => {
+                match WidgetNode::deserialize(value.clone()) {
+                    Ok(root_node) => {
+                        bevy_log::debug!("Root widget parsed successfully");
+                        Ok(root_node)
+                    }
+                    Err(e) => {
+                        bevy_log::error!("Failed to parse root widget: {}", e);
+                        // Try to create a minimal valid root widget
+                        self.create_fallback_root_widget()
+                    }
+                }
+            }
+            None => {
+                bevy_log::warn!("No root widget found, checking for legacy format or creating fallback");
+                // Check if this might be a legacy format (widgets section)
+                if table.contains_key("widgets") {
+                    bevy_log::info!("Detected legacy format with 'widgets' section");
+                    return Err(UiDefinitionLoaderError::InvalidConfiguration(
+                        "Legacy format detected. Please use the new hierarchical format with a 'root' section.".to_string()
+                    ));
+                }
+                
+                // Create a minimal fallback root widget
+                self.create_fallback_root_widget()
+            }
+        }
+    }
+
+    /// Create a fallback root widget when parsing fails
+    fn create_fallback_root_widget(&self) -> Result<WidgetNode, UiDefinitionLoaderError> {
+        bevy_log::warn!("Creating fallback root widget");
+        Ok(WidgetNode {
+            id: Some("fallback_root".to_string()),
+            widget_type: WidgetType::Container { 
+                direction: crate::widgets::blueprint::FlexDirection::Column 
+            },
+            layout: LayoutConfig::default(),
+            style: StyleConfig::default(),
+            behavior: BehaviorConfig::default(),
+            classes: None,
+            style_overrides: None,
+            bindings: None,
+            children: vec![],
+        })
+    }
+
+    /// Comprehensive validation of the loaded UI definition with registry
+    pub fn validate_with_comprehensive_checks(&self, ui_definition: &UiDefinition, registry: &UiRegistry) -> Result<(), UiDefinitionLoaderError> {
+        bevy_log::info!("Starting comprehensive validation with registry checks");
+
+        // Step 1: Basic structure validation
+        self.validate_basic_structure(ui_definition)?;
+
+        // Step 2: Widget type validation with registry
+        self.validate_widget_types_with_registry(&ui_definition.root, registry, 0)?;
+
+        // Step 3: Style classes validation
+        self.validate_style_classes(ui_definition)?;
+
+        // Step 4: Action validation with registry
+        self.validate_actions_with_registry(ui_definition, registry)?;
+
+        // Step 5: Cross-references validation (style classes, action bindings)
+        self.validate_cross_references(ui_definition)?;
+
+        // Step 6: Semantic validation (layout consistency, hierarchy depth)
+        self.validate_semantic_constraints(&ui_definition.root, registry, 0)?;
+
+        bevy_log::info!("Comprehensive validation completed successfully");
+        Ok(())
+    }
+
+    /// Validate basic UI definition structure
+    fn validate_basic_structure(&self, ui_definition: &UiDefinition) -> Result<(), UiDefinitionLoaderError> {
+        // Check window configuration validity
+        if let Some(ref window) = ui_definition.window {
+            if window.size[0] <= 0.0 || window.size[1] <= 0.0 {
+                return Err(UiDefinitionLoaderError::InvalidConfiguration(
+                    "Window size must be positive".to_string()
+                ));
+            }
+            if window.size[0] > 10000.0 || window.size[1] > 10000.0 {
+                return Err(UiDefinitionLoaderError::InvalidConfiguration(
+                    "Window size is unreasonably large (max 10000x10000)".to_string()
+                ));
+            }
+        }
+
+        // Validate root widget exists and has required properties
+        if ui_definition.root.id.is_none() {
+            bevy_log::warn!("Root widget has no ID, this may cause issues with debugging");
+        }
+
+        Ok(())
+    }
+
+    /// Validate widget types against registry
+    fn validate_widget_types_with_registry(&self, node: &WidgetNode, registry: &UiRegistry, depth: usize) -> Result<(), UiDefinitionLoaderError> {
+        // Check nesting depth
+        if depth > registry.config.max_nesting_depth {
+            return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                format!("Nesting depth {} exceeds maximum of {}", depth, registry.config.max_nesting_depth)
+            ));
+        }
+
+        // Validate widget type with registry
+        let widget_type_name = match &node.widget_type {
+            WidgetType::Container { .. } => "Container",
+            WidgetType::Button { .. } => "Button",
+            WidgetType::Text { .. } => "Text", 
+            WidgetType::Shape { .. } => "Shape",
+            WidgetType::Custom { component, .. } => component,
+        };
+
+        if let Err(e) = registry.validate_widget_type(&node.widget_type) {
+            if registry.config.strict_validation && !registry.config.allow_custom_widgets {
+                return Err(UiDefinitionLoaderError::RegistryValidation(e));
+            } else {
+                bevy_log::warn!("Widget type validation warning for '{}': {}", widget_type_name, e);
+            }
+        }
+
+        // Validate widget-specific constraints
+        match &node.widget_type {
+            WidgetType::Button { text, action } => {
+                if text.is_empty() {
+                    return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                        "Button text cannot be empty".to_string()
+                    ));
+                }
+                if text.len() > 1000 {
+                    return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                        "Button text is too long (max 1000 characters)".to_string()
+                    ));
+                }
+                // Validate action exists if specified
+                if let Some(action_name) = action {
+                    if action_name.is_empty() {
+                        return Err(UiDefinitionLoaderError::ActionValidation(
+                            "Button action name cannot be empty".to_string()
+                        ));
+                    }
+                }
+            }
+            WidgetType::Text { content, editable: _ } => {
+                if content.len() > 50000 {
+                    return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                        "Text content is too long (max 50000 characters)".to_string()
+                    ));
+                }
+            }
+            WidgetType::Container { direction: _ } => {
+                // Containers should have children or be marked as empty
+                if node.children.is_empty() {
+                    bevy_log::debug!("Container widget has no children: {:?}", node.id);
+                }
+            }
+            WidgetType::Shape { shape_type } => {
+                // Validate shape type specific constraints
+                if let crate::widgets::blueprint::ShapeType::Custom { vertices } = shape_type {
+                    if vertices.len() < 3 {
+                        return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                            "Custom shape must have at least 3 vertices".to_string()
+                        ));
+                    }
+                    if vertices.len() > 1000 {
+                        return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                            "Custom shape has too many vertices (max 1000)".to_string()
+                        ));
+                    }
+                }
+            }
+            WidgetType::Custom { component, properties } => {
+                if component.is_empty() {
+                    return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                        "Custom widget component name cannot be empty".to_string()
+                    ));
+                }
+                if properties.len() > 100 {
+                    return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                        "Custom widget has too many properties (max 100)".to_string()
+                    ));
+                }
+            }
+        }
+
+        // Recursively validate children
+        for child in &node.children {
+            self.validate_widget_types_with_registry(child, registry, depth + 1)?;
+        }
+
+        Ok(())
+    }
+
+    /// Validate style classes reference existing global styles
+    fn validate_style_classes(&self, ui_definition: &UiDefinition) -> Result<(), UiDefinitionLoaderError> {
+        if let Some(ref global_styles) = ui_definition.styles {
+            // Validate that all style class definitions are valid
+            for (class_name, style_override) in global_styles {
+                if class_name.is_empty() {
+                    return Err(UiDefinitionLoaderError::StyleValidation(
+                        "Style class name cannot be empty".to_string()
+                    ));
+                }
+                
+                // Validate style override contents
+                self.validate_style_override(style_override, class_name)?;
+            }
+        }
+
+        // Validate that all referenced style classes exist
+        self.validate_style_class_references(&ui_definition.root, ui_definition.styles.as_ref())?;
+
+        Ok(())
+    }
+
+    /// Validate style override configuration
+    fn validate_style_override(&self, style_override: &StyleOverrides, class_name: &str) -> Result<(), UiDefinitionLoaderError> {
+        // Validate color definitions if present
+        if let Some(ref color_def) = style_override.background_color {
+            self.validate_color_definition(color_def, &format!("Style class '{}' background_color", class_name))?;
+        }
+        if let Some(ref color_def) = style_override.text_color {
+            self.validate_color_definition(color_def, &format!("Style class '{}' text_color", class_name))?;
+        }
+        if let Some(ref color_def) = style_override.border_color {
+            self.validate_color_definition(color_def, &format!("Style class '{}' border_color", class_name))?;
+        }
+
+        // Validate numeric values
+        if let Some(opacity) = style_override.opacity {
+            if !(0.0..=1.0).contains(&opacity) {
+                return Err(UiDefinitionLoaderError::StyleValidation(
+                    format!("Style class '{}' opacity must be between 0.0 and 1.0", class_name)
+                ));
+            }
+        }
+        if let Some(border_width) = style_override.border_width {
+            if border_width < 0.0 || border_width > 100.0 {
+                return Err(UiDefinitionLoaderError::StyleValidation(
+                    format!("Style class '{}' border_width must be between 0.0 and 100.0", class_name)
+                ));
+            }
+        }
+        if let Some(text_size) = style_override.text_size {
+            if text_size <= 0.0 || text_size > 200.0 {
+                return Err(UiDefinitionLoaderError::StyleValidation(
+                    format!("Style class '{}' text_size must be between 0.0 and 200.0", class_name)
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate color definition format
+    fn validate_color_definition(&self, color_def: &crate::widgets::blueprint::ColorDef, context: &str) -> Result<(), UiDefinitionLoaderError> {
+        match color_def {
+            crate::widgets::blueprint::ColorDef::Hex(hex) => {
+                let hex = hex.trim_start_matches('#');
+                if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(UiDefinitionLoaderError::StyleValidation(
+                        format!("{}: Invalid hex color format '{}' (expected #RRGGBB)", context, hex)
+                    ));
+                }
+            }
+            crate::widgets::blueprint::ColorDef::Rgb { r, g, b } => {
+                if *r > 255 || *g > 255 || *b > 255 {
+                    return Err(UiDefinitionLoaderError::StyleValidation(
+                        format!("{}: RGB values must be 0-255", context)
+                    ));
+                }
+            }
+            crate::widgets::blueprint::ColorDef::Rgba { r, g, b, a } => {
+                if *r > 255 || *g > 255 || *b > 255 {
+                    return Err(UiDefinitionLoaderError::StyleValidation(
+                        format!("{}: RGB values must be 0-255", context)
+                    ));
+                }
+                if !(*a >= 0.0 && *a <= 1.0) {
+                    return Err(UiDefinitionLoaderError::StyleValidation(
+                        format!("{}: Alpha value must be between 0.0 and 1.0", context)
+                    ));
+                }
+            }
+            crate::widgets::blueprint::ColorDef::Named(name) => {
+                let valid_names = ["red", "green", "blue", "black", "white", "gray", "grey", "yellow", "cyan", "magenta", "orange"];
+                if !valid_names.contains(&name.to_lowercase().as_str()) {
+                    bevy_log::warn!("{}: Unknown named color '{}', will use white as fallback", context, name);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate that referenced style classes exist in global styles
+    fn validate_style_class_references(&self, node: &WidgetNode, global_styles: Option<&HashMap<String, StyleOverrides>>) -> Result<(), UiDefinitionLoaderError> {
+        if let Some(ref classes) = node.classes {
+            for class_name in classes {
+                if let Some(global_styles) = global_styles {
+                    if !global_styles.contains_key(class_name) {
+                        return Err(UiDefinitionLoaderError::StyleValidation(
+                            format!("Referenced style class '{}' does not exist in global styles", class_name)
+                        ));
+                    }
+                } else {
+                    return Err(UiDefinitionLoaderError::StyleValidation(
+                        format!("Widget references style class '{}' but no global styles are defined", class_name)
+                    ));
+                }
+            }
+        }
+
+        // Recursively validate children
+        for child in &node.children {
+            self.validate_style_class_references(child, global_styles)?;
+        }
+
+        Ok(())
+    }
+
+    /// Validate actions with registry
+    fn validate_actions_with_registry(&self, ui_definition: &UiDefinition, registry: &UiRegistry) -> Result<(), UiDefinitionLoaderError> {
+        // Validate global actions
+        if let Some(ref global_actions) = ui_definition.actions {
+            for (action_name, action_binding) in global_actions {
+                if action_name.is_empty() {
+                    return Err(UiDefinitionLoaderError::ActionValidation(
+                        "Global action name cannot be empty".to_string()
+                    ));
+                }
+
+                // Validate action binding with registry
+                if let Err(e) = registry.validate_action_binding(action_binding) {
+                    if registry.config.strict_validation && !registry.config.allow_custom_actions {
+                        return Err(UiDefinitionLoaderError::RegistryValidation(e));
+                    } else {
+                        bevy_log::warn!("Action validation warning for '{}': {}", action_name, e);
+                    }
+                }
+            }
+        }
+
+        // Validate widget-level action bindings
+        self.validate_widget_action_bindings(&ui_definition.root, registry)?;
+
+        Ok(())
+    }
+
+    /// Validate action bindings at widget level
+    fn validate_widget_action_bindings(&self, node: &WidgetNode, registry: &UiRegistry) -> Result<(), UiDefinitionLoaderError> {
+        if let Some(ref bindings) = node.bindings {
+            for (event_name, action_binding) in bindings {
+                if event_name.is_empty() {
+                    return Err(UiDefinitionLoaderError::ActionValidation(
+                        "Event name in widget binding cannot be empty".to_string()
+                    ));
+                }
+
+                // Validate event type
+                if let Err(e) = registry.validate_event_type(event_name) {
+                    bevy_log::warn!("Event type validation warning: {}", e);
+                }
+
+                // Validate action binding
+                if let Err(e) = registry.validate_action_binding(action_binding) {
+                    if registry.config.strict_validation && !registry.config.allow_custom_actions {
+                        return Err(UiDefinitionLoaderError::RegistryValidation(e));
+                    } else {
+                        bevy_log::warn!("Widget action binding validation warning: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Recursively validate children
+        for child in &node.children {
+            self.validate_widget_action_bindings(child, registry)?;
+        }
+
+        Ok(())
+    }
+
+    /// Validate cross-references between different parts of the definition
+    fn validate_cross_references(&self, ui_definition: &UiDefinition) -> Result<(), UiDefinitionLoaderError> {
+        // Collect all action names (from global actions and widget button actions)
+        let mut available_actions = HashSet::new();
+        
+        if let Some(ref global_actions) = ui_definition.actions {
+            for action_name in global_actions.keys() {
+                available_actions.insert(action_name.clone());
+            }
+        }
+
+        // Validate action references in widgets
+        self.validate_action_references(&ui_definition.root, &available_actions)?;
+
+        Ok(())
+    }
+
+    /// Validate that referenced actions exist
+    fn validate_action_references(&self, node: &WidgetNode, available_actions: &HashSet<String>) -> Result<(), UiDefinitionLoaderError> {
+        // Check button actions
+        if let WidgetType::Button { action: Some(action_name), .. } = &node.widget_type {
+            if !available_actions.contains(action_name) {
+                bevy_log::warn!("Button references undefined action '{}' - this may be a built-in action", action_name);
+            }
+        }
+
+        // Check action bindings
+        if let Some(ref bindings) = node.bindings {
+            for (_, action_binding) in bindings {
+                if !available_actions.contains(&action_binding.action) {
+                    bevy_log::warn!("Widget binding references undefined action '{}' - this may be a built-in action", action_binding.action);
+                }
+            }
+        }
+
+        // Recursively validate children
+        for child in &node.children {
+            self.validate_action_references(child, available_actions)?;
+        }
+
+        Ok(())
+    }
+
+    /// Validate semantic constraints and layout consistency
+    fn validate_semantic_constraints(&self, node: &WidgetNode, registry: &UiRegistry, depth: usize) -> Result<(), UiDefinitionLoaderError> {
+        // Validate layout constraints
+        if let Some(size) = node.layout.size {
+            if size.x < 0.0 || size.y < 0.0 {
+                return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                    "Widget size cannot be negative".to_string()
+                ));
+            }
+        }
+
+        // Validate flex properties
+        if let Some(flex_grow) = node.layout.flex_grow {
+            if flex_grow < 0.0 {
+                return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                    "Flex grow cannot be negative".to_string()
+                ));
+            }
+        }
+        if let Some(flex_shrink) = node.layout.flex_shrink {
+            if flex_shrink < 0.0 {
+                return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                    "Flex shrink cannot be negative".to_string()
+                ));
+            }
+        }
+
+        // Validate widget type specific constraints
+        match &node.widget_type {
+            WidgetType::Container { .. } => {
+                // Containers should have reasonable child limits
+                if node.children.len() > 1000 {
+                    return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                        "Container has too many children (max 1000)".to_string()
+                    ));
+                }
+            }
+            WidgetType::Text { editable: true, .. } => {
+                // Editable text should have reasonable constraints
+                if node.children.len() > 0 {
+                    bevy_log::warn!("Editable text widget has children, which may cause interaction issues");
+                }
+            }
+            _ => {}
+        }
+
+        // Check for potential ID conflicts
+        if let Some(ref id) = node.id {
+            self.validate_id_format(id)?;
+        }
+
+        // Recursively validate children
+        for child in &node.children {
+            self.validate_semantic_constraints(child, registry, depth + 1)?;
+        }
+
+        Ok(())
+    }
+
+    /// Validate ID format and conventions
+    fn validate_id_format(&self, id: &str) -> Result<(), UiDefinitionLoaderError> {
+        if id.is_empty() {
+            return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                "Widget ID cannot be empty".to_string()
+            ));
+        }
+        if id.len() > 100 {
+            return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                "Widget ID is too long (max 100 characters)".to_string()
+            ));
+        }
+        if !id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                "Widget ID can only contain alphanumeric characters, underscores, and hyphens".to_string()
+            ));
+        }
+        if id.starts_with(char::is_numeric) {
+            return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                "Widget ID cannot start with a number".to_string()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Create detailed parse error with context
+    fn create_detailed_parse_error(error: &toml::de::Error, toml_str: &str) -> UiDefinitionLoaderError {
+        let error_msg = if let Some(span) = error.span() {
+            let lines: Vec<&str> = toml_str.lines().collect();
+            let error_line = toml_str[..span.start].matches('\n').count();
+            let error_col = span.start - toml_str[..span.start].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
+            
+            let context_start = error_line.saturating_sub(2);
+            let context_end = (error_line + 3).min(lines.len());
+            
+            let mut context = String::new();
+            for (i, line) in lines[context_start..context_end].iter().enumerate() {
+                let line_num = context_start + i + 1;
+                if line_num - 1 == error_line {
+                    context.push_str(&format!("  > {}: {}\n", line_num, line));
+                    context.push_str(&format!("      {}{}\n", " ".repeat(error_col), "^"));
+                } else {
+                    context.push_str(&format!("    {}: {}\n", line_num, line));
+                }
+            }
+            
+            format!("Parse error at line {}, column {}: {}\n\nContext:\n{}", 
+                   error_line + 1, error_col + 1, error, context)
+        } else {
+            format!("Parse error: {}", error)
+        };
+
+        UiDefinitionLoaderError::InvalidConfiguration(error_msg)
     }
 }
 
@@ -2204,5 +2994,83 @@ action = "toggle_settings"
             styles: None,
             actions: None,
         }
+    }
+
+    /// Test comprehensive validation with registry checks
+    #[test]
+    fn test_comprehensive_validation() {
+        let loader = UiDefinitionLoader;
+        let registry = UiRegistry::new();
+        
+        // Test valid UI definition
+        let valid_ui_def = create_valid_ui_definition();
+        let result = loader.validate_with_comprehensive_checks(&valid_ui_def, &registry);
+        assert!(result.is_ok(), "Valid UI definition should pass comprehensive validation: {:?}", result.err());
+
+        // Test invalid widget type validation
+        let mut invalid_widget_ui_def = create_valid_ui_definition();
+        invalid_widget_ui_def.root.widget_type = WidgetType::Button {
+            text: "".to_string(), // Empty text should fail
+            action: None,
+        };
+        let result = loader.validate_with_comprehensive_checks(&invalid_widget_ui_def, &registry);
+        assert!(result.is_err(), "Empty button text should fail validation");
+        
+        // Test invalid style class validation
+        let mut invalid_style_ui_def = create_valid_ui_definition();
+        invalid_style_ui_def.root.classes = Some(vec!["nonexistent_class".to_string()]);
+        let result = loader.validate_with_comprehensive_checks(&invalid_style_ui_def, &registry);
+        assert!(result.is_err(), "Nonexistent style class should fail validation");
+
+        // Test invalid color format
+        let mut invalid_color_ui_def = create_valid_ui_definition();
+        invalid_color_ui_def.styles = Some({
+            let mut styles = HashMap::new();
+            styles.insert("bad_color".to_string(), StyleOverrides {
+                background_color: Some(ColorDef::Hex("invalid".to_string())),
+                text_color: None,
+                border_color: None,
+                border_width: None,
+                border_radius: None,
+                text_size: None,
+                opacity: None,
+            });
+            styles
+        });
+        invalid_color_ui_def.root.classes = Some(vec!["bad_color".to_string()]);
+        let result = loader.validate_with_comprehensive_checks(&invalid_color_ui_def, &registry);
+        assert!(result.is_err(), "Invalid hex color should fail validation");
+
+        // Test negative layout values
+        let mut invalid_layout_ui_def = create_valid_ui_definition();
+        invalid_layout_ui_def.root.layout.size = Some([-100.0, 200.0].into());
+        let result = loader.validate_with_comprehensive_checks(&invalid_layout_ui_def, &registry);
+        assert!(result.is_err(), "Negative widget size should fail validation");
+
+        // Test excessive nesting depth
+        let mut deep_nesting_ui_def = create_valid_ui_definition();
+        let mut current_node = &mut deep_nesting_ui_def.root;
+        
+        // Create nesting deeper than the maximum (50)
+        for i in 0..60 {
+            let child = WidgetNode {
+                id: Some(format!("deep_child_{}", i)),
+                widget_type: WidgetType::Container { direction: FlexDirection::Column },
+                layout: LayoutConfig::default(),
+                style: StyleConfig::default(),
+                behavior: BehaviorConfig::default(),
+                classes: None,
+                style_overrides: None,
+                bindings: None,
+                children: vec![],
+            };
+            current_node.children.push(child);
+            current_node = current_node.children.last_mut().unwrap();
+        }
+        
+        let result = loader.validate_with_comprehensive_checks(&deep_nesting_ui_def, &registry);
+        assert!(result.is_err(), "Excessive nesting depth should fail validation");
+
+        bevy_log::info!("All comprehensive validation tests passed!");
     }
 }

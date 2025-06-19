@@ -172,9 +172,9 @@ fn apply_window_config_from_asset(
                 }
                 
                 // Update background color if specified
-                if let Some(bg_color) = window_config.background_color {
+                if let Some(ref bg_color) = window_config.background_color {
                     if let Ok(mut shape_data) = background_query.get_single_mut() {
-                        shape_data.color = bg_color;
+                        shape_data.color = bg_color.to_color();
                         info!("Updated background color");
                     }
                 }

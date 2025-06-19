@@ -2,7 +2,6 @@ use bevy_ecs::prelude::*;
 use bevy_transform::prelude::Transform;
 use std::collections::HashMap;
 use yrs::{Transact, Text as YrsTextTrait};
-use bevy_math::Vec3;
 use crate::{
     widgets::{
         blueprint::{WidgetBlueprint, WidgetCollection, WidgetType},

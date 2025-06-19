@@ -4,7 +4,7 @@ pub mod plugin;
 use bevy_asset::{Asset, AssetLoader, LoadContext};
 use bevy_ecs::prelude::*;
 use bevy_reflect::TypePath;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use serde::{Deserialize, de::Error as DeError};
 use crate::widgets::blueprint::{WidgetBlueprint, WidgetCollection, WidgetType, LayoutConfig, StyleConfig, BehaviorConfig};
@@ -14,19 +14,19 @@ pub use systems::*;
 pub use plugin::*;
 
 /// Window configuration loaded from TOML
-#[derive(Debug, Clone, bevy_ecs::prelude::Resource)]
+#[derive(Debug, Clone, bevy_ecs::prelude::Resource, serde::Deserialize, serde::Serialize)]
 pub struct WindowConfig {
     /// Window size [width, height]
     pub size: [f32; 2],
     /// Background color for the window
-    pub background_color: Option<bevy_color::Color>,
+    pub background_color: Option<crate::widgets::blueprint::ColorDef>,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
         Self {
             size: [600.0, 300.0],
-            background_color: Some(bevy_color::Color::srgba(0.129, 0.161, 0.165, 1.0)),
+            background_color: Some(crate::widgets::blueprint::ColorDef::Rgba { r: 33, g: 41, b: 42, a: 1.0 }),
         }
     }
 }
@@ -82,6 +82,258 @@ impl UiTree {
         children
     }
 }
+
+// ==================== Phase 2: Hierarchical Data Structures ====================
+
+/// New hierarchical UI definition that represents source data from TOML
+#[derive(Asset, TypePath, Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct UiDefinition {
+    /// Window configuration
+    pub window: Option<WindowConfig>,
+    /// Root widget node defining the UI hierarchy
+    pub root: WidgetNode,
+    /// Global styles that can be referenced by class name
+    pub styles: Option<HashMap<String, StyleOverrides>>,
+    /// Global actions that can be referenced by widgets
+    pub actions: Option<HashMap<String, ActionBinding>>,
+}
+
+/// Recursive widget node structure representing the UI hierarchy
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct WidgetNode {
+    /// Unique identifier for this widget
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Widget type and its configuration
+    pub widget_type: WidgetType,
+    /// Layout configuration
+    #[serde(default)]
+    pub layout: LayoutConfig,
+    /// Style configuration
+    #[serde(default)]
+    pub style: StyleConfig,
+    /// Behavior configuration
+    #[serde(default)]
+    pub behavior: BehaviorConfig,
+    /// Style class names to apply
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classes: Option<Vec<String>>,
+    /// Style overrides that take precedence over classes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style_overrides: Option<StyleOverrides>,
+    /// Interaction bindings for this widget
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bindings: Option<HashMap<String, ActionBinding>>,
+    /// Child widget nodes
+    #[serde(default)]
+    pub children: Vec<WidgetNode>,
+}
+
+/// Style overrides that can be applied to widgets
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct StyleOverrides {
+    /// Background color override
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<crate::widgets::blueprint::ColorDef>,
+    /// Border color override
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border_color: Option<crate::widgets::blueprint::ColorDef>,
+    /// Border width override
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border_width: Option<f32>,
+    /// Border radius override
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border_radius: Option<f32>,
+    /// Text color override
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<crate::widgets::blueprint::ColorDef>,
+    /// Text size override
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<f32>,
+    /// Opacity override
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+}
+
+/// Action binding that connects UI events to actions
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct ActionBinding {
+    /// Action type (e.g., "click", "hover", "focus")
+    pub event: String,
+    /// Action to execute (e.g., "navigate_home", "toggle_settings")
+    pub action: String,
+    /// Optional parameters for the action
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<HashMap<String, toml::Value>>,
+}
+
+impl UiDefinition {
+    /// Validate the UI definition structure
+    pub fn validate(&self) -> Result<(), UiDefinitionError> {
+        self.validate_widget_node(&self.root, &HashSet::new())?;
+        Ok(())
+    }
+
+    /// Recursively validate a widget node and its children
+    fn validate_widget_node(&self, node: &WidgetNode, used_ids: &HashSet<String>) -> Result<(), UiDefinitionError> {
+        // Check for duplicate IDs
+        if let Some(ref id) = node.id {
+            if used_ids.contains(id) {
+                return Err(UiDefinitionError::DuplicateId(id.clone()));
+            }
+        }
+
+        // Validate style classes exist
+        if let Some(ref classes) = node.classes {
+            if let Some(ref global_styles) = self.styles {
+                for class_name in classes {
+                    if !global_styles.contains_key(class_name) {
+                        return Err(UiDefinitionError::UnknownStyleClass(class_name.clone()));
+                    }
+                }
+            } else if !classes.is_empty() {
+                return Err(UiDefinitionError::StyleClassesWithoutGlobalStyles);
+            }
+        }
+
+        // Validate action bindings
+        if let Some(ref bindings) = node.bindings {
+            if let Some(ref global_actions) = self.actions {
+                for (_, binding) in bindings {
+                    if !global_actions.contains_key(&binding.action) {
+                        return Err(UiDefinitionError::UnknownAction(binding.action.clone()));
+                    }
+                }
+            }
+        }
+
+        // Recursively validate children
+        let mut child_ids = used_ids.clone();
+        if let Some(ref id) = node.id {
+            child_ids.insert(id.clone());
+        }
+
+        for child in &node.children {
+            self.validate_widget_node(child, &child_ids)?;
+        }
+
+        Ok(())
+    }
+
+    /// Convert this hierarchical definition to a flat widget collection for backward compatibility
+    pub fn to_widget_collection(&self) -> WidgetCollection {
+        let mut widgets = HashMap::new();
+        let mut counter = 0;
+
+        // Generate a unique ID for the root if it doesn't have one
+        let root_id = self.root.id.clone().unwrap_or_else(|| {
+            counter += 1;
+            format!("root_{}", counter)
+        });
+
+        self.collect_widgets_recursive(&self.root, &root_id, &mut widgets, &mut counter);
+
+        WidgetCollection {
+            widgets,
+            root: Some(root_id),
+        }
+    }
+
+    /// Recursively collect widgets into a flat structure
+    fn collect_widgets_recursive(
+        &self,
+        node: &WidgetNode,
+        node_id: &str,
+        widgets: &mut HashMap<String, WidgetBlueprint>,
+        counter: &mut usize,
+    ) {
+        // Collect child IDs
+        let mut child_ids = Vec::new();
+        for child in &node.children {
+            let child_id = child.id.clone().unwrap_or_else(|| {
+                *counter += 1;
+                format!("widget_{}", counter)
+            });
+            child_ids.push(child_id.clone());
+            
+            // Recursively process child
+            self.collect_widgets_recursive(child, &child_id, widgets, counter);
+        }
+
+        // Apply style overrides to create final style config
+        let mut final_style = node.style.clone();
+        
+        // Apply global styles first
+        if let Some(ref classes) = node.classes {
+            if let Some(ref global_styles) = self.styles {
+                for class_name in classes {
+                    if let Some(class_style) = global_styles.get(class_name) {
+                        Self::apply_style_overrides(&mut final_style, class_style);
+                    }
+                }
+            }
+        }
+
+        // Apply local style overrides last (highest priority)
+        if let Some(ref overrides) = node.style_overrides {
+            Self::apply_style_overrides(&mut final_style, overrides);
+        }
+
+        // Create widget blueprint
+        let blueprint = WidgetBlueprint {
+            id: node_id.to_string(),
+            widget_type: node.widget_type.clone(),
+            layout: node.layout.clone(),
+            style: final_style,
+            behavior: node.behavior.clone(),
+            children: child_ids,
+        };
+
+        widgets.insert(node_id.to_string(), blueprint);
+    }
+
+    /// Apply style overrides to a style config
+    fn apply_style_overrides(style: &mut StyleConfig, overrides: &StyleOverrides) {
+        if let Some(ref color) = overrides.background_color {
+            style.background_color = Some(color.clone());
+        }
+        if let Some(ref color) = overrides.border_color {
+            style.border_color = Some(color.clone());
+        }
+        if let Some(width) = overrides.border_width {
+            style.border_width = Some(width);
+        }
+        if let Some(radius) = overrides.border_radius {
+            style.border_radius = Some(radius);
+        }
+        if let Some(ref color) = overrides.text_color {
+            style.text_color = Some(color.clone());
+        }
+        if let Some(size) = overrides.text_size {
+            style.text_size = Some(size);
+        }
+        if let Some(opacity) = overrides.opacity {
+            style.opacity = Some(opacity);
+        }
+    }
+}
+
+/// Errors that can occur during UI definition validation
+#[derive(Error, Debug)]
+pub enum UiDefinitionError {
+    #[error("Duplicate widget ID: {0}")]
+    DuplicateId(String),
+    #[error("Unknown style class: {0}")]
+    UnknownStyleClass(String),
+    #[error("Style classes specified but no global styles defined")]
+    StyleClassesWithoutGlobalStyles,
+    #[error("Unknown action: {0}")]
+    UnknownAction(String),
+    #[error("Validation error: {0}")]
+    Validation(String),
+}
+
+// ==================== End Phase 2 Structures ====================
 
 /// Asset loader for UI TOML files
 #[derive(Default)]
@@ -223,12 +475,12 @@ fn parse_window_config(toml_value: &toml::Value) -> Result<WindowConfig, UiAsset
                         color_table.get("b").and_then(|v| v.as_integer()),
                         color_table.get("a").and_then(|v| v.as_float()),
                     ) {
-                        window_config.background_color = Some(bevy_color::Color::srgba(
-                            r as f32 / 255.0,
-                            g as f32 / 255.0,
-                            b as f32 / 255.0,
-                            a as f32,
-                        ));
+                        window_config.background_color = Some(crate::widgets::blueprint::ColorDef::Rgba {
+                            r: r as u8,
+                            g: g as u8,
+                            b: b as u8,
+                            a: a as f32,
+                        });
                     }
                 }
             }

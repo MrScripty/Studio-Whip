@@ -6,6 +6,7 @@ use crate::assets::{
     UiAssetLoader,
     LoadUiRequest,
     LoadingUiAssets,
+    UiRegistry,
     ui_asset_request_system,
     ui_asset_loaded_system,
     ui_asset_error_system,
@@ -25,6 +26,9 @@ impl Plugin for UiAssetPlugin {
         
         // Add resources
         app.init_resource::<LoadingUiAssets>();
+        
+        // Initialize the UI registry with built-in types
+        app.insert_resource(UiRegistry::new());
         
         // Add systems for asset loading and processing
         app.add_systems(

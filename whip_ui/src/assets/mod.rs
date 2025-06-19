@@ -130,7 +130,7 @@ pub struct WidgetNode {
 }
 
 /// Style overrides that can be applied to widgets
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
 pub struct StyleOverrides {
     /// Background color override
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,6 +181,26 @@ impl UiDefinition {
         
         // Validate widget hierarchy
         self.validate_widget_node(&self.root, &HashSet::new())?;
+        
+        Ok(())
+    }
+
+    /// Validate the UI definition structure with registry-based validation
+    pub fn validate_with_registry(&self, registry: &UiRegistry) -> Result<(), UiDefinitionError> {
+        // First run basic validation
+        self.validate()?;
+        
+        // Then run registry-based validation
+        self.validate_widget_node_with_registry(&self.root, &HashSet::new(), registry, 0)?;
+        
+        // Validate global actions against registry
+        if let Some(ref actions) = self.actions {
+            for (_, action_binding) in actions {
+                if let Err(err) = registry.validate_action_binding(action_binding) {
+                    return Err(UiDefinitionError::RegistryValidation(err.to_string()));
+                }
+            }
+        }
         
         Ok(())
     }
@@ -558,6 +578,108 @@ impl UiDefinition {
         Ok(())
     }
 
+    /// Recursively validate a widget node with registry-based validation
+    fn validate_widget_node_with_registry(&self, node: &WidgetNode, used_ids: &HashSet<String>, registry: &UiRegistry, depth: usize) -> Result<(), UiDefinitionError> {
+        // Validate nesting depth
+        if let Err(err) = registry.validate_nesting_depth(depth) {
+            return Err(UiDefinitionError::RegistryValidation(err.to_string()));
+        }
+
+        // Check for duplicate IDs (same as regular validation)
+        if let Some(ref id) = node.id {
+            if used_ids.contains(id) {
+                return Err(UiDefinitionError::DuplicateId(id.clone()));
+            }
+            
+            // Validate ID format
+            if id.is_empty() {
+                return Err(UiDefinitionError::Validation("Widget ID cannot be empty".to_string()));
+            }
+            
+            // ID should only contain alphanumeric characters, underscore, and hyphen
+            if !id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                return Err(UiDefinitionError::Validation(
+                    format!("Widget ID '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed", id)
+                ));
+            }
+        }
+
+        // Registry-based widget type validation
+        if let Err(err) = registry.validate_widget_type(&node.widget_type) {
+            return Err(UiDefinitionError::RegistryValidation(err.to_string()));
+        }
+
+        // Validate widget children capability
+        let has_children = !node.children.is_empty();
+        if let Err(err) = registry.validate_widget_children(&node.widget_type, has_children) {
+            return Err(UiDefinitionError::RegistryValidation(err.to_string()));
+        }
+
+        // Validate layout configuration (use existing validation)
+        self.validate_layout_config(&node.layout)?;
+
+        // Validate style configuration (use existing validation)
+        self.validate_style_config(&node.style)?;
+
+        // Validate behavior configuration (use existing validation)
+        self.validate_behavior_config(&node.behavior)?;
+
+        // Validate style classes exist (use existing validation)
+        if let Some(ref classes) = node.classes {
+            if let Some(ref global_styles) = self.styles {
+                for class_name in classes {
+                    if !global_styles.contains_key(class_name) {
+                        return Err(UiDefinitionError::UnknownStyleClass(class_name.clone()));
+                    }
+                }
+            } else if !classes.is_empty() {
+                return Err(UiDefinitionError::StyleClassesWithoutGlobalStyles);
+            }
+        }
+
+        // Validate style overrides (use existing validation)
+        if let Some(ref overrides) = node.style_overrides {
+            self.validate_style_overrides(overrides)?;
+        }
+
+        // Registry-based action binding validation
+        if let Some(ref bindings) = node.bindings {
+            for (event_name, binding) in bindings {
+                if event_name.is_empty() {
+                    return Err(UiDefinitionError::Validation("Binding event name cannot be empty".to_string()));
+                }
+                
+                // Use registry to validate action bindings
+                if let Err(err) = registry.validate_action_binding(binding) {
+                    return Err(UiDefinitionError::RegistryValidation(err.to_string()));
+                }
+            }
+        }
+
+        // Check for duplicate IDs among siblings (same as regular validation)
+        let mut sibling_ids = HashSet::new();
+        for child in &node.children {
+            if let Some(ref child_id) = child.id {
+                if sibling_ids.contains(child_id) {
+                    return Err(UiDefinitionError::DuplicateId(child_id.clone()));
+                }
+                sibling_ids.insert(child_id.clone());
+            }
+        }
+
+        // Recursively validate children with registry
+        let mut child_ids = used_ids.clone();
+        if let Some(ref id) = node.id {
+            child_ids.insert(id.clone());
+        }
+
+        for child in &node.children {
+            self.validate_widget_node_with_registry(child, &child_ids, registry, depth + 1)?;
+        }
+
+        Ok(())
+    }
+
     /// Convert this hierarchical definition to a flat widget collection for backward compatibility
     pub fn to_widget_collection(&self) -> WidgetCollection {
         let mut widgets = HashMap::new();
@@ -669,9 +791,597 @@ pub enum UiDefinitionError {
     UnknownAction(String),
     #[error("Validation error: {0}")]
     Validation(String),
+    #[error("Registry validation error: {0}")]
+    RegistryValidation(String),
 }
 
 // ==================== End Phase 2 Structures ====================
+
+// ==================== Phase 2: UiRegistry Resource ====================
+
+/// Registry resource for widget type validation and state management
+#[derive(Resource, Debug, Clone)]
+pub struct UiRegistry {
+    /// Map of widget type names to their asset paths for validation
+    pub widget_type_mappings: HashMap<String, WidgetTypeInfo>,
+    /// Map of registered state types for binding validation
+    pub registered_state_types: HashMap<String, StateTypeInfo>,
+    /// Map of valid action names to their descriptions
+    pub valid_actions: HashMap<String, ActionInfo>,
+    /// Registry configuration
+    pub config: UiRegistryConfig,
+}
+
+/// Information about a registered widget type
+#[derive(Debug, Clone)]
+pub struct WidgetTypeInfo {
+    /// Display name of the widget type
+    pub display_name: String,
+    /// Asset path where the widget definition can be found (optional)
+    pub asset_path: Option<String>,
+    /// Required properties for this widget type
+    pub required_properties: Vec<String>,
+    /// Optional properties for this widget type
+    pub optional_properties: Vec<String>,
+    /// Whether this widget type can have children
+    pub can_have_children: bool,
+}
+
+/// Information about a registered state type for data binding
+#[derive(Debug, Clone)]
+pub struct StateTypeInfo {
+    /// Display name of the state type
+    pub display_name: String,
+    /// The type identifier (e.g., "String", "i32", "CustomState")
+    pub type_id: String,
+    /// Valid operations for this state type
+    pub valid_operations: Vec<String>,
+    /// Default value serialized as TOML value
+    pub default_value: Option<toml::Value>,
+}
+
+/// Information about a registered action
+#[derive(Debug, Clone)]
+pub struct ActionInfo {
+    /// Display name of the action
+    pub display_name: String,
+    /// Description of what this action does
+    pub description: String,
+    /// Expected parameter types
+    pub parameter_types: HashMap<String, String>,
+    /// Whether this action requires specific conditions to execute
+    pub requires_conditions: Vec<String>,
+}
+
+/// Configuration for the UI registry
+#[derive(Debug, Clone)]
+pub struct UiRegistryConfig {
+    /// Whether to enable strict validation (fail on unknown widgets/actions)
+    pub strict_validation: bool,
+    /// Whether to allow custom widget types not in the registry
+    pub allow_custom_widgets: bool,
+    /// Whether to allow custom actions not in the registry
+    pub allow_custom_actions: bool,
+    /// Maximum nesting depth for widget hierarchies
+    pub max_nesting_depth: usize,
+}
+
+impl Default for UiRegistry {
+    fn default() -> Self {
+        Self {
+            widget_type_mappings: HashMap::new(),
+            registered_state_types: HashMap::new(),
+            valid_actions: HashMap::new(),
+            config: UiRegistryConfig::default(),
+        }
+    }
+}
+
+impl Default for UiRegistryConfig {
+    fn default() -> Self {
+        Self {
+            strict_validation: true,
+            allow_custom_widgets: false,
+            allow_custom_actions: false,
+            max_nesting_depth: 50,
+        }
+    }
+}
+
+impl UiRegistry {
+    /// Create a new UI registry with default built-in types
+    pub fn new() -> Self {
+        let mut registry = Self::default();
+        registry.register_builtin_types();
+        registry
+    }
+
+    /// Create a new UI registry with custom configuration
+    pub fn with_config(config: UiRegistryConfig) -> Self {
+        let mut registry = Self {
+            config,
+            ..Self::default()
+        };
+        registry.register_builtin_types();
+        registry
+    }
+
+    /// Register built-in widget types, state types, and actions
+    fn register_builtin_types(&mut self) {
+        // Register built-in widget types
+        self.register_widget_type("Container", WidgetTypeInfo {
+            display_name: "Container".to_string(),
+            asset_path: None,
+            required_properties: vec!["direction".to_string()],
+            optional_properties: vec![],
+            can_have_children: true,
+        });
+
+        self.register_widget_type("Button", WidgetTypeInfo {
+            display_name: "Button".to_string(),
+            asset_path: None,
+            required_properties: vec!["text".to_string()],
+            optional_properties: vec!["action".to_string()],
+            can_have_children: false,
+        });
+
+        self.register_widget_type("Text", WidgetTypeInfo {
+            display_name: "Text".to_string(),
+            asset_path: None,
+            required_properties: vec!["content".to_string(), "editable".to_string()],
+            optional_properties: vec![],
+            can_have_children: false,
+        });
+
+        self.register_widget_type("Shape", WidgetTypeInfo {
+            display_name: "Shape".to_string(),
+            asset_path: None,
+            required_properties: vec!["shape_type".to_string()],
+            optional_properties: vec![],
+            can_have_children: false,
+        });
+
+        // Register built-in state types
+        self.register_state_type("String", StateTypeInfo {
+            display_name: "String".to_string(),
+            type_id: "String".to_string(),
+            valid_operations: vec!["set".to_string(), "get".to_string(), "append".to_string()],
+            default_value: Some(toml::Value::String("".to_string())),
+        });
+
+        self.register_state_type("Boolean", StateTypeInfo {
+            display_name: "Boolean".to_string(),
+            type_id: "bool".to_string(),
+            valid_operations: vec!["set".to_string(), "get".to_string(), "toggle".to_string()],
+            default_value: Some(toml::Value::Boolean(false)),
+        });
+
+        self.register_state_type("Integer", StateTypeInfo {
+            display_name: "Integer".to_string(),
+            type_id: "i32".to_string(),
+            valid_operations: vec!["set".to_string(), "get".to_string(), "increment".to_string(), "decrement".to_string()],
+            default_value: Some(toml::Value::Integer(0)),
+        });
+
+        // Register built-in actions
+        self.register_action("navigate_home", ActionInfo {
+            display_name: "Navigate Home".to_string(),
+            description: "Navigate to the home screen".to_string(),
+            parameter_types: HashMap::new(),
+            requires_conditions: vec![],
+        });
+
+        self.register_action("open_settings", ActionInfo {
+            display_name: "Open Settings".to_string(),
+            description: "Open the settings panel".to_string(),
+            parameter_types: HashMap::new(),
+            requires_conditions: vec![],
+        });
+
+        self.register_action("toggle_visibility", ActionInfo {
+            display_name: "Toggle Visibility".to_string(),
+            description: "Toggle the visibility of a UI element".to_string(),
+            parameter_types: {
+                let mut params = HashMap::new();
+                params.insert("target".to_string(), "String".to_string());
+                params
+            },
+            requires_conditions: vec!["target_exists".to_string()],
+        });
+    }
+
+    /// Register a new widget type
+    pub fn register_widget_type(&mut self, name: &str, info: WidgetTypeInfo) {
+        self.widget_type_mappings.insert(name.to_string(), info);
+    }
+
+    /// Register a new state type
+    pub fn register_state_type(&mut self, name: &str, info: StateTypeInfo) {
+        self.registered_state_types.insert(name.to_string(), info);
+    }
+
+    /// Register a new action
+    pub fn register_action(&mut self, name: &str, info: ActionInfo) {
+        self.valid_actions.insert(name.to_string(), info);
+    }
+
+    /// Check if a widget type is registered
+    pub fn is_widget_type_registered(&self, widget_type: &str) -> bool {
+        self.widget_type_mappings.contains_key(widget_type)
+    }
+
+    /// Check if a state type is registered
+    pub fn is_state_type_registered(&self, state_type: &str) -> bool {
+        self.registered_state_types.contains_key(state_type)
+    }
+
+    /// Check if an action is registered
+    pub fn is_action_registered(&self, action: &str) -> bool {
+        self.valid_actions.contains_key(action)
+    }
+
+    /// Get widget type information
+    pub fn get_widget_type_info(&self, widget_type: &str) -> Option<&WidgetTypeInfo> {
+        self.widget_type_mappings.get(widget_type)
+    }
+
+    /// Get state type information
+    pub fn get_state_type_info(&self, state_type: &str) -> Option<&StateTypeInfo> {
+        self.registered_state_types.get(state_type)
+    }
+
+    /// Get action information
+    pub fn get_action_info(&self, action: &str) -> Option<&ActionInfo> {
+        self.valid_actions.get(action)
+    }
+
+    /// Validate a widget type against the registry
+    pub fn validate_widget_type(&self, widget_type: &WidgetType) -> Result<(), UiRegistryError> {
+        let type_name = self.extract_widget_type_name(widget_type);
+        
+        // Check if widget type is registered
+        if !self.is_widget_type_registered(&type_name) {
+            if self.config.strict_validation && !self.config.allow_custom_widgets {
+                return Err(UiRegistryError::UnknownWidgetType(type_name));
+            }
+        }
+
+        // Get widget type info for validation
+        if let Some(info) = self.get_widget_type_info(&type_name) {
+            // Validate required and optional properties
+            self.validate_widget_properties(widget_type, info)?;
+        }
+
+        Ok(())
+    }
+
+    /// Extract the widget type name from a WidgetType enum
+    fn extract_widget_type_name(&self, widget_type: &WidgetType) -> String {
+        match widget_type {
+            WidgetType::Container { .. } => "Container".to_string(),
+            WidgetType::Button { .. } => "Button".to_string(),
+            WidgetType::Text { .. } => "Text".to_string(),
+            WidgetType::Shape { .. } => "Shape".to_string(),
+            WidgetType::Custom { component, .. } => component.clone(),
+        }
+    }
+
+    /// Validate widget properties against registered requirements
+    fn validate_widget_properties(&self, widget_type: &WidgetType, info: &WidgetTypeInfo) -> Result<(), UiRegistryError> {
+        match widget_type {
+            WidgetType::Container { direction: _ } => {
+                // Container requires direction property
+                if info.required_properties.contains(&"direction".to_string()) {
+                    // Direction is present - validation passes
+                } else if info.required_properties.iter().any(|prop| prop == "direction") {
+                    return Err(UiRegistryError::MissingRequiredProperty {
+                        widget_type: "Container".to_string(),
+                        property: "direction".to_string(),
+                    });
+                }
+            },
+            WidgetType::Button { text, action } => {
+                // Button requires text property
+                if info.required_properties.contains(&"text".to_string()) && text.is_empty() {
+                    return Err(UiRegistryError::InvalidPropertyValue {
+                        widget_type: "Button".to_string(),
+                        property: "text".to_string(),
+                        reason: "Button text cannot be empty".to_string(),
+                    });
+                }
+                
+                // Check if action is provided when it's required
+                if info.required_properties.contains(&"action".to_string()) && action.is_none() {
+                    return Err(UiRegistryError::MissingRequiredProperty {
+                        widget_type: "Button".to_string(),
+                        property: "action".to_string(),
+                    });
+                }
+
+                // Validate action if provided
+                if let Some(action_name) = action {
+                    if !self.is_action_registered(action_name) && self.config.strict_validation && !self.config.allow_custom_actions {
+                        return Err(UiRegistryError::UnknownAction(action_name.clone()));
+                    }
+                }
+            },
+            WidgetType::Text { content, editable: _ } => {
+                // Text validation - content length check
+                if content.len() > 10000 {
+                    return Err(UiRegistryError::InvalidPropertyValue {
+                        widget_type: "Text".to_string(),
+                        property: "content".to_string(),
+                        reason: "Text content exceeds maximum length of 10000 characters".to_string(),
+                    });
+                }
+                
+                // editable is always present as it's a boolean, so no validation needed
+            },
+            WidgetType::Shape { shape_type } => {
+                // Shape validation could include checking for valid shape types
+                match shape_type {
+                    crate::widgets::blueprint::ShapeType::Custom { vertices } => {
+                        if vertices.len() < 3 {
+                            return Err(UiRegistryError::InvalidPropertyValue {
+                                widget_type: "Shape".to_string(),
+                                property: "vertices".to_string(),
+                                reason: "Custom shape must have at least 3 vertices".to_string(),
+                            });
+                        }
+                    },
+                    _ => {}, // Built-in shapes are always valid
+                }
+            },
+            WidgetType::Custom { component, properties } => {
+                // Custom widget validation
+                if !self.config.allow_custom_widgets && self.config.strict_validation {
+                    return Err(UiRegistryError::UnknownWidgetType(component.clone()));
+                }
+                
+                // If the custom widget is registered, validate its properties
+                if let Some(info) = self.get_widget_type_info(component) {
+                    for required_prop in &info.required_properties {
+                        if !properties.contains_key(required_prop) {
+                            return Err(UiRegistryError::MissingRequiredProperty {
+                                widget_type: component.clone(),
+                                property: required_prop.clone(),
+                            });
+                        }
+                    }
+                }
+            },
+        }
+
+        Ok(())
+    }
+
+    /// Validate if a widget type can have children
+    pub fn validate_widget_children(&self, widget_type: &WidgetType, has_children: bool) -> Result<(), UiRegistryError> {
+        let type_name = self.extract_widget_type_name(widget_type);
+        
+        if let Some(info) = self.get_widget_type_info(&type_name) {
+            if has_children && !info.can_have_children {
+                return Err(UiRegistryError::InvalidWidgetStructure {
+                    widget_type: type_name,
+                    reason: "This widget type cannot have children".to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate nesting depth
+    pub fn validate_nesting_depth(&self, depth: usize) -> Result<(), UiRegistryError> {
+        if depth > self.config.max_nesting_depth {
+            return Err(UiRegistryError::ExcessiveNesting {
+                current_depth: depth,
+                max_depth: self.config.max_nesting_depth,
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate action bindings against registered actions and state types
+    pub fn validate_action_binding(&self, binding: &ActionBinding) -> Result<(), UiRegistryError> {
+        // Validate the action exists
+        if !self.is_action_registered(&binding.action) {
+            if self.config.strict_validation && !self.config.allow_custom_actions {
+                return Err(UiRegistryError::UnknownAction(binding.action.clone()));
+            }
+        }
+
+        // Validate the event type
+        self.validate_event_type(&binding.event)?;
+
+        // If the action is registered, validate its parameters
+        if let Some(action_info) = self.get_action_info(&binding.action) {
+            self.validate_action_parameters(binding, action_info)?;
+        }
+
+        Ok(())
+    }
+
+    /// Validate event type for action bindings
+    fn validate_event_type(&self, event: &str) -> Result<(), UiRegistryError> {
+        let valid_events = [
+            "click", "hover", "focus", "blur", "change", "submit",
+            "key_press", "key_release", "mouse_enter", "mouse_leave",
+            "drag_start", "drag_end", "resize", "scroll"
+        ];
+
+        if !valid_events.contains(&event) {
+            return Err(UiRegistryError::ValidationError(
+                format!("Unknown event type: '{}'. Valid events are: {}", event, valid_events.join(", "))
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validate action parameters against expected types
+    fn validate_action_parameters(&self, binding: &ActionBinding, action_info: &ActionInfo) -> Result<(), UiRegistryError> {
+        if let Some(ref params) = binding.params {
+            // Check that all required parameters are provided
+            for (param_name, param_type) in &action_info.parameter_types {
+                if !params.contains_key(param_name) {
+                    return Err(UiRegistryError::MissingRequiredProperty {
+                        widget_type: format!("Action '{}'", binding.action),
+                        property: param_name.clone(),
+                    });
+                }
+
+                // Validate parameter type
+                let param_value = &params[param_name];
+                self.validate_parameter_type(param_value, param_type, param_name, &binding.action)?;
+            }
+
+            // Check for unexpected parameters
+            for param_name in params.keys() {
+                if !action_info.parameter_types.contains_key(param_name) {
+                    return Err(UiRegistryError::ValidationError(
+                        format!("Unexpected parameter '{}' for action '{}'", param_name, binding.action)
+                    ));
+                }
+            }
+        } else if !action_info.parameter_types.is_empty() {
+            // Action expects parameters but none were provided
+            return Err(UiRegistryError::ValidationError(
+                format!("Action '{}' requires parameters: {:?}", binding.action, action_info.parameter_types.keys().collect::<Vec<_>>())
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validate a parameter value against its expected type
+    fn validate_parameter_type(&self, value: &toml::Value, expected_type: &str, param_name: &str, action_name: &str) -> Result<(), UiRegistryError> {
+        let is_valid = match expected_type.to_lowercase().as_str() {
+            "string" => matches!(value, toml::Value::String(_)),
+            "integer" | "int" | "i32" | "i64" => matches!(value, toml::Value::Integer(_)),
+            "float" | "f32" | "f64" => matches!(value, toml::Value::Float(_)),
+            "boolean" | "bool" => matches!(value, toml::Value::Boolean(_)),
+            "array" => matches!(value, toml::Value::Array(_)),
+            "table" | "object" => matches!(value, toml::Value::Table(_)),
+            _ => {
+                // Check if it's a registered state type
+                if self.is_state_type_registered(expected_type) {
+                    // For custom state types, we need more sophisticated validation
+                    // For now, accept any value and let the runtime handle conversion
+                    true
+                } else {
+                    return Err(UiRegistryError::UnknownStateType(expected_type.to_string()));
+                }
+            }
+        };
+
+        if !is_valid {
+            return Err(UiRegistryError::InvalidPropertyValue {
+                widget_type: format!("Action '{}'", action_name),
+                property: param_name.to_string(),
+                reason: format!("Expected type '{}', got {:?}", expected_type, value),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Validate state type operations
+    pub fn validate_state_operation(&self, state_type: &str, operation: &str) -> Result<(), UiRegistryError> {
+        if let Some(state_info) = self.get_state_type_info(state_type) {
+            if !state_info.valid_operations.contains(&operation.to_string()) {
+                return Err(UiRegistryError::ValidationError(
+                    format!("Invalid operation '{}' for state type '{}'. Valid operations: {:?}", 
+                            operation, state_type, state_info.valid_operations)
+                ));
+            }
+        } else if self.config.strict_validation {
+            return Err(UiRegistryError::UnknownStateType(state_type.to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Get default value for a state type
+    pub fn get_default_value_for_state_type(&self, state_type: &str) -> Option<toml::Value> {
+        self.get_state_type_info(state_type)
+            .and_then(|info| info.default_value.clone())
+    }
+
+    /// Register a custom state type with validation
+    pub fn register_custom_state_type(&mut self, name: &str, type_id: &str, operations: Vec<String>, default_value: Option<toml::Value>) -> Result<(), UiRegistryError> {
+        // Validate state type name
+        if name.is_empty() {
+            return Err(UiRegistryError::ValidationError("State type name cannot be empty".to_string()));
+        }
+
+        // Validate type ID
+        if type_id.is_empty() {
+            return Err(UiRegistryError::ValidationError("State type ID cannot be empty".to_string()));
+        }
+
+        // Validate operations
+        if operations.is_empty() {
+            return Err(UiRegistryError::ValidationError("State type must have at least one valid operation".to_string()));
+        }
+
+        let valid_base_operations = ["get", "set", "toggle", "increment", "decrement", "append", "clear", "reset"];
+        for operation in &operations {
+            if operation.is_empty() {
+                return Err(UiRegistryError::ValidationError("Operation name cannot be empty".to_string()));
+            }
+            
+            // Allow custom operations, but warn about unknown base operations
+            if !valid_base_operations.contains(&operation.as_str()) && operation.starts_with(|c: char| c.is_ascii_lowercase()) {
+                // This is likely a typo in a base operation
+                let suggestions: Vec<&str> = valid_base_operations.iter()
+                    .filter(|&op| op.starts_with(&operation[..1]))
+                    .copied()
+                    .collect();
+                
+                if !suggestions.is_empty() {
+                    return Err(UiRegistryError::ValidationError(
+                        format!("Unknown operation '{}'. Did you mean one of: {:?}", operation, suggestions)
+                    ));
+                }
+            }
+        }
+
+        // Register the state type
+        let state_info = StateTypeInfo {
+            display_name: name.to_string(),
+            type_id: type_id.to_string(),
+            valid_operations: operations,
+            default_value,
+        };
+
+        self.register_state_type(name, state_info);
+        Ok(())
+    }
+}
+
+/// Errors that can occur during registry validation
+#[derive(Error, Debug)]
+pub enum UiRegistryError {
+    #[error("Unknown widget type: {0}")]
+    UnknownWidgetType(String),
+    #[error("Unknown action: {0}")]
+    UnknownAction(String),
+    #[error("Unknown state type: {0}")]
+    UnknownStateType(String),
+    #[error("Missing required property '{property}' for widget type '{widget_type}'")]
+    MissingRequiredProperty { widget_type: String, property: String },
+    #[error("Invalid property value for '{property}' in widget type '{widget_type}': {reason}")]
+    InvalidPropertyValue { widget_type: String, property: String, reason: String },
+    #[error("Invalid widget structure for '{widget_type}': {reason}")]
+    InvalidWidgetStructure { widget_type: String, reason: String },
+    #[error("Excessive nesting depth: {current_depth} exceeds maximum of {max_depth}")]
+    ExcessiveNesting { current_depth: usize, max_depth: usize },
+    #[error("Registry validation error: {0}")]
+    ValidationError(String),
+}
+
+// ==================== End UiRegistry ====================
 
 /// Asset loader for UI TOML files
 #[derive(Default)]
@@ -1166,14 +1876,33 @@ action = "toggle_settings"
     /// Test style override application
     #[test]
     fn test_style_override_application() {
-        let mut ui_def = create_valid_ui_definition();
+        let mut ui_def = UiDefinition {
+            window: None,
+            root: WidgetNode {
+                id: Some("root".to_string()),
+                widget_type: WidgetType::Container { direction: FlexDirection::Column },
+                layout: LayoutConfig::default(),
+                style: StyleConfig::default(), // Start with no styles
+                behavior: BehaviorConfig::default(),
+                classes: None,
+                style_overrides: None,
+                bindings: None,
+                children: vec![],
+            },
+            styles: None,
+            actions: None,
+        };
         
         // Add global styles
         let mut styles = HashMap::new();
         styles.insert("primary".to_string(), StyleOverrides {
             background_color: Some(ColorDef::Hex("#FF0000".to_string())),
             text_size: Some(16.0),
-            ..StyleOverrides { background_color: None, border_color: None, border_width: None, border_radius: None, text_color: None, text_size: None, opacity: None }
+            border_color: None,
+            border_width: None,
+            border_radius: None,
+            text_color: None,
+            opacity: None,
         });
         ui_def.styles = Some(styles);
         
@@ -1182,7 +1911,11 @@ action = "toggle_settings"
         ui_def.root.style_overrides = Some(StyleOverrides {
             text_size: Some(24.0), // Override the class style
             border_radius: Some(4.0),
-            ..StyleOverrides { background_color: None, border_color: None, border_width: None, border_radius: None, text_color: None, text_size: None, opacity: None }
+            background_color: None,
+            border_color: None,
+            border_width: None,
+            text_color: None,
+            opacity: None,
         });
         
         let collection = ui_def.to_widget_collection();
@@ -1222,6 +1955,210 @@ action = "toggle_settings"
         assert!(matches!(result.unwrap_err(), UiDefinitionError::Validation(_)));
     }
 
+    // ==================== Phase 2: UiRegistry Tests ====================
+
+    /// Test UiRegistry basic functionality
+    #[test]
+    fn test_ui_registry_creation() {
+        let registry = UiRegistry::new();
+        
+        // Check that built-in widget types are registered
+        assert!(registry.is_widget_type_registered("Container"));
+        assert!(registry.is_widget_type_registered("Button"));
+        assert!(registry.is_widget_type_registered("Text"));
+        assert!(registry.is_widget_type_registered("Shape"));
+        
+        // Check that built-in state types are registered
+        assert!(registry.is_state_type_registered("String"));
+        assert!(registry.is_state_type_registered("Boolean"));
+        assert!(registry.is_state_type_registered("Integer"));
+        
+        // Check that built-in actions are registered
+        assert!(registry.is_action_registered("navigate_home"));
+        assert!(registry.is_action_registered("open_settings"));
+        assert!(registry.is_action_registered("toggle_visibility"));
+    }
+
+    /// Test widget type validation
+    #[test]
+    fn test_widget_type_validation() {
+        let registry = UiRegistry::new();
+        
+        // Test valid widget types
+        let container = WidgetType::Container { direction: FlexDirection::Column };
+        assert!(registry.validate_widget_type(&container).is_ok());
+        
+        let button = WidgetType::Button { text: "Click me".to_string(), action: Some("navigate_home".to_string()) };
+        assert!(registry.validate_widget_type(&button).is_ok());
+        
+        let text = WidgetType::Text { content: "Hello".to_string(), editable: false };
+        assert!(registry.validate_widget_type(&text).is_ok());
+        
+        // Test invalid widget types
+        let empty_button = WidgetType::Button { text: "".to_string(), action: None };
+        assert!(registry.validate_widget_type(&empty_button).is_err());
+        
+        let long_text = WidgetType::Text { content: "x".repeat(10001), editable: false };
+        assert!(registry.validate_widget_type(&long_text).is_err());
+    }
+
+    /// Test widget children validation
+    #[test]
+    fn test_widget_children_validation() {
+        let registry = UiRegistry::new();
+        
+        // Container can have children
+        let container = WidgetType::Container { direction: FlexDirection::Column };
+        assert!(registry.validate_widget_children(&container, true).is_ok());
+        assert!(registry.validate_widget_children(&container, false).is_ok());
+        
+        // Button cannot have children
+        let button = WidgetType::Button { text: "Click".to_string(), action: None };
+        assert!(registry.validate_widget_children(&button, false).is_ok());
+        assert!(registry.validate_widget_children(&button, true).is_err());
+    }
+
+    /// Test action binding validation
+    #[test]
+    fn test_action_binding_validation() {
+        let registry = UiRegistry::new();
+        
+        // Valid action binding
+        let valid_binding = ActionBinding {
+            event: "click".to_string(),
+            action: "navigate_home".to_string(),
+            params: None,
+        };
+        assert!(registry.validate_action_binding(&valid_binding).is_ok());
+        
+        // Invalid event type
+        let invalid_event = ActionBinding {
+            event: "invalid_event".to_string(),
+            action: "navigate_home".to_string(),
+            params: None,
+        };
+        assert!(registry.validate_action_binding(&invalid_event).is_err());
+        
+        // Unknown action (with strict validation)
+        let unknown_action = ActionBinding {
+            event: "click".to_string(),
+            action: "unknown_action".to_string(),
+            params: None,
+        };
+        assert!(registry.validate_action_binding(&unknown_action).is_err());
+    }
+
+    /// Test action parameters validation
+    #[test]
+    fn test_action_parameters_validation() {
+        let registry = UiRegistry::new();
+        
+        // Action with required parameters
+        let mut params = HashMap::new();
+        params.insert("target".to_string(), toml::Value::String("main_panel".to_string()));
+        
+        let binding_with_params = ActionBinding {
+            event: "click".to_string(),
+            action: "toggle_visibility".to_string(),
+            params: Some(params),
+        };
+        assert!(registry.validate_action_binding(&binding_with_params).is_ok());
+        
+        // Missing required parameter
+        let binding_missing_param = ActionBinding {
+            event: "click".to_string(),
+            action: "toggle_visibility".to_string(),
+            params: None,
+        };
+        assert!(registry.validate_action_binding(&binding_missing_param).is_err());
+    }
+
+    /// Test custom state type registration
+    #[test]
+    fn test_custom_state_type_registration() {
+        let mut registry = UiRegistry::new();
+        
+        // Register a valid custom state type
+        let result = registry.register_custom_state_type(
+            "CustomCounter",
+            "u32",
+            vec!["get".to_string(), "set".to_string(), "increment".to_string()],
+            Some(toml::Value::Integer(0))
+        );
+        assert!(result.is_ok());
+        assert!(registry.is_state_type_registered("CustomCounter"));
+        
+        // Try to register invalid state type
+        let invalid_result = registry.register_custom_state_type(
+            "",
+            "invalid",
+            vec![],
+            None
+        );
+        assert!(invalid_result.is_err());
+    }
+
+    /// Test nesting depth validation
+    #[test]
+    fn test_nesting_depth_validation() {
+        let registry = UiRegistry::new();
+        
+        // Valid nesting depth
+        assert!(registry.validate_nesting_depth(5).is_ok());
+        assert!(registry.validate_nesting_depth(50).is_ok());
+        
+        // Excessive nesting depth
+        assert!(registry.validate_nesting_depth(51).is_err());
+        assert!(registry.validate_nesting_depth(100).is_err());
+    }
+
+    /// Test UI definition validation with registry
+    #[test]
+    fn test_ui_definition_registry_validation() {
+        let registry = UiRegistry::new();
+        let ui_def = create_valid_ui_definition();
+        
+        // Valid UI definition should pass registry validation
+        let result = ui_def.validate_with_registry(&registry);
+        assert!(result.is_ok(), "Registry validation failed: {:?}", result.err());
+        
+        // UI definition with invalid widget type should fail
+        let mut invalid_ui_def = create_valid_ui_definition();
+        invalid_ui_def.root.widget_type = WidgetType::Button { 
+            text: "".to_string(), // Empty text should fail validation
+            action: None 
+        };
+        assert!(invalid_ui_def.validate_with_registry(&registry).is_err());
+    }
+
+    /// Test registry configuration
+    #[test]
+    fn test_registry_configuration() {
+        let config = crate::assets::UiRegistryConfig {
+            strict_validation: false,
+            allow_custom_widgets: true,
+            allow_custom_actions: true,
+            max_nesting_depth: 100,
+        };
+        
+        let registry = UiRegistry::with_config(config);
+        
+        // With relaxed validation, unknown actions should be allowed
+        let unknown_action = ActionBinding {
+            event: "click".to_string(),
+            action: "custom_action".to_string(),
+            params: None,
+        };
+        assert!(registry.validate_action_binding(&unknown_action).is_ok());
+        
+        // Custom widget should be allowed
+        let custom_widget = WidgetType::Custom {
+            component: "CustomWidget".to_string(),
+            properties: HashMap::new(),
+        };
+        assert!(registry.validate_widget_type(&custom_widget).is_ok());
+    }
+
     /// Helper function to create a valid UI definition for testing
     fn create_valid_ui_definition() -> UiDefinition {
         UiDefinition {
@@ -1252,7 +2189,7 @@ action = "toggle_settings"
                         id: Some("test_button".to_string()),
                         widget_type: WidgetType::Button {
                             text: "Test Button".to_string(),
-                            action: Some("test_action".to_string()),
+                            action: Some("navigate_home".to_string()), // Use registered action
                         },
                         layout: LayoutConfig::default(),
                         style: StyleConfig::default(),

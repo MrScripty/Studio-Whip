@@ -1975,19 +1975,11 @@ impl UiDefinitionLoader {
                     ));
                 }
             }
-            crate::widgets::blueprint::ColorDef::Rgb { r, g, b } => {
-                if *r > 255 || *g > 255 || *b > 255 {
-                    return Err(UiDefinitionLoaderError::StyleValidation(
-                        format!("{}: RGB values must be 0-255", context)
-                    ));
-                }
+            crate::widgets::blueprint::ColorDef::Rgb { r: _, g: _, b: _ } => {
+                // RGB values are u8 (0-255) by type definition, no validation needed
             }
-            crate::widgets::blueprint::ColorDef::Rgba { r, g, b, a } => {
-                if *r > 255 || *g > 255 || *b > 255 {
-                    return Err(UiDefinitionLoaderError::StyleValidation(
-                        format!("{}: RGB values must be 0-255", context)
-                    ));
-                }
+            crate::widgets::blueprint::ColorDef::Rgba { r: _, g: _, b: _, a } => {
+                // RGB values are u8 (0-255) by type definition, only validate alpha
                 if !(*a >= 0.0 && *a <= 1.0) {
                     return Err(UiDefinitionLoaderError::StyleValidation(
                         format!("{}: Alpha value must be between 0.0 and 1.0", context)

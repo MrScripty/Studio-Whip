@@ -115,7 +115,7 @@ pub enum AlignSelf {
 }
 
 /// Color definition that supports multiple formats
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ColorDef {
     Hex(String),        // "#FF0000"

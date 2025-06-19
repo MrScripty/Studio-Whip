@@ -170,7 +170,167 @@ pub struct ActionBinding {
 impl UiDefinition {
     /// Validate the UI definition structure
     pub fn validate(&self) -> Result<(), UiDefinitionError> {
+        // Validate window config
+        self.validate_window_config()?;
+        
+        // Validate global styles for internal consistency
+        self.validate_global_styles()?;
+        
+        // Validate global actions
+        self.validate_global_actions()?;
+        
+        // Validate widget hierarchy
         self.validate_widget_node(&self.root, &HashSet::new())?;
+        
+        Ok(())
+    }
+
+    /// Validate window configuration
+    fn validate_window_config(&self) -> Result<(), UiDefinitionError> {
+        if let Some(ref window) = self.window {
+            // Validate window size
+            if window.size[0] <= 0.0 || window.size[1] <= 0.0 {
+                return Err(UiDefinitionError::Validation(
+                    "Window size must be positive".to_string()
+                ));
+            }
+            
+            // Validate background color if present
+            if let Some(ref color) = window.background_color {
+                self.validate_color_def(color)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate global styles
+    fn validate_global_styles(&self) -> Result<(), UiDefinitionError> {
+        if let Some(ref styles) = self.styles {
+            for (style_name, style_overrides) in styles {
+                if style_name.is_empty() {
+                    return Err(UiDefinitionError::Validation(
+                        "Style class name cannot be empty".to_string()
+                    ));
+                }
+                
+                // Validate color definitions in style overrides
+                if let Some(ref color) = style_overrides.background_color {
+                    self.validate_color_def(color)?;
+                }
+                if let Some(ref color) = style_overrides.border_color {
+                    self.validate_color_def(color)?;
+                }
+                if let Some(ref color) = style_overrides.text_color {
+                    self.validate_color_def(color)?;
+                }
+                
+                // Validate numeric values
+                if let Some(width) = style_overrides.border_width {
+                    if width < 0.0 {
+                        return Err(UiDefinitionError::Validation(
+                            format!("Border width must be non-negative in style '{}'", style_name)
+                        ));
+                    }
+                }
+                
+                if let Some(radius) = style_overrides.border_radius {
+                    if radius < 0.0 {
+                        return Err(UiDefinitionError::Validation(
+                            format!("Border radius must be non-negative in style '{}'", style_name)
+                        ));
+                    }
+                }
+                
+                if let Some(size) = style_overrides.text_size {
+                    if size <= 0.0 {
+                        return Err(UiDefinitionError::Validation(
+                            format!("Text size must be positive in style '{}'", style_name)
+                        ));
+                    }
+                }
+                
+                if let Some(opacity) = style_overrides.opacity {
+                    if !(0.0..=1.0).contains(&opacity) {
+                        return Err(UiDefinitionError::Validation(
+                            format!("Opacity must be between 0.0 and 1.0 in style '{}'", style_name)
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate global actions
+    fn validate_global_actions(&self) -> Result<(), UiDefinitionError> {
+        if let Some(ref actions) = self.actions {
+            for (action_name, action_binding) in actions {
+                if action_name.is_empty() {
+                    return Err(UiDefinitionError::Validation(
+                        "Action name cannot be empty".to_string()
+                    ));
+                }
+                
+                if action_binding.event.is_empty() {
+                    return Err(UiDefinitionError::Validation(
+                        format!("Event type cannot be empty for action '{}'", action_name)
+                    ));
+                }
+                
+                if action_binding.action.is_empty() {
+                    return Err(UiDefinitionError::Validation(
+                        format!("Action string cannot be empty for action '{}'", action_name)
+                    ));
+                }
+                
+                // Validate known event types
+                let valid_events = ["click", "hover", "focus", "blur", "change", "submit"];
+                if !valid_events.contains(&action_binding.event.as_str()) {
+                    return Err(UiDefinitionError::Validation(
+                        format!("Unknown event type '{}' for action '{}'", action_binding.event, action_name)
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate a color definition
+    fn validate_color_def(&self, color: &crate::widgets::blueprint::ColorDef) -> Result<(), UiDefinitionError> {
+        match color {
+            crate::widgets::blueprint::ColorDef::Hex(hex) => {
+                let hex = hex.trim_start_matches('#');
+                if hex.len() != 6 && hex.len() != 8 {
+                    return Err(UiDefinitionError::Validation(
+                        format!("Invalid hex color format: '{:?}'. Expected #RRGGBB or #RRGGBBAA", color)
+                    ));
+                }
+                
+                // Check if all characters are valid hex
+                if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(UiDefinitionError::Validation(
+                        format!("Invalid hex color format: '{:?}'. Contains non-hex characters", color)
+                    ));
+                }
+            }
+            crate::widgets::blueprint::ColorDef::Rgba { a, .. } => {
+                if !(0.0..=1.0).contains(a) {
+                    return Err(UiDefinitionError::Validation(
+                        "Alpha channel must be between 0.0 and 1.0".to_string()
+                    ));
+                }
+            }
+            crate::widgets::blueprint::ColorDef::Named(name) => {
+                let valid_names = ["red", "green", "blue", "black", "white", "gray", "grey", 
+                                 "yellow", "cyan", "magenta", "orange", "transparent"];
+                if !valid_names.contains(&name.to_lowercase().as_str()) {
+                    return Err(UiDefinitionError::Validation(
+                        format!("Unknown named color: '{}'", name)
+                    ));
+                }
+            }
+            _ => {} // RGB is always valid since u8 values are constrained
+        }
         Ok(())
     }
 
@@ -181,7 +341,31 @@ impl UiDefinition {
             if used_ids.contains(id) {
                 return Err(UiDefinitionError::DuplicateId(id.clone()));
             }
+            
+            // Validate ID format
+            if id.is_empty() {
+                return Err(UiDefinitionError::Validation("Widget ID cannot be empty".to_string()));
+            }
+            
+            // ID should only contain alphanumeric characters, underscore, and hyphen
+            if !id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                return Err(UiDefinitionError::Validation(
+                    format!("Widget ID '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed", id)
+                ));
+            }
         }
+
+        // Validate widget type specific constraints
+        self.validate_widget_type(&node.widget_type)?;
+
+        // Validate layout configuration
+        self.validate_layout_config(&node.layout)?;
+
+        // Validate style configuration
+        self.validate_style_config(&node.style)?;
+
+        // Validate behavior configuration
+        self.validate_behavior_config(&node.behavior)?;
 
         // Validate style classes exist
         if let Some(ref classes) = node.classes {
@@ -196,13 +380,26 @@ impl UiDefinition {
             }
         }
 
+        // Validate style overrides
+        if let Some(ref overrides) = node.style_overrides {
+            self.validate_style_overrides(overrides)?;
+        }
+
         // Validate action bindings
         if let Some(ref bindings) = node.bindings {
-            if let Some(ref global_actions) = self.actions {
-                for (_, binding) in bindings {
+            for (event_name, binding) in bindings {
+                if event_name.is_empty() {
+                    return Err(UiDefinitionError::Validation("Binding event name cannot be empty".to_string()));
+                }
+                
+                if let Some(ref global_actions) = self.actions {
                     if !global_actions.contains_key(&binding.action) {
                         return Err(UiDefinitionError::UnknownAction(binding.action.clone()));
                     }
+                } else {
+                    return Err(UiDefinitionError::Validation(
+                        "Action bindings specified but no global actions defined".to_string()
+                    ));
                 }
             }
         }
@@ -213,8 +410,149 @@ impl UiDefinition {
             child_ids.insert(id.clone());
         }
 
+        // Check for duplicate IDs among siblings
+        let mut sibling_ids = HashSet::new();
+        for child in &node.children {
+            if let Some(ref child_id) = child.id {
+                if sibling_ids.contains(child_id) {
+                    return Err(UiDefinitionError::DuplicateId(child_id.clone()));
+                }
+                sibling_ids.insert(child_id.clone());
+            }
+        }
+
         for child in &node.children {
             self.validate_widget_node(child, &child_ids)?;
+        }
+
+        Ok(())
+    }
+
+    /// Validate widget type specific constraints
+    fn validate_widget_type(&self, widget_type: &WidgetType) -> Result<(), UiDefinitionError> {
+        match widget_type {
+            WidgetType::Button { text, .. } => {
+                if text.is_empty() {
+                    return Err(UiDefinitionError::Validation("Button text cannot be empty".to_string()));
+                }
+            }
+            WidgetType::Text { content, .. } => {
+                // Text content can be empty (for placeholder text)
+                if content.len() > 10000 {
+                    return Err(UiDefinitionError::Validation("Text content too long (max 10000 characters)".to_string()));
+                }
+            }
+            _ => {} // Other widget types don't have specific validation yet
+        }
+        Ok(())
+    }
+
+    /// Validate layout configuration
+    fn validate_layout_config(&self, layout: &LayoutConfig) -> Result<(), UiDefinitionError> {
+        if let Some(size) = layout.size {
+            if size.x < 0.0 || size.y < 0.0 {
+                return Err(UiDefinitionError::Validation("Layout size must be non-negative".to_string()));
+            }
+            if size.x > 10000.0 || size.y > 10000.0 {
+                return Err(UiDefinitionError::Validation("Layout size is unreasonably large".to_string()));
+            }
+        }
+
+        if let Some(flex_grow) = layout.flex_grow {
+            if flex_grow < 0.0 {
+                return Err(UiDefinitionError::Validation("Flex grow must be non-negative".to_string()));
+            }
+        }
+
+        if let Some(flex_shrink) = layout.flex_shrink {
+            if flex_shrink < 0.0 {
+                return Err(UiDefinitionError::Validation("Flex shrink must be non-negative".to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate style configuration
+    fn validate_style_config(&self, style: &StyleConfig) -> Result<(), UiDefinitionError> {
+        if let Some(ref color) = style.background_color {
+            self.validate_color_def(color)?;
+        }
+        if let Some(ref color) = style.border_color {
+            self.validate_color_def(color)?;
+        }
+        if let Some(ref color) = style.text_color {
+            self.validate_color_def(color)?;
+        }
+
+        if let Some(width) = style.border_width {
+            if width < 0.0 {
+                return Err(UiDefinitionError::Validation("Border width must be non-negative".to_string()));
+            }
+        }
+
+        if let Some(radius) = style.border_radius {
+            if radius < 0.0 {
+                return Err(UiDefinitionError::Validation("Border radius must be non-negative".to_string()));
+            }
+        }
+
+        if let Some(size) = style.text_size {
+            if size <= 0.0 {
+                return Err(UiDefinitionError::Validation("Text size must be positive".to_string()));
+            }
+        }
+
+        if let Some(opacity) = style.opacity {
+            if !(0.0..=1.0).contains(&opacity) {
+                return Err(UiDefinitionError::Validation("Opacity must be between 0.0 and 1.0".to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate behavior configuration
+    fn validate_behavior_config(&self, _behavior: &BehaviorConfig) -> Result<(), UiDefinitionError> {
+        // Most behavior settings are just booleans, which are always valid
+        // Could add validation for z_index ranges if needed
+        Ok(())
+    }
+
+    /// Validate style overrides
+    fn validate_style_overrides(&self, overrides: &StyleOverrides) -> Result<(), UiDefinitionError> {
+        if let Some(ref color) = overrides.background_color {
+            self.validate_color_def(color)?;
+        }
+        if let Some(ref color) = overrides.border_color {
+            self.validate_color_def(color)?;
+        }
+        if let Some(ref color) = overrides.text_color {
+            self.validate_color_def(color)?;
+        }
+
+        if let Some(width) = overrides.border_width {
+            if width < 0.0 {
+                return Err(UiDefinitionError::Validation("Border width override must be non-negative".to_string()));
+            }
+        }
+
+        if let Some(radius) = overrides.border_radius {
+            if radius < 0.0 {
+                return Err(UiDefinitionError::Validation("Border radius override must be non-negative".to_string()));
+            }
+        }
+
+        if let Some(size) = overrides.text_size {
+            if size <= 0.0 {
+                return Err(UiDefinitionError::Validation("Text size override must be positive".to_string()));
+            }
+        }
+
+        if let Some(opacity) = overrides.opacity {
+            if !(0.0..=1.0).contains(&opacity) {
+                return Err(UiDefinitionError::Validation("Opacity override must be between 0.0 and 1.0".to_string()));
+            }
         }
 
         Ok(())
@@ -569,4 +907,365 @@ fn parse_widget_from_toml(id: &str, toml_data: &toml::Value) -> Result<WidgetBlu
         behavior,
         children,
     })
+}
+
+// ==================== Phase 2: Unit Tests ====================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::widgets::blueprint::{ColorDef, FlexDirection};
+
+    /// Test basic UiDefinition deserialization
+    #[test]
+    fn test_basic_ui_definition_parsing() {
+        let toml_str = r##"
+[root]
+widget_type = { type = "Container", direction = "Column" }
+
+[root.layout]
+size = [800.0, 600.0]
+
+[root.style] 
+background_color = "#2D3748"
+
+[root.behavior]
+visible = true
+"##;
+
+        let ui_def: Result<UiDefinition, toml::de::Error> = toml::from_str(toml_str);
+        assert!(ui_def.is_ok(), "Should parse basic UI definition: {:?}", ui_def.err());
+        
+        let ui_def = ui_def.unwrap();
+        assert!(matches!(ui_def.root.widget_type, WidgetType::Container { .. }));
+        assert_eq!(ui_def.root.layout.size, Some([800.0, 600.0].into()));
+        assert!(ui_def.root.style.background_color.is_some());
+    }
+
+    /// Test hierarchical children parsing
+    #[test]
+    fn test_hierarchical_children_parsing() {
+        let toml_str = r##"
+[root]
+widget_type = { type = "Container", direction = "Column" }
+
+[[root.children]]
+widget_type = { type = "Text", content = "Hello", editable = false }
+id = "text1"
+
+[[root.children]]
+widget_type = { type = "Button", text = "Click me", action = "test_action" }
+id = "button1"
+
+[[root.children.children]]
+widget_type = { type = "Text", content = "Nested", editable = false }
+id = "nested_text"
+"##;
+
+        let ui_def: Result<UiDefinition, toml::de::Error> = toml::from_str(toml_str);
+        assert!(ui_def.is_ok(), "Should parse hierarchical structure");
+        
+        let ui_def = ui_def.unwrap();
+        assert_eq!(ui_def.root.children.len(), 2);
+        
+        // Check first child
+        let first_child = &ui_def.root.children[0];
+        assert_eq!(first_child.id, Some("text1".to_string()));
+        assert!(matches!(first_child.widget_type, WidgetType::Text { .. }));
+        
+        // Check second child has nested children
+        let second_child = &ui_def.root.children[1];
+        assert_eq!(second_child.id, Some("button1".to_string()));
+        assert_eq!(second_child.children.len(), 1);
+        
+        let nested_child = &second_child.children[0];
+        assert_eq!(nested_child.id, Some("nested_text".to_string()));
+    }
+
+    /// Test style overrides and classes
+    #[test] 
+    fn test_style_overrides_and_classes() {
+        let toml_str = r##"
+[styles.primary]
+background_color = "#3182CE"
+text_color = "white"
+
+[styles.large]
+text_size = 24.0
+
+[root]
+widget_type = { type = "Button", text = "Styled Button", action = "test" }
+classes = ["primary", "large"]
+
+[root.style_overrides]
+border_radius = 8.0
+opacity = 0.9
+"##;
+
+        let ui_def: Result<UiDefinition, toml::de::Error> = toml::from_str(toml_str);
+        assert!(ui_def.is_ok(), "Should parse style overrides and classes");
+        
+        let ui_def = ui_def.unwrap();
+        
+        // Check global styles
+        assert!(ui_def.styles.is_some());
+        let styles = ui_def.styles.as_ref().unwrap();
+        assert!(styles.contains_key("primary"));
+        assert!(styles.contains_key("large"));
+        
+        // Check style classes on widget
+        assert_eq!(ui_def.root.classes, Some(vec!["primary".to_string(), "large".to_string()]));
+        
+        // Check style overrides
+        assert!(ui_def.root.style_overrides.is_some());
+        let overrides = ui_def.root.style_overrides.as_ref().unwrap();
+        assert_eq!(overrides.border_radius, Some(8.0));
+        assert_eq!(overrides.opacity, Some(0.9));
+    }
+
+    /// Test action bindings
+    #[test]
+    fn test_action_bindings() {
+        let toml_str = r##"
+[actions.navigate_home]
+event = "click"
+action = "navigate_home"
+
+[actions.toggle_settings]
+event = "hover"
+action = "toggle_settings"
+params = { target = "main_panel" }
+
+[root]
+widget_type = { type = "Container", direction = "Row" }
+
+[root.bindings.click]
+event = "click"
+action = "navigate_home"
+
+[root.bindings.hover]
+event = "hover"
+action = "toggle_settings"
+"##;
+
+        let ui_def: Result<UiDefinition, toml::de::Error> = toml::from_str(toml_str);
+        assert!(ui_def.is_ok(), "Should parse action bindings");
+        
+        let ui_def = ui_def.unwrap();
+        
+        // Check global actions
+        assert!(ui_def.actions.is_some());
+        let actions = ui_def.actions.as_ref().unwrap();
+        assert!(actions.contains_key("navigate_home"));
+        assert!(actions.contains_key("toggle_settings"));
+        
+        // Check widget bindings
+        assert!(ui_def.root.bindings.is_some());
+        let bindings = ui_def.root.bindings.as_ref().unwrap();
+        assert!(bindings.contains_key("click"));
+        assert!(bindings.contains_key("hover"));
+        
+        let click_binding = &bindings["click"];
+        assert_eq!(click_binding.action, "navigate_home");
+        assert_eq!(click_binding.event, "click");
+    }
+
+    /// Test validation success cases
+    #[test]
+    fn test_validation_success() {
+        let ui_def = create_valid_ui_definition();
+        assert!(ui_def.validate().is_ok(), "Valid UI definition should pass validation");
+    }
+
+    /// Test validation error cases
+    #[test]
+    fn test_validation_errors() {
+        // Test duplicate IDs
+        let mut ui_def = create_valid_ui_definition();
+        ui_def.root.children.push(WidgetNode {
+            id: Some("test_button".to_string()), // Duplicate ID
+            widget_type: WidgetType::Text { content: "Duplicate".to_string(), editable: false },
+            layout: LayoutConfig::default(),
+            style: StyleConfig::default(),
+            behavior: BehaviorConfig::default(),
+            classes: None,
+            style_overrides: None,
+            bindings: None,
+            children: vec![],
+        });
+        
+        let result = ui_def.validate();
+        assert!(result.is_err(), "Should fail validation due to duplicate ID: {:?}", result);
+        match result.unwrap_err() {
+            UiDefinitionError::DuplicateId(_) => {}, // Expected
+            other => panic!("Expected DuplicateId error, got: {:?}", other),
+        }
+        
+        // Test invalid color format
+        let mut ui_def = create_valid_ui_definition();
+        ui_def.root.style.background_color = Some(ColorDef::Hex("invalid".to_string()));
+        
+        let result = ui_def.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            UiDefinitionError::Validation(_) => {}, // Expected
+            other => panic!("Expected Validation error, got: {:?}", other),
+        }
+        
+        // Test style classes without global styles
+        let mut ui_def = create_valid_ui_definition();
+        ui_def.root.classes = Some(vec!["unknown_class".to_string()]);
+        
+        let result = ui_def.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            UiDefinitionError::StyleClassesWithoutGlobalStyles => {}, // Expected
+            other => panic!("Expected StyleClassesWithoutGlobalStyles error, got: {:?}", other),
+        }
+        
+        // Test unknown style class (with global styles defined)
+        let mut ui_def = create_valid_ui_definition();
+        ui_def.styles = Some({
+            let mut styles = HashMap::new();
+            styles.insert("valid_class".to_string(), StyleOverrides { 
+                background_color: None, border_color: None, border_width: None, 
+                border_radius: None, text_color: None, text_size: None, opacity: None 
+            });
+            styles
+        });
+        ui_def.root.classes = Some(vec!["unknown_class".to_string()]);
+        
+        let result = ui_def.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            UiDefinitionError::UnknownStyleClass(_) => {}, // Expected
+            other => panic!("Expected UnknownStyleClass error, got: {:?}", other),
+        }
+    }
+
+    /// Test conversion to widget collection
+    #[test]
+    fn test_to_widget_collection() {
+        let ui_def = create_valid_ui_definition();
+        let collection = ui_def.to_widget_collection();
+        
+        assert!(!collection.widgets.is_empty());
+        assert!(collection.root.is_some());
+        
+        // Check that the root widget exists in the collection
+        let root_id = collection.root.as_ref().unwrap();
+        assert!(collection.widgets.contains_key(root_id));
+        
+        // Check that child widgets exist
+        let root_widget = collection.widgets.get(root_id).unwrap();
+        for child_id in &root_widget.children {
+            assert!(collection.widgets.contains_key(child_id), "Child widget {} should exist", child_id);
+        }
+    }
+
+    /// Test style override application
+    #[test]
+    fn test_style_override_application() {
+        let mut ui_def = create_valid_ui_definition();
+        
+        // Add global styles
+        let mut styles = HashMap::new();
+        styles.insert("primary".to_string(), StyleOverrides {
+            background_color: Some(ColorDef::Hex("#FF0000".to_string())),
+            text_size: Some(16.0),
+            ..StyleOverrides { background_color: None, border_color: None, border_width: None, border_radius: None, text_color: None, text_size: None, opacity: None }
+        });
+        ui_def.styles = Some(styles);
+        
+        // Apply style class and overrides to root
+        ui_def.root.classes = Some(vec!["primary".to_string()]);
+        ui_def.root.style_overrides = Some(StyleOverrides {
+            text_size: Some(24.0), // Override the class style
+            border_radius: Some(4.0),
+            ..StyleOverrides { background_color: None, border_color: None, border_width: None, border_radius: None, text_color: None, text_size: None, opacity: None }
+        });
+        
+        let collection = ui_def.to_widget_collection();
+        let root_widget = collection.widgets.values().next().unwrap();
+        
+        // Check that style overrides were applied correctly
+        assert_eq!(root_widget.style.background_color, Some(ColorDef::Hex("#FF0000".to_string())));
+        assert_eq!(root_widget.style.text_size, Some(24.0)); // Override should win
+        assert_eq!(root_widget.style.border_radius, Some(4.0));
+    }
+
+    /// Test color validation
+    #[test]
+    fn test_color_validation() {
+        let ui_def = UiDefinition {
+            window: None,
+            root: WidgetNode {
+                id: Some("test".to_string()),
+                widget_type: WidgetType::Container { direction: FlexDirection::Column },
+                layout: LayoutConfig::default(),
+                style: StyleConfig {
+                    background_color: Some(ColorDef::Hex("invalid_color".to_string())),
+                    ..StyleConfig::default()
+                },
+                behavior: BehaviorConfig::default(),
+                classes: None,
+                style_overrides: None,
+                bindings: None,
+                children: vec![],
+            },
+            styles: None,
+            actions: None,
+        };
+        
+        let result = ui_def.validate();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), UiDefinitionError::Validation(_)));
+    }
+
+    /// Helper function to create a valid UI definition for testing
+    fn create_valid_ui_definition() -> UiDefinition {
+        UiDefinition {
+            window: Some(WindowConfig {
+                size: [800.0, 600.0],
+                background_color: Some(ColorDef::Hex("#2D3748".to_string())),
+            }),
+            root: WidgetNode {
+                id: Some("root_container".to_string()),
+                widget_type: WidgetType::Container { direction: FlexDirection::Column },
+                layout: LayoutConfig {
+                    size: Some([800.0, 600.0].into()),
+                    ..LayoutConfig::default()
+                },
+                style: StyleConfig {
+                    background_color: Some(ColorDef::Hex("#FFFFFF".to_string())),
+                    ..StyleConfig::default()
+                },
+                behavior: BehaviorConfig {
+                    visible: Some(true),
+                    ..BehaviorConfig::default()
+                },
+                classes: None,
+                style_overrides: None,
+                bindings: None,
+                children: vec![
+                    WidgetNode {
+                        id: Some("test_button".to_string()),
+                        widget_type: WidgetType::Button {
+                            text: "Test Button".to_string(),
+                            action: Some("test_action".to_string()),
+                        },
+                        layout: LayoutConfig::default(),
+                        style: StyleConfig::default(),
+                        behavior: BehaviorConfig::default(),
+                        classes: None,
+                        style_overrides: None,
+                        bindings: None,
+                        children: vec![],
+                    },
+                ],
+            },
+            styles: None,
+            actions: None,
+        }
+    }
 }

@@ -10,6 +10,7 @@ pub mod gui_framework;
 pub mod widgets;
 pub mod layout;
 pub mod assets;
+pub mod whip_ui_plugin;
 
 // Re-export commonly used types and components
 pub use gui_framework::{
@@ -57,6 +58,9 @@ pub use assets::{
     ui_asset_loaded_system,
     ui_asset_error_system,
 };
+
+// Re-export main plugin
+pub use whip_ui_plugin::WhipUiPlugin;
 
 // Keep Vertex definition accessible
 #[repr(C)]

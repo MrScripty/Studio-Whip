@@ -2,9 +2,7 @@ use bevy_app::{App, Plugin, Update};
 use bevy_asset::AssetApp;
 use bevy_ecs::prelude::*;
 use crate::assets::{
-    UiTree,
     UiDefinition,
-    UiAssetLoader,
     UiDefinitionLoader,
     LoadUiRequest,
     LoadingUiAssets,
@@ -19,11 +17,7 @@ pub struct UiAssetPlugin;
 
 impl Plugin for UiAssetPlugin {
     fn build(&self, app: &mut App) {
-        // Register the UiTree asset type and its legacy loader
-        app.init_asset::<UiTree>()
-           .register_asset_loader(UiAssetLoader);
-        
-        // Register the new UiDefinition asset type and its loader
+        // Register the UiDefinition asset type and its loader
         app.init_asset::<UiDefinition>()
            .register_asset_loader(UiDefinitionLoader);
         

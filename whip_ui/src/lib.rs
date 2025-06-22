@@ -47,12 +47,11 @@ pub use layout::{
 
 // Re-export asset system
 pub use assets::{
-    UiTree,
+    UiDefinition,
     WindowConfig,
-    UiAssetLoader,
+    UiDefinitionLoader,
     LoadUiRequest,
     LoadingUiAssets,
-    UiLoader,
     UiAssetPlugin,
     ui_asset_request_system,
     ui_asset_loaded_system,

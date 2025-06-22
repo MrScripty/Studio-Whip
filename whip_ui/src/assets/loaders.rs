@@ -2,29 +2,14 @@ use bevy_asset::{AssetLoader, LoadContext};
 use bevy_ecs::prelude::*;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
-use serde::{Deserialize, de::Error as DeError};
-use crate::widgets::blueprint::{WidgetBlueprint, WidgetCollection, WidgetType, LayoutConfig, StyleConfig, BehaviorConfig};
+use serde::Deserialize;
+use crate::widgets::blueprint::{WidgetType, LayoutConfig, StyleConfig, BehaviorConfig};
 
-use super::{UiTree, WindowConfig, definitions::{UiDefinition, UiDefinitionError, WidgetNode, StyleOverrides, ActionBinding}, registry::{UiRegistry, UiRegistryError}};
+use super::{WindowConfig, definitions::{UiDefinition, UiDefinitionError, WidgetNode, StyleOverrides, ActionBinding}, registry::{UiRegistry, UiRegistryError}};
 
-/// Legacy asset loader for UI TOML files (backward compatibility)
-#[derive(Default)]
-pub struct UiAssetLoader;
-
-/// New asset loader for hierarchical UI definitions
+/// Asset loader for hierarchical UI definitions
 #[derive(Default)]
 pub struct UiDefinitionLoader;
-
-/// Errors that can occur during legacy UI asset loading
-#[derive(Error, Debug)]
-pub enum UiAssetLoaderError {
-    #[error("Failed to read UI file: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Failed to parse TOML: {0}")]
-    TomlParse(#[from] toml::de::Error),
-    #[error("Failed to resolve include: {0}")]
-    IncludeResolution(String),
-}
 
 /// Errors that can occur during UI definition loading
 #[derive(Error, Debug)]
@@ -47,69 +32,8 @@ pub enum UiDefinitionLoaderError {
     StyleValidation(String),
 }
 
-impl AssetLoader for UiAssetLoader {
-    type Asset = UiTree;
-    type Settings = ();
-    type Error = UiAssetLoaderError;
 
-    async fn load(
-        &self,
-        reader: &mut dyn bevy_asset::io::Reader,
-        _settings: &(),
-        load_context: &mut LoadContext<'_>,
-    ) -> Result<Self::Asset, Self::Error> {
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await?;
-        let toml_str = std::str::from_utf8(&bytes)
-            .map_err(|e| UiAssetLoaderError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-
-        // Parse the TOML using custom structure
-        let parsed_toml: toml::Value = toml::from_str(toml_str)?;
-        let mut collection = parse_custom_toml_structure(parsed_toml.clone())?;
-
-        // Process includes and resolve widget blueprints
-        let resolved_widgets = self.resolve_includes(&mut collection, load_context).await?;
-
-        // Parse window configuration from the TOML
-        let window_config = parse_window_config(&parsed_toml)?;
-        
-        // Create the UiTree asset
-        let mut ui_tree = UiTree::new(collection, window_config);
-        ui_tree.resolved_widgets = resolved_widgets;
-
-        Ok(ui_tree)
-    }
-
-    fn extensions(&self) -> &[&str] {
-        &["toml"]
-    }
-}
-
-impl UiAssetLoader {
-    /// Resolve include directives in widget definitions
-    async fn resolve_includes(
-        &self,
-        collection: &mut WidgetCollection,
-        _load_context: &mut LoadContext<'_>,
-    ) -> Result<HashMap<String, WidgetBlueprint>, UiAssetLoaderError> {
-        let mut resolved = HashMap::new();
-
-        // For now, we'll skip include resolution and just use the widgets as-is
-        // In a full implementation, this would:
-        // 1. Find widgets with include directives
-        // 2. Load the referenced TOML files
-        // 3. Merge the included blueprint with overrides
-        // 4. Replace the widget definition with the resolved version
-
-        for (id, widget) in &collection.widgets {
-            resolved.insert(id.clone(), widget.clone());
-        }
-
-        Ok(resolved)
-    }
-}
-
-/// Implementation of the new UiDefinitionLoader
+/// Implementation of the UiDefinitionLoader
 impl AssetLoader for UiDefinitionLoader {
     type Asset = UiDefinition;
     type Settings = ();
@@ -330,7 +254,7 @@ impl UiDefinitionLoader {
     }
 
     /// Parse root section with error recovery
-    fn parse_root_section_safe(&self, root_value: Option<&toml::Value>, table: &toml::value::Table) -> Result<WidgetNode, UiDefinitionLoaderError> {
+    fn parse_root_section_safe(&self, root_value: Option<&toml::Value>, _table: &toml::value::Table) -> Result<WidgetNode, UiDefinitionLoaderError> {
         match root_value {
             Some(value) => {
                 match WidgetNode::deserialize(value.clone()) {
@@ -346,15 +270,7 @@ impl UiDefinitionLoader {
                 }
             }
             None => {
-                bevy_log::warn!("No root widget found, checking for legacy format or creating fallback");
-                // Check if this might be a legacy format (widgets section)
-                if table.contains_key("widgets") {
-                    bevy_log::info!("Detected legacy format with 'widgets' section");
-                    return Err(UiDefinitionLoaderError::InvalidConfiguration(
-                        "Legacy format detected. Please use the new hierarchical format with a 'root' section.".to_string()
-                    ));
-                }
-                
+                bevy_log::warn!("No root widget found, creating fallback");
                 // Create a minimal fallback root widget
                 self.create_fallback_root_widget()
             }
@@ -494,130 +410,6 @@ impl LoadUiRequest {
     }
 }
 
-/// Parse window configuration from TOML
-fn parse_window_config(toml_value: &toml::Value) -> Result<WindowConfig, UiAssetLoaderError> {
-    let table = toml_value.as_table()
-        .ok_or_else(|| UiAssetLoaderError::TomlParse(DeError::custom("Root must be a table")))?;
-    
-    let mut window_config = WindowConfig::default();
-    
-    if let Some(window_section) = table.get("window") {
-        if let Some(window_table) = window_section.as_table() {
-            // Parse window size
-            if let Some(size_array) = window_table.get("size") {
-                if let Some(size_arr) = size_array.as_array() {
-                    if size_arr.len() == 2 {
-                        if let (Some(width), Some(height)) = (size_arr[0].as_float(), size_arr[1].as_float()) {
-                            window_config.size = [width as f32, height as f32];
-                        }
-                    }
-                }
-            }
-            
-            // Parse background color
-            if let Some(bg_color) = window_table.get("background_color") {
-                if let Some(color_table) = bg_color.as_table() {
-                    if let (Some(r), Some(g), Some(b), Some(a)) = (
-                        color_table.get("r").and_then(|v| v.as_integer()),
-                        color_table.get("g").and_then(|v| v.as_integer()),
-                        color_table.get("b").and_then(|v| v.as_integer()),
-                        color_table.get("a").and_then(|v| v.as_float()),
-                    ) {
-                        window_config.background_color = Some(crate::widgets::blueprint::ColorDef::Rgba {
-                            r: r as u8,
-                            g: g as u8,
-                            b: b as u8,
-                            a: a as f32,
-                        });
-                    }
-                }
-            }
-        }
-    }
-    
-    Ok(window_config)
-}
-
-/// Parse the custom TOML structure used by our layout files
-fn parse_custom_toml_structure(toml_value: toml::Value) -> Result<WidgetCollection, UiAssetLoaderError> {
-    let table = toml_value.as_table()
-        .ok_or_else(|| UiAssetLoaderError::TomlParse(DeError::custom("Root must be a table")))?;
-    
-    let mut widgets = HashMap::new();
-    let root = None; // No explicit root - all widgets are children of window
-    
-    // Parse widgets section
-    if let Some(widgets_section) = table.get("widgets") {
-        if let Some(widgets_table) = widgets_section.as_table() {
-            for (widget_id, widget_data) in widgets_table {
-                let widget = parse_widget_from_toml(widget_id, widget_data)?;
-                widgets.insert(widget_id.clone(), widget);
-            }
-        }
-    }
-    
-    Ok(WidgetCollection { widgets, root })
-}
-
-/// Parse a single widget from TOML data
-fn parse_widget_from_toml(id: &str, toml_data: &toml::Value) -> Result<WidgetBlueprint, UiAssetLoaderError> {
-    let table = toml_data.as_table()
-        .ok_or_else(|| UiAssetLoaderError::TomlParse(DeError::custom("Widget must be a table")))?;
-    
-    // Parse widget_type using serde deserializer
-    let widget_type = if let Some(wt) = table.get("widget_type") {
-        WidgetType::deserialize(wt.clone())
-            .map_err(|e| UiAssetLoaderError::TomlParse(DeError::custom(format!("Invalid widget_type: {}", e))))?
-    } else {
-        return Err(UiAssetLoaderError::TomlParse(DeError::custom("Missing widget_type")));
-    };
-    
-    // Parse layout section
-    let layout = if let Some(layout_section) = table.get("layout") {
-        LayoutConfig::deserialize(layout_section.clone())
-            .map_err(|e| UiAssetLoaderError::TomlParse(DeError::custom(format!("Invalid layout: {}", e))))?
-    } else {
-        LayoutConfig::default()
-    };
-    
-    // Parse style section
-    let style = if let Some(style_section) = table.get("style") {
-        StyleConfig::deserialize(style_section.clone())
-            .map_err(|e| UiAssetLoaderError::TomlParse(DeError::custom(format!("Invalid style: {}", e))))?
-    } else {
-        StyleConfig::default()
-    };
-    
-    // Parse behavior section
-    let behavior = if let Some(behavior_section) = table.get("behavior") {
-        BehaviorConfig::deserialize(behavior_section.clone())
-            .map_err(|e| UiAssetLoaderError::TomlParse(DeError::custom(format!("Invalid behavior: {}", e))))?
-    } else {
-        BehaviorConfig::default()
-    };
-    
-    // Parse children
-    let children = if let Some(children_section) = table.get("children") {
-        if let Some(children_array) = children_section.as_array() {
-            children_array.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-    
-    Ok(WidgetBlueprint {
-        id: id.to_string(),
-        widget_type,
-        layout,
-        style,
-        behavior,
-        children,
-    })
-}
 
 // Additional validation methods for UiDefinitionLoader
 impl UiDefinitionLoader {

@@ -150,16 +150,17 @@ fn load_root_layout(
 }
 
 fn apply_window_config_from_asset(
-    mut window_config_events: EventReader<bevy_asset::AssetEvent<crate::assets::UiTree>>,
-    ui_trees: Res<bevy_asset::Assets<crate::assets::UiTree>>,
+    mut window_config_events: EventReader<bevy_asset::AssetEvent<crate::assets::UiDefinition>>,
+    ui_definitions: Res<bevy_asset::Assets<crate::assets::UiDefinition>>,
     mut primary_window_q: Query<&mut Window, With<PrimaryWindow>>,
     mut background_query: Query<&mut ShapeData, With<BackgroundQuad>>,
     mut commands: Commands,
 ) {
     for event in window_config_events.read() {
         if let bevy_asset::AssetEvent::LoadedWithDependencies { id } = event {
-            if let Some(ui_tree) = ui_trees.get(*id) {
-                let window_config = &ui_tree.window;
+            if let Some(ui_definition) = ui_definitions.get(*id) {
+                let default_window_config = crate::assets::WindowConfig::default();
+                let window_config = ui_definition.window.as_ref().unwrap_or(&default_window_config);
                 info!("Applying window config from asset");
                 
                 // Insert window config as resource

@@ -1,8 +1,7 @@
 # Studio-Whip
 AI-enhanced collaborative content production suite for movies, comics, and interactive visual novels. Create compelling stories with seamlessly integrated tools designed to enhance your creative talents.
 
-There is a website in construction at https://github.com/MrScripty/whip-docs
-Some info on the current Dev status in the comments at https://github.com/MrScripty/Studio-Whip/issues/8 https://github.com/MrScripty/Studio-Whip/issues/9 https://github.com/MrScripty/Studio-Whip/issues/10
+There is a mostly incomplete website in construction [here](https://github.com/MrScripty/whip-docs), and you can see recent dev proposals/activity in the [GitHub issues](https://github.com/MrScripty/Studio-Whip/issues).
 
 ## Major Planned Features
 *   **Story-Driven Platform**: Create original screenplays with visual story-building tools and advanced LLM integrations.

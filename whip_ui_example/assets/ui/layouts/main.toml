@@ -1,76 +1,89 @@
 # Main layout file that recreates the current hardcoded scene
-# Window is the implicit root container for all widgets
-# Background quad is automatically created with the window (not defined here)
+# Converted to hierarchical format
 
 [window]
-# Window configuration - defines the implicit root container
+# Window configuration
 size = [600.0, 300.0]  # Window size from main.rs
 background_color = { r = 33, g = 41, b = 42, a = 1.0 }  # Dark grey background
 
-# Triangle - Orange draggable shape (includes draggable_shape blueprint)
-[widgets.triangle]
-include = "widgets/draggable_shape.toml"
+[root]
+# Root container that holds all widgets
+id = "main_container"
+widget_type = { type = "Container", direction = "Column" }
+
+[root.layout]
+size = [600.0, 300.0]
+position = [0.0, 0.0, 0.0]
+
+[root.style]
+background_color = { r = 33, g = 41, b = 42, a = 0.0 }  # Transparent (window handles background)
+
+[root.behavior]
+visible = true
+interactive = false
+position_control = "Layout"
+
+# Triangle - Orange draggable shape
+[[root.children]]
+id = "triangle"
 widget_type = { type = "Shape", shape_type = "Triangle" }
 
-[widgets.triangle.layout]
+[root.children.layout]
 size = [50.0, 50.0]
 position = [300.0, 150.0, -1.0]  # Original Bevy coordinates for testing
 
-[widgets.triangle.style]
+[root.children.style]
 background_color = { r = 255, g = 152, b = 0, a = 1.0 }  # Orange color from main.rs
 
-[widgets.triangle.behavior]
+[root.children.behavior]
 visible = true
 interactive = true
 draggable = true
 clickable = true
 z_index = -1
 position_control = "Manual"
-children = []
 
-# Square - Green draggable shape (includes draggable_shape blueprint)  
-[widgets.square]
-include = "widgets/draggable_shape.toml"
+# Square - Green draggable shape
+[[root.children]]
+id = "square"
 widget_type = { type = "Shape", shape_type = "Rectangle" }
 
-[widgets.square.layout]
+[root.children.layout]
 size = [50.0, 50.0]
 position = [125.0, 75.0, -2.0]  # Original Bevy coordinates for testing
 
-[widgets.square.style]
+[root.children.style]
 background_color = { r = 66, g = 201, b = 34, a = 1.0 }  # Green color from main.rs
 
-[widgets.square.behavior]
-#visible = true
+[root.children.behavior]
+visible = true
 interactive = true
 draggable = true
 clickable = true
 z_index = -2
 position_control = "Manual"
-children = []
 
-# Sample Text - Editable collaborative text (includes editable_label blueprint)
-[widgets.sample_text]
-include = "widgets/editable_label.toml"
+# Sample Text - Editable collaborative text
+[[root.children]]
+id = "sample_text"
 widget_type = { type = "Text", content = "Hello, whip_ui!\nThis is collaborative text.", editable = true }
 
-[widgets.sample_text.layout]
+[root.children.layout]
 size = [200.0, 48.0]  # Taffy layout size (dynamic text bounds calculated separately)
 position = [50.0, 50.0, -2.0]  # Testing if text coordinates are inverted
 
-[widgets.sample_text.style]
-text_color = "black"
+[root.children.style]
+text_color = "#3182CE"
 text_size = 24.0  # Size from main.rs
 background_color = { r = 0, g = 0, b = 0, a = 0.0 }  # Transparent background
 
-[widgets.sample_text.behavior]
+[root.children.behavior]
 visible = true
 interactive = true
 clickable = true
 focusable = true
 draggable = false
 z_index = -2
-children = []
 
-# All widgets are implicit children of the window root container
+# All widgets are children of the root container
 # Rendering order is determined by z_index values

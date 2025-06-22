@@ -1,194 +1,53 @@
 # Example UI definition for whip_ui
-# This demonstrates the TOML widget definition format
+# This demonstrates the new hierarchical TOML widget definition format
 
-root = "main_container"
+# Window configuration
+[window]
+size = [800.0, 600.0]
+background_color = { Hex = "#2D3748" }
 
-[widgets.main_container]
+# Root widget node defining the UI hierarchy
+[root]
+id = "main_container"
 widget_type = { type = "Container", direction = "Column" }
 layout = { size = [800.0, 600.0], position = [0.0, 0.0, 0.0] }
 style = { background_color = { Hex = "#2D3748" } }
 behavior = { visible = true, interactive = false }
-children = ["header", "content_area", "footer"]
 
-[widgets.header]
+# Header
+[[root.children]]
+id = "header"
 widget_type = { type = "Container", direction = "Row" }
 layout = { size = [800.0, 80.0], padding = { top = 10.0, right = 20.0, bottom = 10.0, left = 20.0 } }
 style = { background_color = { Hex = "#1A202C" }, border_width = 1.0, border_color = { Hex = "#4A5568" } }
 behavior = { visible = true }
-children = ["title", "nav_buttons"]
 
-[widgets.title]
+# Header title
+[[root.children.children]]
+id = "title"
 widget_type = { type = "Text", content = "whip_ui Example", editable = false }
 layout = { flex_grow = 1.0 }
 style = { text_color = { Named = "white" }, text_size = 24.0 }
 behavior = { visible = true }
-children = []
 
-[widgets.nav_buttons]
+# Header navigation buttons container
+[[root.children.children]]
+id = "nav_buttons"
 widget_type = { type = "Container", direction = "Row" }
 layout = { size = [200.0, 60.0] }
 behavior = { visible = true }
-children = ["btn_home", "btn_settings"]
 
-[widgets.btn_home]
-widget_type = { type = "Button", text = "Home", action = "navigate_home" }
-layout = { size = [80.0, 40.0], margin = { top = 0.0, right = 10.0, bottom = 0.0, left = 0.0 } }
-style = { 
-    background_color = { Hex = "#3182CE" }, 
-    text_color = { Named = "white" },
-    border_radius = 4.0,
-    text_size = 14.0
-}
-behavior = { visible = true, interactive = true, clickable = true, focusable = true }
-children = []
-
-[widgets.btn_settings]
-widget_type = { type = "Button", text = "Settings", action = "open_settings" }
-layout = { size = [80.0, 40.0] }
-style = { 
-    background_color = { Hex = "#38A169" }, 
-    text_color = { Named = "white" },
-    border_radius = 4.0,
-    text_size = 14.0
-}
-behavior = { visible = true, interactive = true, clickable = true, focusable = true }
-children = []
-
-[widgets.content_area]
+# Content area
+[[root.children]]
+id = "content_area"
 widget_type = { type = "Container", direction = "Row" }
 layout = { size = [800.0, 440.0], padding = { top = 20.0, right = 20.0, bottom = 20.0, left = 20.0 } }
 style = { background_color = { Rgba = { r = 255, g = 255, b = 255, a = 0.05 } } }
 behavior = { visible = true }
-children = ["sidebar", "main_content"]
 
-[widgets.sidebar]
-widget_type = { type = "Container", direction = "Column" }
-layout = { size = [200.0, 400.0], margin = { top = 0.0, right = 20.0, bottom = 0.0, left = 0.0 } }
-style = { 
-    background_color = { Hex = "#2D3748" }, 
-    border_radius = 8.0,
-    border_width = 1.0,
-    border_color = { Hex = "#4A5568" }
-}
-behavior = { visible = true }
-children = ["sidebar_title", "sidebar_items"]
-
-[widgets.sidebar_title]
-widget_type = { type = "Text", content = "Menu", editable = false }
-layout = { size = [180.0, 40.0], padding = { top = 15.0, right = 15.0, bottom = 5.0, left = 15.0 } }
-style = { text_color = { Named = "white" }, text_size = 18.0 }
-behavior = { visible = true }
-children = []
-
-[widgets.sidebar_items]
-widget_type = { type = "Container", direction = "Column" }
-layout = { flex_grow = 1.0, padding = { top = 10.0, right = 15.0, bottom = 15.0, left = 15.0 } }
-behavior = { visible = true }
-children = ["item_widgets", "item_examples", "item_docs"]
-
-[widgets.item_widgets]
-widget_type = { type = "Button", text = "Widgets", action = "show_widgets" }
-layout = { size = [150.0, 35.0], margin = { top = 0.0, right = 0.0, bottom = 5.0, left = 0.0 } }
-style = { 
-    background_color = { Hex = "#4A5568" },
-    text_color = { Named = "white" },
-    border_radius = 4.0,
-    text_size = 14.0
-}
-behavior = { visible = true, interactive = true, clickable = true }
-children = []
-
-[widgets.item_examples]
-widget_type = { type = "Button", text = "Examples", action = "show_examples" }
-layout = { size = [150.0, 35.0], margin = { top = 0.0, right = 0.0, bottom = 5.0, left = 0.0 } }
-style = { 
-    background_color = { Hex = "#4A5568" },
-    text_color = { Named = "white" },
-    border_radius = 4.0,
-    text_size = 14.0
-}
-behavior = { visible = true, interactive = true, clickable = true }
-children = []
-
-[widgets.item_docs]
-widget_type = { type = "Button", text = "Documentation", action = "show_docs" }
-layout = { size = [150.0, 35.0] }
-style = { 
-    background_color = { Hex = "#4A5568" },
-    text_color = { Named = "white" },
-    border_radius = 4.0,
-    text_size = 14.0
-}
-behavior = { visible = true, interactive = true, clickable = true }
-children = []
-
-[widgets.main_content]
-widget_type = { type = "Container", direction = "Column" }
-layout = { flex_grow = 1.0 }
-style = { 
-    background_color = { Hex = "#F7FAFC" },
-    border_radius = 8.0,
-    border_width = 1.0,
-    border_color = { Hex = "#E2E8F0" }
-}
-behavior = { visible = true }
-children = ["content_header", "content_body"]
-
-[widgets.content_header]
-widget_type = { type = "Text", content = "Welcome to whip_ui!", editable = false }
-layout = { size = [540.0, 50.0], padding = { top = 20.0, right = 20.0, bottom = 10.0, left = 20.0 } }
-style = { text_color = { Hex = "#2D3748" }, text_size = 20.0 }
-behavior = { visible = true }
-children = []
-
-[widgets.content_body]
-widget_type = { type = "Container", direction = "Column" }
-layout = { flex_grow = 1.0, padding = { top = 10.0, right = 20.0, bottom = 20.0, left = 20.0 } }
-behavior = { visible = true }
-children = ["demo_shapes", "demo_text"]
-
-[widgets.demo_shapes]
-widget_type = { type = "Container", direction = "Row" }
-layout = { size = [500.0, 100.0], margin = { top = 0.0, right = 0.0, bottom = 20.0, left = 0.0 } }
-behavior = { visible = true }
-children = ["shape_rect", "shape_circle", "shape_triangle"]
-
-[widgets.shape_rect]
-widget_type = { type = "Shape", shape_type = "Rectangle" }
-layout = { size = [80.0, 80.0], margin = { top = 10.0, right = 20.0, bottom = 10.0, left = 0.0 } }
-style = { background_color = { Hex = "#E53E3E" } }
-behavior = { visible = true, interactive = true, draggable = true }
-children = []
-
-[widgets.shape_circle]
-widget_type = { type = "Shape", shape_type = "Circle" }
-layout = { size = [80.0, 80.0], margin = { top = 10.0, right = 20.0, bottom = 10.0, left = 0.0 } }
-style = { background_color = { Hex = "#38A169" } }
-behavior = { visible = true, interactive = true, draggable = true }
-children = []
-
-[widgets.shape_triangle]
-widget_type = { type = "Shape", shape_type = "Triangle" }
-layout = { size = [80.0, 80.0], margin = { top = 10.0, right = 0.0, bottom = 10.0, left = 0.0 } }
-style = { background_color = { Hex = "#3182CE" } }
-behavior = { visible = true, interactive = true, draggable = true }
-children = []
-
-[widgets.demo_text]
-widget_type = { type = "Text", content = "This is editable text. Click to edit!", editable = true }
-layout = { size = [500.0, 60.0], padding = { top = 15.0, right = 15.0, bottom = 15.0, left = 15.0 } }
-style = { 
-    background_color = { Named = "white" },
-    text_color = { Hex = "#2D3748" },
-    text_size = 16.0,
-    border_width = 1.0,
-    border_color = { Hex = "#CBD5E0" },
-    border_radius = 4.0
-}
-behavior = { visible = true, interactive = true, clickable = true, focusable = true }
-children = []
-
-[widgets.footer]
+# Footer
+[[root.children]]
+id = "footer"
 widget_type = { type = "Container", direction = "Row" }
 layout = { size = [800.0, 60.0], padding = { top = 15.0, right = 20.0, bottom = 15.0, left = 20.0 } }
 style = { 
@@ -197,18 +56,3 @@ style = {
     border_color = { Hex = "#4A5568" }
 }
 behavior = { visible = true }
-children = ["footer_text", "version_info"]
-
-[widgets.footer_text]
-widget_type = { type = "Text", content = "Powered by whip_ui", editable = false }
-layout = { flex_grow = 1.0 }
-style = { text_color = { Hex = "#A0AEC0" }, text_size = 12.0 }
-behavior = { visible = true }
-children = []
-
-[widgets.version_info]
-widget_type = { type = "Text", content = "v0.1.0", editable = false }
-layout = { size = [100.0, 30.0] }
-style = { text_color = { Hex = "#A0AEC0" }, text_size = 12.0 }
-behavior = { visible = true }
-children = []

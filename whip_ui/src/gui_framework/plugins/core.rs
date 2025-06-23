@@ -30,7 +30,8 @@ use crate::{
 };
 
 // Import types/functions from the gui_framework
-use crate::gui_framework::events::YrsTextChanged;
+use crate::gui_framework::events::{YrsTextChanged, ActionEvent, ActionRegistry};
+use crate::gui_framework::systems::{action_execution_system, interaction_to_action_system};
 use crate::gui_framework::{
     context::vulkan_context::VulkanContext,
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
@@ -60,6 +61,7 @@ pub enum CoreSet {
     ApplyUpdateCommands,    // Apply commands from layout/cursor systems before rendering
     HandleResize,           // Handle window resize events, update global UBO
     ApplyInputCommands,     // Apply commands from input/focus/cursor systems before layout/positioning
+    ActionProcessing,       // Process interaction events and execute actions
     TextLayout,             // Perform text layout using cosmic-text
     ManageCursorVisual,     // Spawn/despawn cursor visual based on Focus
     UpdateCursorTransform,  // Update cursor visual position based on state/layout
@@ -88,6 +90,12 @@ impl Plugin for GuiFrameworkCorePlugin {
         app.register_type::<IVec2>();
         app.register_type::<crate::gui_framework::components::CursorState>();
         app.register_type::<crate::gui_framework::components::CursorVisual>();
+
+        // --- Event Registration ---
+        app.add_event::<ActionEvent>();
+
+        // --- Resource Registration ---
+        app.init_resource::<ActionRegistry>();
 
         // --- System Setup ---
         app
@@ -122,13 +130,17 @@ impl Plugin for GuiFrameworkCorePlugin {
                 // (like adding `Focus`) available to the rest of the frame.
                 CoreSet::ApplyInputCommands
                     .after(InteractionSet::InputHandling),
+                    
+                // Action System: Process interaction events and execute actions
+                CoreSet::ActionProcessing
+                    .after(CoreSet::ApplyInputCommands),
 
                 // Phase 2: Systems that react to the newly applied components and events.
                 // Both of these must run after commands are applied.
                 CoreSet::TextLayout
-                    .after(CoreSet::ApplyInputCommands),
+                    .after(CoreSet::ActionProcessing),
                 CoreSet::ManageCursorVisual
-                    .after(CoreSet::ApplyInputCommands),
+                    .after(CoreSet::ActionProcessing),
 
                 // Phase 3: The cursor's visual transform can only be updated *after* the
                 // layout has been calculated AND the visual entity has been spawned.
@@ -150,6 +162,9 @@ impl Plugin for GuiFrameworkCorePlugin {
                 update_cursor_transform_system.in_set(CoreSet::UpdateCursorTransform),
                 apply_deferred.in_set(CoreSet::ApplyInputCommands),
                 buffer_manager_despawn_cleanup_system.in_set(CoreSet::PreRenderCleanup),
+                // Action systems
+                interaction_to_action_system.in_set(CoreSet::ActionProcessing),
+                action_execution_system.in_set(CoreSet::ActionProcessing),
             ));
 
             // == Last Schedule Systems (This part is correct and remains unchanged) ==

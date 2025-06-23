@@ -189,7 +189,52 @@ impl UiRegistry {
             description: "Toggle the visibility of a UI element".to_string(),
             parameter_types: {
                 let mut params = HashMap::new();
+                params.insert("target_id".to_string(), "String".to_string());
+                params
+            },
+            requires_conditions: vec!["target_exists".to_string()],
+        });
+
+        self.register_action("debug", ActionInfo {
+            display_name: "Debug".to_string(),
+            description: "Log a debug message to the console".to_string(),
+            parameter_types: {
+                let mut params = HashMap::new();
+                params.insert("message".to_string(), "String".to_string());
+                params
+            },
+            requires_conditions: vec![],
+        });
+
+        self.register_action("navigate", ActionInfo {
+            display_name: "Navigate".to_string(),
+            description: "Navigate to a specified target".to_string(),
+            parameter_types: {
+                let mut params = HashMap::new();
                 params.insert("target".to_string(), "String".to_string());
+                params
+            },
+            requires_conditions: vec![],
+        });
+
+        self.register_action("update_text", ActionInfo {
+            display_name: "Update Text".to_string(),
+            description: "Update the text content of a UI element".to_string(),
+            parameter_types: {
+                let mut params = HashMap::new();
+                params.insert("target_id".to_string(), "String".to_string());
+                params.insert("text".to_string(), "String".to_string());
+                params
+            },
+            requires_conditions: vec!["target_exists".to_string()],
+        });
+
+        self.register_action("set_focus", ActionInfo {
+            display_name: "Set Focus".to_string(),
+            description: "Set focus to a specific UI element".to_string(),
+            parameter_types: {
+                let mut params = HashMap::new();
+                params.insert("target_id".to_string(), "String".to_string());
                 params
             },
             requires_conditions: vec!["target_exists".to_string()],

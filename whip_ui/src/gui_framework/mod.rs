@@ -6,6 +6,7 @@ pub mod context;
 pub mod components;
 pub mod events;
 pub mod plugins;
+pub mod systems;
 
 // Keep interaction module *only* for hotkeys for now
 pub mod interaction;

@@ -333,14 +333,23 @@ impl UiDefinition {
                     return Err(UiDefinitionError::Validation("Binding event name cannot be empty".to_string()));
                 }
                 
-                if let Some(ref global_actions) = self.actions {
-                    if !global_actions.contains_key(&binding.action) {
+                // Check if action is defined in global actions first
+                let is_global_action = if let Some(ref global_actions) = self.actions {
+                    global_actions.contains_key(&binding.action)
+                } else {
+                    false
+                };
+                
+                // If not a global action, check if it's a built-in action
+                if !is_global_action {
+                    let builtin_actions = [
+                        "debug", "navigate", "toggle_visibility", "update_text", "set_focus",
+                        "navigate_home", "open_settings"
+                    ];
+                    
+                    if !builtin_actions.contains(&binding.action.as_str()) {
                         return Err(UiDefinitionError::UnknownAction(binding.action.clone()));
                     }
-                } else {
-                    return Err(UiDefinitionError::Validation(
-                        "Action bindings specified but no global actions defined".to_string()
-                    ));
                 }
             }
         }

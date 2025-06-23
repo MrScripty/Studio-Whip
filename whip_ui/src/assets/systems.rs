@@ -119,6 +119,13 @@ fn spawn_widget_from_node(
         parent,
     );
     
+    // Add action bindings if they exist
+    if let Some(ref bindings) = node.bindings {
+        commands.entity(entity).insert(crate::widgets::components::WidgetActionBindings {
+            bindings: bindings.clone(),
+        });
+    }
+    
     // Recursively spawn children
     for child_node in &node.children {
         spawn_widget_from_node(commands, child_node, yrs_res, Some(entity));

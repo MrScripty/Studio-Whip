@@ -31,7 +31,12 @@ use crate::{
 
 // Import types/functions from the gui_framework
 use crate::gui_framework::events::{YrsTextChanged, ActionEvent, ActionRegistry};
-use crate::gui_framework::systems::{action_execution_system, interaction_to_action_system};
+use crate::gui_framework::components::InteractionStateChanged;
+use crate::gui_framework::systems::{
+    action_execution_system, interaction_to_action_system,
+    interaction_state_tracking_system, hover_detection_system, press_detection_system,
+    focus_detection_system, drag_detection_system, interaction_state_debug_system
+};
 use crate::gui_framework::{
     context::vulkan_context::VulkanContext,
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
@@ -62,6 +67,7 @@ pub enum CoreSet {
     HandleResize,           // Handle window resize events, update global UBO
     ApplyInputCommands,     // Apply commands from input/focus/cursor systems before layout/positioning
     ActionProcessing,       // Process interaction events and execute actions
+    StateTracking,          // Track interaction state changes
     TextLayout,             // Perform text layout using cosmic-text
     ManageCursorVisual,     // Spawn/despawn cursor visual based on Focus
     UpdateCursorTransform,  // Update cursor visual position based on state/layout
@@ -90,9 +96,11 @@ impl Plugin for GuiFrameworkCorePlugin {
         app.register_type::<IVec2>();
         app.register_type::<crate::gui_framework::components::CursorState>();
         app.register_type::<crate::gui_framework::components::CursorVisual>();
+        // app.register_type::<crate::widgets::components::WidgetActionBindings>(); // Skip for now due to toml::Value
 
         // --- Event Registration ---
         app.add_event::<ActionEvent>();
+        app.add_event::<InteractionStateChanged>();
 
         // --- Resource Registration ---
         app.init_resource::<ActionRegistry>();
@@ -134,13 +142,17 @@ impl Plugin for GuiFrameworkCorePlugin {
                 // Action System: Process interaction events and execute actions
                 CoreSet::ActionProcessing
                     .after(CoreSet::ApplyInputCommands),
+                
+                // State Tracking: Track interaction state changes
+                CoreSet::StateTracking
+                    .after(CoreSet::ActionProcessing),
 
                 // Phase 2: Systems that react to the newly applied components and events.
                 // Both of these must run after commands are applied.
                 CoreSet::TextLayout
-                    .after(CoreSet::ActionProcessing),
+                    .after(CoreSet::StateTracking),
                 CoreSet::ManageCursorVisual
-                    .after(CoreSet::ActionProcessing),
+                    .after(CoreSet::StateTracking),
 
                 // Phase 3: The cursor's visual transform can only be updated *after* the
                 // layout has been calculated AND the visual entity has been spawned.
@@ -165,6 +177,13 @@ impl Plugin for GuiFrameworkCorePlugin {
                 // Action systems
                 interaction_to_action_system.in_set(CoreSet::ActionProcessing),
                 action_execution_system.in_set(CoreSet::ActionProcessing),
+                // State tracking systems
+                interaction_state_tracking_system.in_set(CoreSet::StateTracking),
+                hover_detection_system.in_set(CoreSet::StateTracking),
+                press_detection_system.in_set(CoreSet::StateTracking),
+                focus_detection_system.in_set(CoreSet::StateTracking),
+                drag_detection_system.in_set(CoreSet::StateTracking),
+                interaction_state_debug_system.in_set(CoreSet::StateTracking),
             ));
 
             // == Last Schedule Systems (This part is correct and remains unchanged) ==

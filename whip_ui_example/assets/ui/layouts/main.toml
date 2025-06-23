@@ -43,6 +43,10 @@ clickable = true
 z_index = -1
 position_control = "Manual"
 
+# Action bindings for triangle
+[root.children.bindings]
+click = { event = "click", action = "debug", params = { message = "Triangle clicked!" } }
+
 # Square - Green draggable shape
 [[root.children]]
 id = "square"
@@ -62,6 +66,10 @@ draggable = true
 clickable = true
 z_index = -2
 position_control = "Manual"
+
+# Action bindings for square
+[root.children.bindings]
+click = { event = "click", action = "toggle_visibility", params = { target_id = "sample_text" } }
 
 # Sample Text - Editable collaborative text
 [[root.children]]
@@ -84,6 +92,10 @@ clickable = true
 focusable = true
 draggable = false
 z_index = -2
+
+# Action bindings for text
+[root.children.bindings]
+click = { event = "click", action = "set_focus", params = { target_id = "sample_text" } }
 
 # All widgets are children of the root container
 # Rendering order is determined by z_index values

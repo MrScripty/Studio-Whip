@@ -7,7 +7,7 @@ use crate::{
         blueprint::{WidgetBlueprint, WidgetCollection, WidgetType},
         components::*,
     },
-    gui_framework::components::{ShapeData, Visibility, Interaction, Text, TextAlignment, EditableText},
+    gui_framework::components::{ShapeData, Visibility, Interaction, InteractionState, Text, TextAlignment, EditableText},
     layout::{PositionControl, UiNode, Styleable},
     Vertex, YrsDocResource,
 };
@@ -137,6 +137,7 @@ fn spawn_widget_entity(
     let background_color = style.background_color;
     let text_size = style.text_size.unwrap_or(16.0);
     let text_color = style.text_color.unwrap_or(Color::BLACK);
+    let is_interactive = behavior.clickable || behavior.draggable;
     
     let mut entity_commands = commands.spawn((
         Widget {
@@ -154,6 +155,11 @@ fn spawn_widget_entity(
         UiNode::default(),
         Styleable(convert_layout_config_to_taffy_style(&blueprint.layout)),
     ));
+    
+    // Add InteractionState component for interactive widgets
+    if is_interactive {
+        entity_commands.insert(InteractionState::new());
+    }
     
     // Add widget-type-specific components
     match &blueprint.widget_type {

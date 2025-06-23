@@ -62,6 +62,12 @@ pub struct WidgetState {
     pub custom_data: HashMap<String, String>, // For custom widget properties
 }
 
+/// Component for storing action bindings associated with a widget
+#[derive(Component, Debug, Clone, Default)]
+pub struct WidgetActionBindings {
+    pub bindings: HashMap<String, crate::assets::definitions::ActionBinding>,
+}
+
 /// Component for container widgets that manage child layout
 #[derive(Component, Debug)]
 pub struct WidgetContainer {

@@ -79,27 +79,34 @@ fn execute_builtin_action(
 pub fn interaction_to_action_system(
     mut action_events: EventWriter<ActionEvent>,
     mut click_events: EventReader<crate::gui_framework::events::EntityClicked>,
+    action_bindings_query: Query<&crate::widgets::components::WidgetActionBindings>,
     // TODO: Add other interaction events (hover, focus, etc.)
 ) {
     for click_event in click_events.read() {
         debug!("Entity clicked: {:?}", click_event.entity);
         
-        // For now, generate a simple debug action for any click
-        // TODO: Look up actual action bindings from widget configuration
-        let action = ActionEvent::new(
-            "debug".to_string(),
-            click_event.entity,
-            "click".to_string(),
-        ).with_params({
-            let mut params = std::collections::HashMap::new();
-            params.insert(
-                "message".to_string(),
-                toml::Value::String(format!("Clicked entity {:?}", click_event.entity))
-            );
-            params
-        });
-        
-        action_events.send(action);
+        // Look up action bindings for this entity
+        if let Ok(bindings) = action_bindings_query.get(click_event.entity) {
+            // Check if there's a click action binding
+            if let Some(binding) = bindings.bindings.get("click") {
+                debug!("Found click binding: {:?}", binding);
+                
+                // Create action event from the binding
+                let mut action = ActionEvent::new(
+                    binding.action.clone(),
+                    click_event.entity,
+                    binding.event.clone(),
+                );
+                
+                // Add parameters if they exist
+                if let Some(ref params) = binding.params {
+                    action = action.with_params(params.clone());
+                }
+                
+                action_events.send(action);
+            }
+        }
+        // Note: Entities without action bindings are intentionally non-interactive
     }
 }
 
@@ -136,12 +143,24 @@ mod tests {
     }
 
     #[test]
-    fn test_action_event_generation_from_click() {
+    fn test_action_event_generation_with_bindings() {
         let mut world = World::new();
         world.init_resource::<Events<ActionEvent>>();
         world.init_resource::<Events<crate::gui_framework::events::EntityClicked>>();
         
-        let entity = world.spawn_empty().id();
+        // Create entity with action bindings
+        let mut bindings = HashMap::new();
+        bindings.insert("click".to_string(), crate::assets::definitions::ActionBinding {
+            event: "click".to_string(),
+            action: "debug".to_string(),
+            params: Some({
+                let mut params = HashMap::new();
+                params.insert("message".to_string(), toml::Value::String("Test message".to_string()));
+                params
+            }),
+        });
+        
+        let entity = world.spawn(crate::widgets::components::WidgetActionBindings { bindings }).id();
         
         let click_event = crate::gui_framework::events::EntityClicked { entity };
         world.resource_mut::<Events<crate::gui_framework::events::EntityClicked>>()
@@ -159,5 +178,29 @@ mod tests {
         assert_eq!(events[0].action, "debug");
         assert_eq!(events[0].event_type, "click");
         assert_eq!(events[0].source_entity, entity);
+    }
+
+    #[test]
+    fn test_no_action_without_bindings() {
+        let mut world = World::new();
+        world.init_resource::<Events<ActionEvent>>();
+        world.init_resource::<Events<crate::gui_framework::events::EntityClicked>>();
+        
+        // Create entity WITHOUT action bindings
+        let entity = world.spawn_empty().id();
+        
+        let click_event = crate::gui_framework::events::EntityClicked { entity };
+        world.resource_mut::<Events<crate::gui_framework::events::EntityClicked>>()
+            .send(click_event);
+        
+        // Run the interaction to action system
+        world.run_system_once(interaction_to_action_system);
+        
+        // Check that NO action event was generated
+        let action_events = world.resource::<Events<ActionEvent>>();
+        let mut reader = action_events.get_reader();
+        let events: Vec<_> = reader.read(action_events).collect();
+        
+        assert_eq!(events.len(), 0); // No actions should be generated
     }
 }

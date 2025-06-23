@@ -62,6 +62,41 @@ pub struct StyleConfig {
     pub text_color: Option<ColorDef>,
     pub text_size: Option<f32>,
     pub opacity: Option<f32>,
+    /// State-specific style overrides
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub states: Option<StateStyles>,
+}
+
+/// State-based style variants
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateStyles {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hover: Option<StyleOverrides>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pressed: Option<StyleOverrides>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused: Option<StyleOverrides>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<StyleOverrides>,
+}
+
+/// Style overrides for specific states
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StyleOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<ColorDef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border_color: Option<ColorDef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border_width: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border_radius: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<ColorDef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
 }
 
 /// Behavior configuration for widgets
@@ -148,6 +183,7 @@ impl Default for StyleConfig {
             text_color: None,
             text_size: None,
             opacity: None,
+            states: None,
         }
     }
 }
@@ -204,6 +240,40 @@ impl ColorDef {
                     _ => Color::WHITE, // fallback
                 }
             }
+        }
+    }
+}
+
+impl StyleOverrides {
+    /// Apply these overrides to a base StyleConfig, returning a new style
+    pub fn apply_to(&self, base: &StyleConfig) -> StyleConfig {
+        StyleConfig {
+            background_color: self.background_color.clone().or_else(|| base.background_color.clone()),
+            border_color: self.border_color.clone().or_else(|| base.border_color.clone()),
+            border_width: self.border_width.or(base.border_width),
+            border_radius: self.border_radius.or(base.border_radius),
+            text_color: self.text_color.clone().or_else(|| base.text_color.clone()),
+            text_size: self.text_size.or(base.text_size),
+            opacity: self.opacity.or(base.opacity),
+            states: base.states.clone(), // Keep original state definitions
+        }
+    }
+}
+
+impl StateStyles {
+    /// Get the appropriate style override for the given interaction state
+    pub fn get_for_state(&self, hovered: bool, pressed: bool, focused: bool, disabled: bool) -> Option<&StyleOverrides> {
+        // Priority order: disabled > pressed > focused > hover
+        if disabled {
+            self.disabled.as_ref()
+        } else if pressed {
+            self.pressed.as_ref()
+        } else if focused {
+            self.focused.as_ref()
+        } else if hovered {
+            self.hover.as_ref()
+        } else {
+            None
         }
     }
 }

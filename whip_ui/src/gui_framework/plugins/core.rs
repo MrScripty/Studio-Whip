@@ -35,7 +35,9 @@ use crate::gui_framework::components::InteractionStateChanged;
 use crate::gui_framework::systems::{
     action_execution_system, interaction_to_action_system,
     interaction_state_tracking_system, hover_detection_system, press_detection_system,
-    focus_detection_system, drag_detection_system, interaction_state_debug_system
+    focus_detection_system, drag_detection_system, interaction_state_debug_system,
+    style_resolution_system, apply_resolved_styles_system, style_resolution_debug_system,
+    StyleChanged
 };
 use crate::gui_framework::{
     context::vulkan_context::VulkanContext,
@@ -68,6 +70,7 @@ pub enum CoreSet {
     ApplyInputCommands,     // Apply commands from input/focus/cursor systems before layout/positioning
     ActionProcessing,       // Process interaction events and execute actions
     StateTracking,          // Track interaction state changes
+    StyleResolution,        // Resolve styles based on states
     TextLayout,             // Perform text layout using cosmic-text
     ManageCursorVisual,     // Spawn/despawn cursor visual based on Focus
     UpdateCursorTransform,  // Update cursor visual position based on state/layout
@@ -101,6 +104,7 @@ impl Plugin for GuiFrameworkCorePlugin {
         // --- Event Registration ---
         app.add_event::<ActionEvent>();
         app.add_event::<InteractionStateChanged>();
+        app.add_event::<StyleChanged>();
 
         // --- Resource Registration ---
         app.init_resource::<ActionRegistry>();
@@ -146,13 +150,17 @@ impl Plugin for GuiFrameworkCorePlugin {
                 // State Tracking: Track interaction state changes
                 CoreSet::StateTracking
                     .after(CoreSet::ActionProcessing),
+                
+                // Style Resolution: Resolve styles based on interaction states
+                CoreSet::StyleResolution
+                    .after(CoreSet::StateTracking),
 
                 // Phase 2: Systems that react to the newly applied components and events.
                 // Both of these must run after commands are applied.
                 CoreSet::TextLayout
-                    .after(CoreSet::StateTracking),
+                    .after(CoreSet::StyleResolution),
                 CoreSet::ManageCursorVisual
-                    .after(CoreSet::StateTracking),
+                    .after(CoreSet::StyleResolution),
 
                 // Phase 3: The cursor's visual transform can only be updated *after* the
                 // layout has been calculated AND the visual entity has been spawned.
@@ -184,6 +192,10 @@ impl Plugin for GuiFrameworkCorePlugin {
                 focus_detection_system.in_set(CoreSet::StateTracking),
                 drag_detection_system.in_set(CoreSet::StateTracking),
                 interaction_state_debug_system.in_set(CoreSet::StateTracking),
+                // Style resolution systems
+                style_resolution_system.in_set(CoreSet::StyleResolution),
+                apply_resolved_styles_system.in_set(CoreSet::StyleResolution),
+                style_resolution_debug_system.in_set(CoreSet::StyleResolution),
             ));
 
             // == Last Schedule Systems (This part is correct and remains unchanged) ==

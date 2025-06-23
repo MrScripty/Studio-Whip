@@ -35,6 +35,16 @@ position = [300.0, 150.0, -1.0]  # Original Bevy coordinates for testing
 [root.children.style]
 background_color = { r = 255, g = 152, b = 0, a = 1.0 }  # Orange color from main.rs
 
+# State-based styling for triangle
+[root.children.style.states]
+[root.children.style.states.hover]
+background_color = { r = 255, g = 200, b = 100, a = 1.0 }  # Lighter orange on hover
+opacity = 0.9
+
+[root.children.style.states.pressed]
+background_color = { r = 200, g = 100, b = 0, a = 1.0 }  # Darker orange when pressed
+opacity = 0.8
+
 [root.children.behavior]
 visible = true
 interactive = true
@@ -58,6 +68,16 @@ position = [125.0, 75.0, -2.0]  # Original Bevy coordinates for testing
 
 [root.children.style]
 background_color = { r = 66, g = 201, b = 34, a = 1.0 }  # Green color from main.rs
+
+# State-based styling for square
+[root.children.style.states]
+[root.children.style.states.hover]
+background_color = { r = 100, g = 255, b = 100, a = 1.0 }  # Lighter green on hover
+opacity = 0.9
+
+[root.children.style.states.pressed]
+background_color = { r = 30, g = 150, b = 10, a = 1.0 }  # Darker green when pressed
+opacity = 0.8
 
 [root.children.behavior]
 visible = true
@@ -84,6 +104,15 @@ position = [50.0, 50.0, -2.0]  # Testing if text coordinates are inverted
 text_color = "#3182CE"
 text_size = 24.0  # Size from main.rs
 background_color = { r = 0, g = 0, b = 0, a = 0.0 }  # Transparent background
+
+# State-based styling for text
+[root.children.style.states]
+[root.children.style.states.focused]
+background_color = { r = 200, g = 220, b = 255, a = 0.3 }  # Light blue background when focused
+text_color = "#1A365D"  # Darker blue text when focused
+
+[root.children.style.states.hover]
+text_color = "#2B6CB0"  # Slightly lighter blue on hover
 
 [root.children.behavior]
 visible = true

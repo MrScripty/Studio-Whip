@@ -1,11 +1,11 @@
 use bevy_ecs::prelude::*;
 use bevy_asset::{Assets, AssetServer, Handle};
 use bevy_log::{info, error};
+use bevy_hierarchy::BuildChildren;
+use bevy_math::Vec3;
 use std::collections::HashMap;
 use crate::assets::{UiDefinition, LoadUiRequest};
-use crate::widgets::{
-    systems::spawn_widget_recursive,
-};
+use crate::widgets::systems;
 use crate::YrsDocResource;
 
 /// Resource to track loading UI assets
@@ -38,6 +38,7 @@ pub fn ui_asset_loaded_system(
     mut loading_assets: ResMut<LoadingUiAssets>,
     ui_assets: Res<Assets<UiDefinition>>,
     yrs_res: Res<YrsDocResource>,
+    window_query: Query<&bevy_window::Window, With<bevy_window::PrimaryWindow>>,
 ) {
     let mut completed_loads = Vec::new();
     
@@ -46,8 +47,13 @@ pub fn ui_asset_loaded_system(
         if let Some(ui_definition) = ui_assets.get(handle) {
             info!("UI asset loaded successfully: {}", request.asset_path);
             
+            // Get window height for coordinate conversion
+            let window_height = window_query.get_single()
+                .map(|window| window.height())
+                .unwrap_or(300.0); // Default fallback
+            
             // Spawn the UI definition
-            spawn_ui_definition(&mut commands, ui_definition, request, &yrs_res);
+            spawn_ui_definition(&mut commands, ui_definition, request, &yrs_res, window_height);
             
             // Mark this load as completed
             completed_loads.push(handle.clone());
@@ -66,8 +72,12 @@ fn spawn_ui_definition(
     ui_definition: &UiDefinition,
     request: &LoadUiRequest,
     yrs_res: &YrsDocResource,
+    window_height: f32,
 ) {
-    info!("Spawning UI definition from: {}", request.asset_path);
+    info!("🎯 Spawning UI definition from: {}", request.asset_path);
+    info!("   Window height for coordinate conversion: {}", window_height);
+    info!("   Root widget type: {:?}", ui_definition.root.widget_type);
+    info!("   Root widget has {} children", ui_definition.root.children.len());
     
     // Spawn the root widget and its hierarchy
     let widget_entity = spawn_widget_from_node(
@@ -75,6 +85,8 @@ fn spawn_ui_definition(
         &ui_definition.root,
         yrs_res,
         request.parent,
+        window_height,
+        None,  // Root widget has no parent position
     );
     
     // Apply position override if specified
@@ -84,51 +96,108 @@ fn spawn_ui_definition(
         }
     }
     
-    info!("Successfully spawned UI definition from: {}", request.asset_path);
+    info!("✅ Successfully spawned UI definition root entity: {:?}", widget_entity);
 }
 
-/// Spawn a widget from a WidgetNode (hierarchical format)
+/// Spawn a widget from a WidgetNode using unified architecture
 fn spawn_widget_from_node(
     commands: &mut Commands,
     node: &crate::assets::definitions::WidgetNode,
     yrs_res: &YrsDocResource,
     parent: Option<Entity>,
+    window_height: f32,
+    parent_position: Option<Vec3>,
 ) -> Entity {
-    // Convert WidgetNode to WidgetBlueprint for the existing spawn system
-    let widget_blueprint = crate::widgets::blueprint::WidgetBlueprint {
-        id: node.id.clone().unwrap_or_else(|| "unnamed".to_string()),
-        widget_type: node.widget_type.clone(),
-        layout: node.layout.clone(),
-        style: node.style.clone(),
-        behavior: node.behavior.clone(),
-        children: node.children.iter().enumerate().map(|(i, _)| format!("child_{}", i)).collect(),
-    };
+    use crate::widgets::templates::expand_template_node;
     
-    // Create a temporary collection for compatibility
-    let temp_collection = crate::widgets::blueprint::WidgetCollection {
-        widgets: std::collections::HashMap::new(),
-        root: Some(widget_blueprint.id.clone()),
-    };
+    let widget_id = node.id.clone().unwrap_or_else(|| "unnamed".to_string());
+    info!("🔍 Processing widget node '{}' with type: {:?}", widget_id, node.widget_type);
+    info!("   Layout: position={:?}, size={:?}", node.layout.position, node.layout.size);
+    info!("   Style: bg_color={:?}", node.style.background_color);
+    info!("   Behavior: visible={:?}, clickable={:?}, z_index={:?}", 
+        node.behavior.visible, node.behavior.clickable, node.behavior.z_index);
     
-    // Spawn the widget
-    let entity = spawn_widget_recursive(
-        commands,
-        &widget_blueprint,
-        &temp_collection,
-        yrs_res,
-        parent,
-    );
+    // Check if this is a template widget and expand it directly
+    let expanded_nodes = expand_template_node(node);
+    
+    let entity = if expanded_nodes.len() > 1 {
+        // Template widget - spawn hierarchy from expansion
+        info!("🎯 Widget '{}' is a template widget, expanding into {} components", widget_id, expanded_nodes.len());
+        let shape_node = &expanded_nodes[0];
+        let text_node = &expanded_nodes[1];
+        
+        info!("   📦 Shape node: id={:?}, size={:?}, bg_color={:?}", 
+            shape_node.id, shape_node.layout.size, shape_node.style.background_color);
+        info!("   📝 Text node: id={:?}, content={:?}, color={:?}", 
+            text_node.id, 
+            if let crate::widgets::blueprint::WidgetType::Text { content, .. } = &text_node.widget_type { 
+                Some(content) 
+            } else { 
+                None 
+            },
+            text_node.style.text_color);
+        
+        // Debug position calculation
+        info!("   🎯 Original button position: {:?}", node.layout.position);
+        info!("   🎯 Shape node position after expansion: {:?}", shape_node.layout.position);
+        
+        // Spawn shape entity (background)
+        let shape_entity = systems::spawn_widget_entity_from_node(commands, shape_node, yrs_res, window_height, None, None);
+        info!("   ✓ Shape entity created: {:?}", shape_entity);
+        
+        // Spawn text entity (label)
+        let text_entity = systems::spawn_widget_entity_from_node(commands, text_node, yrs_res, window_height, Some(shape_entity), Some(shape_node.layout.position.unwrap_or(Vec3::ZERO)));
+        info!("   ✓ Text entity created: {:?}", text_entity);
+        
+        // Set up parent-child relationship for widget hierarchy
+        commands.entity(shape_entity).insert(crate::widgets::components::WidgetHierarchy {
+            parent,
+            children: vec![text_entity],
+        });
+        
+        commands.entity(text_entity).insert(crate::widgets::components::WidgetHierarchy {
+            parent: Some(shape_entity),
+            children: vec![],
+        });
+        
+        // Set up Bevy's built-in parent-child relationship for Transform inheritance
+        commands.entity(text_entity).set_parent(shape_entity);
+        
+        info!("✓ Created template widget hierarchy: shape={:?}, text={:?}", shape_entity, text_entity);
+        shape_entity
+    } else {
+        // Regular widget - spawn directly
+        let entity = systems::spawn_widget_entity_from_node(commands, node, yrs_res, window_height, parent, parent_position);
+        
+        // Set up hierarchy for children
+        let mut child_entities = Vec::new();
+        for child_node in &node.children {
+            let child_entity = spawn_widget_from_node(commands, child_node, yrs_res, Some(entity), window_height, node.layout.position);
+            child_entities.push(child_entity);
+            
+            // Only set up Bevy's parent-child relationship if the child doesn't use Manual positioning
+            // Manual positioned widgets should not inherit transforms from layout-positioned parents
+            let child_position_control = child_node.behavior.position_control.clone().unwrap_or(crate::layout::PositionControl::Layout);
+            if !child_position_control.is_manual() {
+                commands.entity(entity).add_child(child_entity);
+            } else {
+                bevy_log::info!("🔓 Skipping parent-child relationship for Manual positioned widget '{:?}' to prevent transform inheritance", child_node.id);
+            }
+        }
+        
+        commands.entity(entity).insert(crate::widgets::components::WidgetHierarchy {
+            parent,
+            children: child_entities,
+        });
+        
+        entity
+    };
     
     // Add action bindings if they exist
     if let Some(ref bindings) = node.bindings {
         commands.entity(entity).insert(crate::widgets::components::WidgetActionBindings {
             bindings: bindings.clone(),
         });
-    }
-    
-    // Recursively spawn children
-    for child_node in &node.children {
-        spawn_widget_from_node(commands, child_node, yrs_res, Some(entity));
     }
     
     entity

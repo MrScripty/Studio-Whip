@@ -382,8 +382,10 @@ impl UiDefinition {
     fn validate_widget_type(&self, widget_type: &WidgetType) -> Result<(), UiDefinitionError> {
         match widget_type {
             WidgetType::Button { text, .. } => {
-                if text.is_empty() {
-                    return Err(UiDefinitionError::Validation("Button text cannot be empty".to_string()));
+                if let Some(text) = text {
+                    if text.is_empty() {
+                        return Err(UiDefinitionError::Validation("Button text cannot be empty".to_string()));
+                    }
                 }
             }
             WidgetType::Text { content, .. } => {

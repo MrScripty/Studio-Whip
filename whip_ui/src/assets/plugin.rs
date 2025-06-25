@@ -40,6 +40,15 @@ impl Plugin for UiAssetPlugin {
             ).chain(), // Run in order: request -> loaded -> error handling
         );
         
+        // Add debug systems
+        app.add_systems(
+            Update, 
+            (
+                crate::widgets::systems::debug_shape_visibility_system,
+                crate::widgets::systems::debug_red_rectangle_position_system,
+            )
+        );
+        
         bevy_log::info!("UiAssetPlugin initialized");
     }
 }

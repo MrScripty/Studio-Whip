@@ -1,0 +1,53 @@
+# Simple button test without template expansion
+[window]
+size = [600.0, 300.0]
+background_color = { r = 33, g = 41, b = 42, a = 1.0 }
+
+[root]
+id = "main_container"
+widget_type = { type = "Container", direction = "Column" }
+
+[root.layout]
+size = [600.0, 300.0]
+position = [0.0, 0.0, 0.0]
+
+[root.style]
+background_color = { r = 33, g = 41, b = 42, a = 0.0 }
+
+[root.behavior]
+visible = true
+
+# Simple shape to test button background
+[[root.children]]
+id = "button_shape"
+widget_type = { type = "Shape", shape_type = "Rectangle" }
+
+[root.children.layout]
+size = [120.0, 40.0]
+position = [100.0, 100.0, 1.0]
+
+[root.children.style]
+background_color = { r = 0, g = 255, b = 0, a = 1.0 }  # Green
+
+[root.children.behavior]
+visible = true
+clickable = true
+z_index = 1
+
+# Simple text to test button label (positioned manually on the shape)
+[[root.children]]
+id = "button_text"
+widget_type = { type = "Text", content = "Save File", editable = false }
+
+[root.children.layout]
+size = [120.0, 40.0]
+position = [100.0, 100.0, 2.0]  # Same X/Y as shape, higher Z
+
+[root.children.style]
+text_color = { r = 255, g = 255, b = 255, a = 1.0 }  # White
+text_size = 16.0
+
+[root.children.behavior]
+visible = true
+clickable = false
+z_index = 2

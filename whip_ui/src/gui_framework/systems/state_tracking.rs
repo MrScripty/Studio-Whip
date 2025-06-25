@@ -5,7 +5,7 @@ use crate::gui_framework::components::{InteractionState, InteractionStateChanged
 /// System that tracks changes to interaction states and fires events
 pub fn interaction_state_tracking_system(
     state_query: Query<(Entity, &InteractionState), With<Interaction>>,
-    mut state_change_events: EventWriter<InteractionStateChanged>,
+    _state_change_events: EventWriter<InteractionStateChanged>,
 ) {
     // In a full implementation, this would track actual state changes
     // For now, this is a framework placeholder for when actual state change detection is added

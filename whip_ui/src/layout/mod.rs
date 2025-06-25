@@ -1,15 +1,18 @@
 use bevy_ecs::prelude::*;
 use bevy_hierarchy::{Children, Parent};
 use bevy_transform::prelude::Transform;
+use bevy_math::Vec3;
 use bevy_window;
 use std::sync::Mutex;
 use taffy::{TaffyTree, Style, NodeId};
 
 pub mod plugin;
 pub mod position_control;
+pub mod coordinate_system;
 
 pub use plugin::TaffyLayoutPlugin;
 pub use position_control::{PositionControl, LayoutPositioned};
+pub use coordinate_system::{TomlCoords, BevyCoords, TaffyCoords, VulkanCoords, create_ui_transform, update_ui_transform};
 
 /// Core UI node component that marks an entity as part of the layout system
 #[derive(Component, Debug)]
@@ -139,33 +142,69 @@ pub fn build_taffy_tree_system(
         if window_root.node_id.is_none() {
             if let Ok(window) = window_query.get_single() {
                 let window_style = taffy::Style {
+                    position: taffy::Position::Relative,
+                    display: taffy::Display::Grid,            // Use Grid container for proper alignment
                     size: taffy::Size {
                         width: taffy::Dimension::Length(window.width()),
                         height: taffy::Dimension::Length(window.height()),
                     },
+                    // Create a 10x10 grid to allow flexible positioning
+                    grid_template_columns: vec![
+                        taffy::TrackSizingFunction::Single(taffy::MinMax {
+                            min: taffy::MinTrackSizingFunction::Auto,
+                            max: taffy::MaxTrackSizingFunction::Fraction(1.0),
+                        }); 10
+                    ],
+                    grid_template_rows: vec![
+                        taffy::TrackSizingFunction::Single(taffy::MinMax {
+                            min: taffy::MinTrackSizingFunction::Auto,
+                            max: taffy::MaxTrackSizingFunction::Fraction(1.0),
+                        }); 10
+                    ],
+                    // Align items to start (top-left) by default
+                    align_items: Some(taffy::AlignItems::Start),
+                    justify_items: Some(taffy::JustifyItems::Start),
+                    // No margins or padding on the container itself
+                    margin: taffy::Rect::zero(),
+                    padding: taffy::Rect::zero(),
                     ..Default::default()
                 };
                 
-                let root_node = tree.new_leaf(window_style).unwrap();
+                // Use new_with_children instead of new_leaf to create a proper container
+                let root_node = tree.new_with_children(window_style, &[]).unwrap();
                 window_root.node_id = Some(root_node);
                 window_root.update_size(window.width(), window.height());
-                bevy_log::debug!("Created window root container: {}x{}", window.width(), window.height());
+                bevy_log::info!("Created window root grid container: {}x{} (Display::Grid, align/justify: End)", 
+                    window.width(), window.height());
             }
         }
         
-        // Process newly added UI nodes
+        // Process newly added UI nodes - REVERT TO ORIGINAL: Add all to window root for now
         for (entity, mut ui_node, styleable) in ui_node_query.iter_mut() {
             if let Some(root_node) = window_root.node_id {
+                let is_red_rect = entity.index() == 8; // Based on logs showing 8v1#4294967304
+                
+                if is_red_rect {
+                    bevy_log::info!("🔴 RED RECTANGLE TAFFY TREE SETUP:");
+                    bevy_log::info!("   Entity: {:?}", entity);
+                    bevy_log::info!("   Taffy style being applied: {:?}", styleable.0);
+                }
+                
                 // Create a new Taffy node for this entity
                 let taffy_node = tree.new_leaf(styleable.0.clone()).unwrap();
                 
-                // Add this node as a child of the window root
+                // Add this node as a child of the window root (original behavior)
                 tree.add_child(root_node, taffy_node).unwrap();
                 
                 ui_node.taffy_node = Some(taffy_node);
                 ui_node.needs_layout = true;
                 
-                bevy_log::debug!("Created Taffy node for entity {:?} as child of window root", entity);
+                if is_red_rect {
+                    bevy_log::info!("   Created Taffy node: {:?}", taffy_node);
+                    bevy_log::info!("   Added as child of window root: {:?}", root_node);
+                } else {
+                    bevy_log::debug!("Created Taffy node for entity {:?} as child of window root", entity);
+                }
             }
         }
     });
@@ -236,10 +275,30 @@ pub fn window_root_resize_system(
                 if let Some(root_node) = window_root.node_id {
                     taffy_resource.with_tree(|tree| {
                         let new_style = taffy::Style {
+                            position: taffy::Position::Relative,
+                            display: taffy::Display::Grid,             // Maintain grid layout
                             size: taffy::Size {
                                 width: taffy::Dimension::Length(event.width),
                                 height: taffy::Dimension::Length(event.height),
                             },
+                            // Maintain 10x10 grid configuration  
+                            grid_template_columns: vec![
+                                taffy::TrackSizingFunction::Single(taffy::MinMax {
+                                    min: taffy::MinTrackSizingFunction::Auto,
+                                    max: taffy::MaxTrackSizingFunction::Fraction(1.0),
+                                }); 10
+                            ],
+                            grid_template_rows: vec![
+                                taffy::TrackSizingFunction::Single(taffy::MinMax {
+                                    min: taffy::MinTrackSizingFunction::Auto,
+                                    max: taffy::MaxTrackSizingFunction::Fraction(1.0),
+                                }); 10
+                            ],
+                            align_items: Some(taffy::AlignItems::Start),
+                            justify_items: Some(taffy::JustifyItems::Start),
+                            // No margins or padding
+                            margin: taffy::Rect::zero(),
+                            padding: taffy::Rect::zero(),
                             ..Default::default()
                         };
                         
@@ -269,8 +328,28 @@ fn apply_layout_to_entity(
 ) {
     if let Ok((_, mut ui_node, mut transform, position_control, layout_positioned)) = ui_node_query.get_mut(entity) {
         if let Ok(layout) = tree.layout(taffy_node) {
-            bevy_log::debug!("Raw Taffy layout for entity {:?}: location=({}, {}), size=({}, {})", 
-                entity, layout.location.x, layout.location.y, layout.size.width, layout.size.height);
+            // Check if this is the red rectangle for detailed logging
+            let is_red_rect = entity.index() == 8; // Based on logs showing 8v1#4294967304
+            
+            if is_red_rect {
+                bevy_log::info!("🔴 RED RECTANGLE LAYOUT DEBUG:");
+                bevy_log::info!("   Entity: {:?}", entity);
+                bevy_log::info!("   Taffy Node: {:?}", taffy_node);
+                bevy_log::info!("   Taffy layout.location: x={}, y={}", layout.location.x, layout.location.y);
+                bevy_log::info!("   Taffy layout.size: width={}, height={}", layout.size.width, layout.size.height);
+                bevy_log::info!("   Window height: {}", window_height);
+                bevy_log::info!("   Current transform.translation: {:?}", transform.translation);
+                
+                // Log the Taffy style for this node
+                if let Ok(style) = tree.style(taffy_node) {
+                    bevy_log::info!("   Taffy style.position: {:?}", style.position);
+                    bevy_log::info!("   Taffy style.inset: {:?}", style.inset);
+                    bevy_log::info!("   Taffy style.size: {:?}", style.size);
+                }
+            } else {
+                bevy_log::debug!("Raw Taffy layout for entity {:?}: location=({}, {}), size=({}, {})", 
+                    entity, layout.location.x, layout.location.y, layout.size.width, layout.size.height);
+            }
             let control = position_control.unwrap_or(&PositionControl::Layout);
             
             // Check if we should apply layout positioning
@@ -284,16 +363,56 @@ fn apply_layout_to_entity(
             };
             
             if should_position {
-                // Convert Taffy's top-left coordinate system to Bevy's bottom-left
-                let x = layout.location.x;
-                let y = window_height - layout.location.y; // Convert from top-left to bottom-left
+                // Check positioning type to determine how to handle coordinates
+                let positioning_type = if let Ok(style) = tree.style(taffy_node) {
+                    style.position
+                } else {
+                    taffy::Position::Relative // Default fallback
+                };
                 
-                // Update the transform with the computed position
-                transform.translation.x = x;
-                transform.translation.y = y;
-                
-                bevy_log::debug!("Applied layout to entity {:?}: pos=({}, {}), size=({}, {})", 
-                    entity, x, y, layout.size.width, layout.size.height);
+                match positioning_type {
+                    taffy::Position::Absolute => {
+                        // Absolute positioned elements: convert Taffy coords to Bevy coords
+                        // Taffy's layout.location is in Taffy coordinate space (top-left origin, Y down)
+                        
+                        if is_red_rect {
+                            bevy_log::warn!("🔴 ABSOLUTE POSITIONING: Taffy layout.location = ({}, {})", 
+                                layout.location.x, layout.location.y);
+                        }
+                        
+                        let taffy_coords = coordinate_system::TaffyCoords::new(layout.location.x, layout.location.y, transform.translation.z);
+                        let bevy_coords = taffy_coords.to_bevy(window_height);
+                        
+                        // Update the transform with the computed position
+                        coordinate_system::update_ui_transform(&mut transform, bevy_coords);
+                        
+                        if is_red_rect {
+                            bevy_log::info!("   🔄 ABSOLUTE COORDINATE CONVERSION:");
+                            bevy_log::info!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y);
+                            bevy_log::info!("      Window height: {}", window_height);
+                            bevy_log::info!("      Converted to Bevy coords: {:?}", bevy_coords.raw());
+                            bevy_log::info!("      Final transform.translation: {:?}", transform.translation);
+                        } else {
+                            bevy_log::debug!("Applied absolute layout to entity {:?}: Taffy pos=({}, {}) -> Bevy pos=({}, {}), size=({}, {})", 
+                                entity, layout.location.x, layout.location.y, bevy_coords.raw().x, bevy_coords.raw().y, layout.size.width, layout.size.height);
+                        }
+                    }
+                    taffy::Position::Relative => {
+                        // Grid/flex items: Use Taffy's layout position directly (no coordinate conversion)
+                        // Taffy already positions these relative to their grid cell or flex container
+                        let final_position = Vec3::new(layout.location.x, layout.location.y, transform.translation.z);
+                        transform.translation = final_position;
+                        
+                        if is_red_rect {
+                            bevy_log::info!("   📐 GRID POSITIONING (no conversion):");
+                            bevy_log::info!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y);
+                            bevy_log::info!("      Direct position: {:?}", final_position);
+                        } else {
+                            bevy_log::debug!("Applied grid layout to entity {:?}: pos=({}, {}), size=({}, {})", 
+                                entity, layout.location.x, layout.location.y, layout.size.width, layout.size.height);
+                        }
+                    }
+                }
                 
                 // Mark LayoutThenManual entities as positioned
                 if matches!(control, PositionControl::LayoutThenManual) && layout_positioned.is_none() {
@@ -331,3 +450,4 @@ pub fn update_shape_vertices_system(
         }
     }
 }
+

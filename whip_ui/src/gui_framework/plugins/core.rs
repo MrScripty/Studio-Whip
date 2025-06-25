@@ -861,10 +861,10 @@ fn text_layout_system(
         }
 
         // --- Get Text Content from YrsDocResource (using sync Transact) ---
-        // Explicitly get the Arc<Mutex<HashMap>> before locking
+        // All text uses YRS for network sync, regardless of editability
         let text_map_arc: &Arc<Mutex<HashMap<Entity, TextRef>>> = &yrs_doc_res.text_map;
         let text_map_guard = text_map_arc.lock().expect("Failed to lock text_map mutex");
-        let text_content = match text_map_guard.get(&entity) { // Call .get() on the MutexGuard
+        let text_content = match text_map_guard.get(&entity) {
             Some(yrs_text_handle) => {
                 // Access the Arc<Doc> within the resource and use synchronous Transact
                 let txn = yrs_doc_res.doc.transact();
@@ -1024,6 +1024,9 @@ fn rendering_system(
     shape_change_query: Query<Entity, (With<Visibility>, Changed<ShapeData>)>,
     // Query for text entities that have layout output ready
     text_layout_query: Query<(Entity, &GlobalTransform, &TextLayoutOutput, &Visibility)>, // Query layout output
+    
+    // Add frame counter for periodic logging
+    mut frame_count: Local<u32>,
 ) {
     // Ensure essential non-text resources are available
     let (
@@ -1036,10 +1039,25 @@ fn rendering_system(
         return;
     };
 
+    *frame_count += 1;
+    let should_log = *frame_count <= 5 || *frame_count % 120 == 0; // Log first 5 frames, then every 2 seconds
+    
     // --- Collect Shape Render Data ---
     let changed_shape_entities: HashSet<Entity> = shape_change_query.iter().collect();
     let mut shape_render_commands: Vec<RenderCommandData> = Vec::new();
+    
+    // Debug: Log all entities with ShapeData for troubleshooting (reduced frequency)
+    let all_shape_entities: Vec<_> = shape_query.iter().collect();
+    if should_log {
+        info!("[rendering_system] Frame {}: Found {} entities with ShapeData+GlobalTransform", *frame_count, all_shape_entities.len());
+    }
+    
     for (entity, global_transform, shape, visibility) in shape_query.iter() {
+        if should_log {
+            info!("   Shape Entity {:?}: visible={}, pos={:?}, vertices={}", 
+                entity, visibility.is_visible(), global_transform.translation(), shape.vertices.len());
+        }
+            
         if visibility.is_visible() {
             let vertices_changed = changed_shape_entities.contains(&entity);
             shape_render_commands.push(RenderCommandData {
@@ -1050,6 +1068,15 @@ fn rendering_system(
                 depth: global_transform.translation().z,
                 vertices_changed,
             });
+        }
+    }
+    
+    if should_log {
+        info!("[rendering_system] Collected {} visible shapes for rendering", shape_render_commands.len());
+        
+        // Log a warning if no widgets are being rendered after startup
+        if *frame_count > 60 && shape_render_commands.len() <= 1 {
+            warn!("[rendering_system] Only {} shape(s) rendering after frame {} - widgets may be missing components", shape_render_commands.len(), *frame_count);
         }
     }
     // Sort shapes by depth (optional, but good practice)

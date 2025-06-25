@@ -93,7 +93,18 @@ impl Plugin for WhipUiPlugin {
 
         // Add systems
         app.add_systems(Startup, (setup_initial_scene, load_root_layout))
-           .add_systems(Update, (apply_window_config_from_asset, background_resize_system));
+           .add_systems(Update, (
+               apply_window_config_from_asset, 
+               background_resize_system,
+               crate::widgets::systems::debug_shape_visibility_system,
+           ));
+
+        #[cfg(debug_assertions)]
+        app.add_systems(Update, (
+            crate::widgets::systems::debug_widget_spawning_system,
+            crate::widgets::systems::debug_entity_components_system,
+            crate::widgets::systems::runtime_ui_verification_system,
+        ));
 
         info!("WhipUiPlugin initialized successfully");
     }

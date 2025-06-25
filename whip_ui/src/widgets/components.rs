@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::*;
-use bevy_math::{Vec2, Vec3};
+use bevy_math::Vec2;
 use std::collections::HashMap;
 use crate::widgets::blueprint::{WidgetBlueprint, LayoutConfig, StyleConfig, BehaviorConfig};
+use crate::layout::coordinate_system::{TomlCoords, BevyCoords};
 
 /// Component that marks an entity as a widget with its blueprint
 #[derive(Component, Debug, Clone)]
@@ -20,14 +21,14 @@ pub struct WidgetHierarchy {
 /// Component for widget layout properties (derived from blueprint)
 #[derive(Component, Debug, Clone)]
 pub struct WidgetLayout {
-    pub position: Option<Vec3>,
+    pub position: Option<TomlCoords>, // Original position from TOML
     pub size: Option<Vec2>,
     pub margin: Option<(f32, f32, f32, f32)>, // top, right, bottom, left
     pub padding: Option<(f32, f32, f32, f32)>,
     pub flex_grow: Option<f32>,
     pub flex_shrink: Option<f32>,
-    pub computed_position: Vec3, // Final computed position
-    pub computed_size: Vec2,     // Final computed size
+    pub computed_position: BevyCoords, // Final computed position in Bevy coordinates
+    pub computed_size: Vec2,           // Final computed size
 }
 
 /// Component for widget styling (derived from blueprint)
@@ -108,14 +109,24 @@ impl From<&LayoutConfig> for WidgetLayout {
         let margin = config.margin.as_ref().map(|s| (s.top, s.right, s.bottom, s.left));
         let padding = config.padding.as_ref().map(|s| (s.top, s.right, s.bottom, s.left));
         
+        // Convert Vec3 position to TomlCoords if present
+        let toml_position = config.position.map(|pos| TomlCoords::from(pos));
+        
+        // For computed_position, we need to convert to Bevy coordinates
+        // This will be properly set by the layout system with window height
+        let computed_position = match config.position {
+            Some(pos) => BevyCoords::from(pos), // Temporary - layout system will fix this
+            None => BevyCoords::new(0.0, 0.0, 0.0),
+        };
+        
         Self {
-            position: config.position,
+            position: toml_position,
             size: config.size,
             margin,
             padding,
             flex_grow: config.flex_grow,
             flex_shrink: config.flex_shrink,
-            computed_position: config.position.unwrap_or(Vec3::ZERO),
+            computed_position,
             computed_size: config.size.unwrap_or(Vec2::new(100.0, 100.0)),
         }
     }

@@ -17,15 +17,13 @@ pub struct WidgetBlueprint {
 }
 
 /// Types of widgets supported by the framework
+/// Includes both primitives and templates
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum WidgetType {
+    // Primitive widgets
     Container {
         direction: FlexDirection,
-    },
-    Button {
-        text: String,
-        action: Option<String>,
     },
     Text {
         content: String,
@@ -37,6 +35,31 @@ pub enum WidgetType {
     Custom {
         component: String,
         properties: HashMap<String, toml::Value>,
+    },
+    // Template widgets
+    Button {
+        /// Override default text content
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        /// Override default background color
+        #[serde(skip_serializing_if = "Option::is_none")]
+        background_color: Option<ColorDef>,
+        /// Override default text color
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_color: Option<ColorDef>,
+        /// Override default size
+        #[serde(skip_serializing_if = "Option::is_none")]
+        size: Option<Vec2>,
+        /// Override default text size
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_size: Option<f32>,
+        /// Override border properties
+        #[serde(skip_serializing_if = "Option::is_none")]
+        border_width: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        border_color: Option<ColorDef>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        border_radius: Option<f32>,
     },
 }
 
@@ -50,6 +73,10 @@ pub struct LayoutConfig {
     pub flex_grow: Option<f32>,
     pub flex_shrink: Option<f32>,
     pub align_self: Option<AlignSelf>,
+    /// Grid row placement (1-based, like CSS Grid)
+    pub grid_row: Option<u16>,
+    /// Grid column placement (1-based, like CSS Grid)
+    pub grid_column: Option<u16>,
 }
 
 /// Style configuration for widgets  
@@ -150,13 +177,107 @@ pub enum AlignSelf {
 }
 
 /// Color definition that supports multiple formats
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ColorDef {
     Hex(String),        // "#FF0000"
     Rgb { r: u8, g: u8, b: u8 },
     Rgba { r: u8, g: u8, b: u8, a: f32 },
     Named(String),      // "red", "blue", etc.
+}
+
+impl<'de> serde::Deserialize<'de> for ColorDef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+        
+        struct ColorDefVisitor;
+        
+        impl<'de> Visitor<'de> for ColorDefVisitor {
+            type Value = ColorDef;
+            
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a color definition (hex string, named color, or RGB/RGBA object)")
+            }
+            
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                // Check if it's a hex color (starts with #)
+                if value.starts_with('#') {
+                    Ok(ColorDef::Hex(value.to_string()))
+                } else {
+                    // Otherwise treat as named color
+                    Ok(ColorDef::Named(value.to_string()))
+                }
+            }
+            
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut r = None;
+                let mut g = None;
+                let mut b = None;
+                let mut a = None;
+                
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "r" => r = Some(map.next_value()?),
+                        "g" => g = Some(map.next_value()?),
+                        "b" => b = Some(map.next_value()?),
+                        "a" => a = Some(map.next_value()?),
+                        _ => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                
+                let r = r.ok_or_else(|| de::Error::missing_field("r"))?;
+                let g = g.ok_or_else(|| de::Error::missing_field("g"))?;
+                let b = b.ok_or_else(|| de::Error::missing_field("b"))?;
+                
+                if let Some(a) = a {
+                    Ok(ColorDef::Rgba { r, g, b, a })
+                } else {
+                    Ok(ColorDef::Rgb { r, g, b })
+                }
+            }
+        }
+        
+        deserializer.deserialize_any(ColorDefVisitor)
+    }
+}
+
+impl serde::Serialize for ColorDef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            ColorDef::Hex(s) => serializer.serialize_str(s),
+            ColorDef::Named(s) => serializer.serialize_str(s),
+            ColorDef::Rgb { r, g, b } => {
+                use serde::ser::SerializeStruct;
+                let mut state = serializer.serialize_struct("Rgb", 3)?;
+                state.serialize_field("r", r)?;
+                state.serialize_field("g", g)?;
+                state.serialize_field("b", b)?;
+                state.end()
+            }
+            ColorDef::Rgba { r, g, b, a } => {
+                use serde::ser::SerializeStruct;
+                let mut state = serializer.serialize_struct("Rgba", 4)?;
+                state.serialize_field("r", r)?;
+                state.serialize_field("g", g)?;
+                state.serialize_field("b", b)?;
+                state.serialize_field("a", a)?;
+                state.end()
+            }
+        }
+    }
 }
 
 impl Default for LayoutConfig {
@@ -169,6 +290,8 @@ impl Default for LayoutConfig {
             flex_grow: None,
             flex_shrink: None,
             align_self: None,
+            grid_row: None,
+            grid_column: None,
         }
     }
 }

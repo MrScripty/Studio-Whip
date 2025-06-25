@@ -331,30 +331,19 @@ impl UiRegistry {
                     });
                 }
             },
-            WidgetType::Button { text, action } => {
-                // Button requires text property
-                if info.required_properties.contains(&"text".to_string()) && text.is_empty() {
-                    return Err(UiRegistryError::InvalidPropertyValue {
-                        widget_type: "Button".to_string(),
-                        property: "text".to_string(),
-                        reason: "Button text cannot be empty".to_string(),
-                    });
-                }
-                
-                // Check if action is provided when it's required
-                if info.required_properties.contains(&"action".to_string()) && action.is_none() {
-                    return Err(UiRegistryError::MissingRequiredProperty {
-                        widget_type: "Button".to_string(),
-                        property: "action".to_string(),
-                    });
-                }
-
-                // Validate action if provided
-                if let Some(action_name) = action {
-                    if !self.is_action_registered(action_name) && self.config.strict_validation && !self.config.allow_custom_actions {
-                        return Err(UiRegistryError::UnknownAction(action_name.clone()));
+            WidgetType::Button { text, .. } => {
+                // Button text validation (optional but if provided, cannot be empty)
+                if let Some(text) = text {
+                    if info.required_properties.contains(&"text".to_string()) && text.is_empty() {
+                        return Err(UiRegistryError::InvalidPropertyValue {
+                            widget_type: "Button".to_string(),
+                            property: "text".to_string(),
+                            reason: "Button text cannot be empty".to_string(),
+                        });
                     }
                 }
+                
+                // Note: Button templates handle actions via bindings, not direct action field
             },
             WidgetType::Text { content, editable: _ } => {
                 // Text validation - content length check

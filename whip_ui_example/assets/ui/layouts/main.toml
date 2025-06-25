@@ -30,7 +30,7 @@ widget_type = { type = "Shape", shape_type = "Triangle" }
 
 [root.children.layout]
 size = [50.0, 50.0]
-position = [300.0, 150.0, -1.0]  # Original Bevy coordinates for testing
+position = [300.0, 200.0, -1.0]  # Adjusted for coordinate system fix (was 150.0)
 
 [root.children.style]
 background_color = { r = 255, g = 152, b = 0, a = 1.0 }  # Orange color from main.rs
@@ -64,7 +64,7 @@ widget_type = { type = "Shape", shape_type = "Rectangle" }
 
 [root.children.layout]
 size = [50.0, 50.0]
-position = [125.0, 75.0, -2.0]  # Original Bevy coordinates for testing
+position = [125.0, 225.0, -2.0]  # Adjusted for coordinate system fix (was 75.0)
 
 [root.children.style]
 background_color = { r = 66, g = 201, b = 34, a = 1.0 }  # Green color from main.rs
@@ -99,6 +99,9 @@ widget_type = { type = "Text", content = "Hello, whip_ui!\nThis is collaborative
 [root.children.layout]
 size = [200.0, 48.0]  # Taffy layout size (dynamic text bounds calculated separately)
 position = [50.0, 50.0, -2.0]  # Testing if text coordinates are inverted
+# Grid positioning for deterministic layout
+grid_row = 2
+grid_column = 1
 
 [root.children.style]
 text_color = "#3182CE"
@@ -125,6 +128,72 @@ z_index = -2
 # Action bindings for text
 [root.children.bindings]
 click = { event = "click", action = "set_focus", params = { target_id = "sample_text" } }
+
+# Button - Template widget in bottom-right corner (COMMENTED OUT FOR DEBUGGING)
+# [[root.children]]
+# id = "save_button"
+# widget_type = { type = "Button", text = "Save File", background_color = { r = 0, g = 255, b = 0 }, text_color = { r = 255, g = 255, b = 255 } }
+# 
+# [root.children.layout]
+# size = [120.0, 40.0]  # Override default button size  
+# position = [100.0, 100.0, 1.0]  # Center-left for testing visibility (was bottom-right at 465,245)
+# 
+# [root.children.behavior]
+# visible = true
+# interactive = true
+# clickable = true
+# focusable = true
+# z_index = -1  # Above other widgets
+# 
+# # Action bindings for button
+# [root.children.bindings]
+# click = { event = "click", action = "debug", params = { message = "Save File button clicked!" } }
+
+# Test Red Rectangle - Positioned at bottom-right corner
+[[root.children]]
+id = "test_red_rect"
+widget_type = { type = "Shape", shape_type = "Rectangle" }
+
+[root.children.layout]
+size = [80.0, 60.0]
+# Use margin for positioning within the grid cell
+margin = { left = 50.0, right = 0.0, top = 0.0, bottom = 0.0 }
+# Explicit grid positioning for deterministic layout
+grid_row = 1
+grid_column = 1
+
+[root.children.style]
+background_color = { r = 255, g = 0, b = 0, a = 1.0 }  # Red background
+
+[root.children.behavior]
+visible = true
+interactive = true
+draggable = false
+clickable = true
+z_index = -1
+position_control = "Layout"
+
+# Text as child of the red rectangle (centered within parent)
+[[root.children.children]]
+id = "manual_button_text"
+widget_type = { type = "Text", content = "Save File", editable = false }
+
+[root.children.children.layout]
+size = [80.0, 60.0]  # Same size as parent
+
+[root.children.children.style]
+text_color = { r = 255, g = 255, b = 255, a = 1.0 }  # White text
+text_size = 16.0
+background_color = { r = 0, g = 0, b = 0, a = 0.0 }  # Transparent background
+
+[root.children.children.behavior]
+visible = true
+interactive = false
+draggable = false
+clickable = false
+focusable = false
+z_index = -1  # Above parent
+position_control = "Layout"
 
 # All widgets are children of the root container
 # Rendering order is determined by z_index values

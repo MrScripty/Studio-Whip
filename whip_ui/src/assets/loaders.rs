@@ -441,25 +441,20 @@ impl UiDefinitionLoader {
 
         // Validate widget-specific constraints
         match &node.widget_type {
-            WidgetType::Button { text, action } => {
-                if text.is_empty() {
-                    return Err(UiDefinitionLoaderError::WidgetTypeValidation(
-                        "Button text cannot be empty".to_string()
-                    ));
-                }
-                if text.len() > 1000 {
-                    return Err(UiDefinitionLoaderError::WidgetTypeValidation(
-                        "Button text is too long (max 1000 characters)".to_string()
-                    ));
-                }
-                // Validate action exists if specified
-                if let Some(action_name) = action {
-                    if action_name.is_empty() {
-                        return Err(UiDefinitionLoaderError::ActionValidation(
-                            "Button action name cannot be empty".to_string()
+            WidgetType::Button { text, .. } => {
+                if let Some(text) = text {
+                    if text.is_empty() {
+                        return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                            "Button text cannot be empty".to_string()
+                        ));
+                    }
+                    if text.len() > 1000 {
+                        return Err(UiDefinitionLoaderError::WidgetTypeValidation(
+                            "Button text is too long (max 1000 characters)".to_string()
                         ));
                     }
                 }
+                // Note: Button actions are now handled via action bindings
             }
             WidgetType::Text { content, editable: _ } => {
                 if content.len() > 50000 {
@@ -712,11 +707,7 @@ impl UiDefinitionLoader {
     /// Validate that referenced actions exist
     fn validate_action_references(&self, node: &WidgetNode, available_actions: &HashSet<String>) -> Result<(), UiDefinitionLoaderError> {
         // Check button actions
-        if let WidgetType::Button { action: Some(action_name), .. } = &node.widget_type {
-            if !available_actions.contains(action_name) {
-                bevy_log::warn!("Button references undefined action '{}' - this may be a built-in action", action_name);
-            }
-        }
+        // Note: Button templates no longer have action fields - actions are handled via bindings
 
         // Check action bindings
         if let Some(ref bindings) = node.bindings {
@@ -859,7 +850,7 @@ impl UiDefinitionLoader {
         let indent = "  ".repeat(depth);
         let widget_type_name = match &node.widget_type {
             WidgetType::Container { direction } => format!("Container({:?})", direction),
-            WidgetType::Button { text, action } => format!("Button('{}', action={:?})", text, action),
+            WidgetType::Button { text, .. } => format!("Button(text={:?})", text),
             WidgetType::Text { content, editable } => format!("Text('{}', editable={})", 
                 if content.len() > 20 { format!("{}...", &content[..20]) } else { content.clone() }, editable),
             WidgetType::Shape { shape_type } => format!("Shape({:?})", shape_type),
@@ -1028,10 +1019,7 @@ impl UiDefinitionLoader {
     fn collect_action_references(&self, node: &WidgetNode, references: &mut Vec<(String, String)>) {
         let widget_id = node.id.as_ref().cloned().unwrap_or_else(|| "<anonymous>".to_string());
         
-        // Check button actions
-        if let WidgetType::Button { action: Some(action_name), .. } = &node.widget_type {
-            references.push((widget_id.clone(), format!("button action '{}'", action_name)));
-        }
+        // Note: Button actions are now handled via bindings, not direct action field
         
         // Check widget bindings
         if let Some(ref bindings) = node.bindings {
@@ -1143,10 +1131,7 @@ impl UiDefinitionLoader {
 
     /// Collect used actions
     fn collect_used_actions(&self, node: &WidgetNode, used_actions: &mut HashSet<String>) {
-        // Check button actions
-        if let WidgetType::Button { action: Some(action_name), .. } = &node.widget_type {
-            used_actions.insert(action_name.clone());
-        }
+        // Note: Button actions are now handled via bindings, not direct action field
         
         // Check widget bindings
         if let Some(ref bindings) = node.bindings {

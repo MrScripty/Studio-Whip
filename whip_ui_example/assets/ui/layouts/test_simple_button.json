@@ -1,0 +1,65 @@
+{
+  "window": {
+    "size": [600.0, 300.0],
+    "background_color": { "r": 33, "g": 41, "b": 42, "a": 1.0 }
+  },
+  "root": {
+    "id": "main_container",
+    "widget_type": {
+      "type": "Container",
+      "direction": "Column"
+    },
+    "layout": {
+      "size": [600.0, 300.0],
+      "position": [0.0, 0.0, 0.0]
+    },
+    "style": {
+      "background_color": { "r": 33, "g": 41, "b": 42, "a": 0.0 }
+    },
+    "behavior": {
+      "visible": true
+    },
+    "children": [
+      {
+        "id": "button_shape",
+        "widget_type": {
+          "type": "Shape",
+          "shape_type": "Rectangle"
+        },
+        "layout": {
+          "size": [120.0, 40.0],
+          "position": [100.0, 100.0, 1.0]
+        },
+        "style": {
+          "background_color": { "r": 0, "g": 255, "b": 0, "a": 1.0 }
+        },
+        "behavior": {
+          "visible": true,
+          "clickable": true,
+          "z_index": 1
+        }
+      },
+      {
+        "id": "button_text",
+        "widget_type": {
+          "type": "Text",
+          "content": "Save File",
+          "editable": false
+        },
+        "layout": {
+          "size": [120.0, 40.0],
+          "position": [100.0, 100.0, 2.0]
+        },
+        "style": {
+          "text_color": { "r": 255, "g": 255, "b": 255, "a": 1.0 },
+          "text_size": 16.0
+        },
+        "behavior": {
+          "visible": true,
+          "clickable": false,
+          "z_index": 2
+        }
+      }
+    ]
+  }
+}

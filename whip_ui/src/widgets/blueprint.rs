@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::layout::PositionControl;
 
-/// Represents a widget definition loaded from TOML
+/// Represents a widget definition loaded from JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WidgetBlueprint {
     pub id: String,
@@ -34,7 +34,7 @@ pub enum WidgetType {
     },
     Custom {
         component: String,
-        properties: HashMap<String, toml::Value>,
+        properties: HashMap<String, serde_json::Value>,
     },
     // Template widgets
     Button {

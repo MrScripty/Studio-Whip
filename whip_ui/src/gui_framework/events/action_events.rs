@@ -9,7 +9,7 @@ pub struct ActionEvent {
     /// Entity that triggered the action
     pub source_entity: Entity,
     /// Optional parameters for the action
-    pub params: Option<HashMap<String, toml::Value>>,
+    pub params: Option<HashMap<String, serde_json::Value>>,
     /// The original UI event that triggered this action (e.g., "click", "hover")
     pub event_type: String,
 }
@@ -24,7 +24,7 @@ impl ActionEvent {
         }
     }
 
-    pub fn with_params(mut self, params: HashMap<String, toml::Value>) -> Self {
+    pub fn with_params(mut self, params: HashMap<String, serde_json::Value>) -> Self {
         self.params = Some(params);
         self
     }
@@ -53,7 +53,7 @@ impl ActionEvent {
         self.params
             .as_ref()?
             .get(key)
-            .and_then(|value| value.as_float())
+            .and_then(|value| value.as_f64())
     }
 
     /// Get an integer parameter
@@ -61,7 +61,7 @@ impl ActionEvent {
         self.params
             .as_ref()?
             .get(key)
-            .and_then(|value| value.as_integer())
+            .and_then(|value| value.as_i64())
     }
 
     /// Get a boolean parameter

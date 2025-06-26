@@ -1,0 +1,448 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://whip-ui/schema/ui-definition.json",
+  "title": "WhipUI Definition Schema",
+  "description": "Schema for WhipUI layout and widget definitions",
+  "type": "object",
+  "properties": {
+    "window": {
+      "$ref": "#/definitions/WindowConfig"
+    },
+    "root": {
+      "$ref": "#/definitions/WidgetNode"
+    },
+    "styles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/StyleOverrides"
+      }
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/ActionBinding"
+      }
+    }
+  },
+  "required": ["root"],
+  "definitions": {
+    "WindowConfig": {
+      "type": "object",
+      "properties": {
+        "size": {
+          "$ref": "#/definitions/Vec2"
+        },
+        "background_color": {
+          "$ref": "#/definitions/Color"
+        }
+      }
+    },
+    "WidgetNode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_-]*$",
+          "description": "Unique identifier for this widget"
+        },
+        "widget_type": {
+          "$ref": "#/definitions/WidgetType"
+        },
+        "layout": {
+          "$ref": "#/definitions/LayoutConfig"
+        },
+        "style": {
+          "$ref": "#/definitions/StyleConfig"
+        },
+        "behavior": {
+          "$ref": "#/definitions/BehaviorConfig"
+        },
+        "classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Style class names to apply"
+        },
+        "style_overrides": {
+          "$ref": "#/definitions/StyleOverrides"
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/ActionBinding"
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WidgetNode"
+          }
+        }
+      },
+      "required": ["widget_type"]
+    },
+    "WidgetType": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "Container"
+            },
+            "direction": {
+              "enum": ["Row", "Column", "RowReverse", "ColumnReverse"]
+            }
+          },
+          "required": ["type", "direction"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "Text"
+            },
+            "content": {
+              "type": "string",
+              "maxLength": 10000
+            },
+            "editable": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": ["type", "content"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "Shape"
+            },
+            "shape_type": {
+              "enum": ["Rectangle", "Circle", "Triangle"]
+            }
+          },
+          "required": ["type", "shape_type"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "Button"
+            },
+            "text": {
+              "type": "string"
+            },
+            "background_color": {
+              "$ref": "#/definitions/Color"
+            },
+            "text_color": {
+              "$ref": "#/definitions/Color"
+            },
+            "size": {
+              "$ref": "#/definitions/Vec2"
+            },
+            "text_size": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "border_width": {
+              "type": "number",
+              "minimum": 0
+            },
+            "border_color": {
+              "$ref": "#/definitions/Color"
+            },
+            "border_radius": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "Custom"
+            },
+            "component": {
+              "type": "string"
+            },
+            "properties": {
+              "type": "object"
+            }
+          },
+          "required": ["type", "component"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "LayoutConfig": {
+      "type": "object",
+      "properties": {
+        "position": {
+          "$ref": "#/definitions/Vec3"
+        },
+        "size": {
+          "$ref": "#/definitions/Vec2"
+        },
+        "margin": {
+          "$ref": "#/definitions/Spacing"
+        },
+        "padding": {
+          "$ref": "#/definitions/Spacing"
+        },
+        "flex_grow": {
+          "type": "number",
+          "minimum": 0
+        },
+        "flex_shrink": {
+          "type": "number",
+          "minimum": 0
+        },
+        "align_self": {
+          "enum": ["Auto", "FlexStart", "FlexEnd", "Center", "Baseline", "Stretch"]
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "StyleConfig": {
+      "type": "object",
+      "properties": {
+        "background_color": {
+          "$ref": "#/definitions/Color"
+        },
+        "border_color": {
+          "$ref": "#/definitions/Color"
+        },
+        "border_width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "border_radius": {
+          "type": "number",
+          "minimum": 0
+        },
+        "text_color": {
+          "$ref": "#/definitions/Color"
+        },
+        "text_size": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "states": {
+          "$ref": "#/definitions/StateStyles"
+        }
+      }
+    },
+    "StateStyles": {
+      "type": "object",
+      "properties": {
+        "hover": {
+          "$ref": "#/definitions/StyleOverrides"
+        },
+        "pressed": {
+          "$ref": "#/definitions/StyleOverrides"
+        },
+        "focused": {
+          "$ref": "#/definitions/StyleOverrides"
+        },
+        "disabled": {
+          "$ref": "#/definitions/StyleOverrides"
+        }
+      }
+    },
+    "StyleOverrides": {
+      "type": "object",
+      "properties": {
+        "background_color": {
+          "$ref": "#/definitions/Color"
+        },
+        "border_color": {
+          "$ref": "#/definitions/Color"
+        },
+        "border_width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "border_radius": {
+          "type": "number",
+          "minimum": 0
+        },
+        "text_color": {
+          "$ref": "#/definitions/Color"
+        },
+        "text_size": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "BehaviorConfig": {
+      "type": "object",
+      "properties": {
+        "visible": {
+          "type": "boolean"
+        },
+        "interactive": {
+          "type": "boolean"
+        },
+        "draggable": {
+          "type": "boolean"
+        },
+        "clickable": {
+          "type": "boolean"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "z_index": {
+          "type": "integer"
+        },
+        "position_control": {
+          "enum": ["Manual", "Layout"]
+        }
+      }
+    },
+    "ActionBinding": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": ["click", "hover", "focus", "blur", "change", "submit"]
+        },
+        "action": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        }
+      },
+      "required": ["event", "action"]
+    },
+    "Color": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+          "description": "Hex color (#RRGGBB or #RRGGBBAA)"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "r": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "g": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "b": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          },
+          "required": ["r", "g", "b"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "r": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "g": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "b": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "a": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": ["r", "g", "b", "a"],
+          "additionalProperties": false
+        },
+        {
+          "type": "string",
+          "enum": ["red", "green", "blue", "black", "white", "gray", "grey", "yellow", "cyan", "magenta", "orange", "transparent"]
+        }
+      ]
+    },
+    "Vec2": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "2D vector [x, y]"
+    },
+    "Vec3": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "3D vector [x, y, z]"
+    },
+    "Spacing": {
+      "type": "object",
+      "properties": {
+        "top": {
+          "type": "number"
+        },
+        "right": {
+          "type": "number"
+        },
+        "bottom": {
+          "type": "number"
+        },
+        "left": {
+          "type": "number"
+        }
+      },
+      "required": ["top", "right", "bottom", "left"]
+    }
+  }
+}

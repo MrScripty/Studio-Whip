@@ -1,25 +1,29 @@
 use super::super::*;
-use crate::widgets::blueprint::{ColorDef, FlexDirection};
+use crate::widgets::blueprint::{ColorDef, FlexDirection, WidgetType, LayoutConfig, StyleConfig, BehaviorConfig};
 use std::collections::HashMap;
 
 /// Test basic UiDefinition deserialization
 #[test]
 fn test_basic_ui_definition_parsing() {
-    let toml_str = r##"
-[root]
-widget_type = { type = "Container", direction = "Column" }
+    let json_str = r##"{
+  "root": {
+    "widget_type": {
+      "type": "Container",
+      "direction": "Column"
+    },
+    "layout": {
+      "size": [800.0, 600.0]
+    },
+    "style": {
+      "background_color": "#2D3748"
+    },
+    "behavior": {
+      "visible": true
+    }
+  }
+}"##;
 
-[root.layout]
-size = [800.0, 600.0]
-
-[root.style] 
-background_color = "#2D3748"
-
-[root.behavior]
-visible = true
-"##;
-
-    let ui_def: Result<UiDefinition, toml::de::Error> = toml::from_str(toml_str);
+    let ui_def: Result<UiDefinition, serde_json::Error> = serde_json::from_str(json_str);
     assert!(ui_def.is_ok(), "Should parse basic UI definition: {:?}", ui_def.err());
     
     let ui_def = ui_def.unwrap();

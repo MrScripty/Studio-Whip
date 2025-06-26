@@ -42,8 +42,8 @@ pub struct StateTypeInfo {
     pub type_id: String,
     /// Valid operations for this state type
     pub valid_operations: Vec<String>,
-    /// Default value serialized as TOML value
-    pub default_value: Option<toml::Value>,
+    /// Default value serialized as JSON value
+    pub default_value: Option<serde_json::Value>,
 }
 
 /// Information about a registered action
@@ -152,21 +152,21 @@ impl UiRegistry {
             display_name: "String".to_string(),
             type_id: "String".to_string(),
             valid_operations: vec!["set".to_string(), "get".to_string(), "append".to_string()],
-            default_value: Some(toml::Value::String("".to_string())),
+            default_value: Some(serde_json::Value::String("".to_string())),
         });
 
         self.register_state_type("Boolean", StateTypeInfo {
             display_name: "Boolean".to_string(),
             type_id: "bool".to_string(),
             valid_operations: vec!["set".to_string(), "get".to_string(), "toggle".to_string()],
-            default_value: Some(toml::Value::Boolean(false)),
+            default_value: Some(serde_json::Value::Bool(false)),
         });
 
         self.register_state_type("Integer", StateTypeInfo {
             display_name: "Integer".to_string(),
             type_id: "i32".to_string(),
             valid_operations: vec!["set".to_string(), "get".to_string(), "increment".to_string(), "decrement".to_string()],
-            default_value: Some(toml::Value::Integer(0)),
+            default_value: Some(serde_json::Value::Number(serde_json::Number::from(0))),
         });
 
         // Register built-in actions
@@ -543,13 +543,13 @@ impl UiRegistry {
     }
 
     /// Get default value for a state type
-    pub fn get_default_value_for_state_type(&self, state_type: &str) -> Option<toml::Value> {
+    pub fn get_default_value_for_state_type(&self, state_type: &str) -> Option<serde_json::Value> {
         self.get_state_type_info(state_type)
             .and_then(|info| info.default_value.clone())
     }
 
     /// Register a custom state type with validation
-    pub fn register_custom_state_type(&mut self, name: &str, type_id: &str, operations: Vec<String>, default_value: Option<toml::Value>) -> Result<(), UiRegistryError> {
+    pub fn register_custom_state_type(&mut self, name: &str, type_id: &str, operations: Vec<String>, default_value: Option<serde_json::Value>) -> Result<(), UiRegistryError> {
         // Validate state type name
         if name.is_empty() {
             return Err(UiRegistryError::ValidationError("State type name cannot be empty".to_string()));

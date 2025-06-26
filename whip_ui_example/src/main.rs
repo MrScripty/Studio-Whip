@@ -15,7 +15,7 @@ fn main() {
     // Build Bevy App with WhipUiPlugin - all framework setup is abstracted away
     App::new()
         .add_plugins(LogPlugin::default())
-        .add_plugins(WhipUiPlugin::new("ui/layouts/main.toml"))
+        .add_plugins(WhipUiPlugin::new("ui/layouts/main.json"))
         .run();
 }
 

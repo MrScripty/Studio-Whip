@@ -52,6 +52,7 @@ toml = { workspace = true }
 thiserror = { workspace = true }
 similar = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 [build-dependencies]
 walkdir = { workspace = true }

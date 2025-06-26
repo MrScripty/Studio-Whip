@@ -1,0 +1,201 @@
+{
+  "window": {
+    "size": [600.0, 300.0],
+    "background_color": { "r": 33, "g": 41, "b": 42, "a": 1.0 }
+  },
+  "root": {
+    "id": "main_container",
+    "widget_type": {
+      "type": "Container",
+      "direction": "Column"
+    },
+    "layout": {
+      "size": [600.0, 300.0],
+      "position": [0.0, 0.0, 0.0]
+    },
+    "style": {
+      "background_color": { "r": 33, "g": 41, "b": 42, "a": 0.0 }
+    },
+    "behavior": {
+      "visible": true,
+      "interactive": false,
+      "position_control": "Layout"
+    },
+    "children": [
+      {
+        "id": "triangle",
+        "widget_type": {
+          "type": "Shape",
+          "shape_type": "Triangle"
+        },
+        "layout": {
+          "size": [50.0, 50.0],
+          "position": [300.0, 200.0, -1.0]
+        },
+        "style": {
+          "background_color": { "r": 255, "g": 152, "b": 0, "a": 1.0 },
+          "states": {
+            "hover": {
+              "background_color": { "r": 255, "g": 200, "b": 100, "a": 1.0 },
+              "opacity": 0.9
+            },
+            "pressed": {
+              "background_color": { "r": 200, "g": 100, "b": 0, "a": 1.0 },
+              "opacity": 0.8
+            }
+          }
+        },
+        "behavior": {
+          "visible": true,
+          "interactive": true,
+          "draggable": true,
+          "clickable": true,
+          "z_index": -1,
+          "position_control": "Manual"
+        },
+        "bindings": {
+          "click": {
+            "event": "click",
+            "action": "debug",
+            "params": {
+              "message": "Triangle clicked!"
+            }
+          }
+        }
+      },
+      {
+        "id": "square",
+        "widget_type": {
+          "type": "Shape",
+          "shape_type": "Rectangle"
+        },
+        "layout": {
+          "size": [50.0, 50.0],
+          "position": [125.0, 225.0, -2.0]
+        },
+        "style": {
+          "background_color": { "r": 66, "g": 201, "b": 34, "a": 1.0 },
+          "states": {
+            "hover": {
+              "background_color": { "r": 100, "g": 255, "b": 100, "a": 1.0 },
+              "opacity": 0.9
+            },
+            "pressed": {
+              "background_color": { "r": 30, "g": 150, "b": 10, "a": 1.0 },
+              "opacity": 0.8
+            }
+          }
+        },
+        "behavior": {
+          "visible": true,
+          "interactive": true,
+          "draggable": true,
+          "clickable": true,
+          "z_index": -2,
+          "position_control": "Manual"
+        },
+        "bindings": {
+          "click": {
+            "event": "click",
+            "action": "toggle_visibility",
+            "params": {
+              "target_id": "sample_text"
+            }
+          }
+        }
+      },
+      {
+        "id": "sample_text",
+        "widget_type": {
+          "type": "Text",
+          "content": "Hello, whip_ui!\nThis is collaborative text.",
+          "editable": true
+        },
+        "layout": {
+          "size": [200.0, 48.0],
+          "position": [50.0, 50.0, -2.0],
+          "grid_row": 2,
+          "grid_column": 1
+        },
+        "style": {
+          "text_color": "#3182CE",
+          "text_size": 24.0,
+          "background_color": { "r": 0, "g": 0, "b": 0, "a": 0.0 }
+        },
+        "behavior": {
+          "visible": true,
+          "interactive": true,
+          "clickable": true,
+          "focusable": true,
+          "draggable": false,
+          "z_index": -2
+        },
+        "bindings": {
+          "click": {
+            "event": "click",
+            "action": "set_focus",
+            "params": {
+              "target_id": "sample_text"
+            }
+          }
+        }
+      },
+      {
+        "id": "test_red_rect",
+        "widget_type": {
+          "type": "Shape",
+          "shape_type": "Rectangle"
+        },
+        "layout": {
+          "size": [80.0, 60.0],
+          "margin": {
+            "left": 50.0,
+            "right": 0.0,
+            "top": 0.0,
+            "bottom": 0.0
+          },
+          "grid_row": 1,
+          "grid_column": 1
+        },
+        "style": {
+          "background_color": { "r": 255, "g": 0, "b": 0, "a": 1.0 }
+        },
+        "behavior": {
+          "visible": true,
+          "interactive": true,
+          "draggable": false,
+          "clickable": true,
+          "z_index": -1,
+          "position_control": "Layout"
+        },
+        "children": [
+          {
+            "id": "manual_button_text",
+            "widget_type": {
+              "type": "Text",
+              "content": "Save File",
+              "editable": false
+            },
+            "layout": {
+              "size": [80.0, 60.0]
+            },
+            "style": {
+              "text_color": { "r": 255, "g": 255, "b": 255, "a": 1.0 },
+              "text_size": 16.0,
+              "background_color": { "r": 0, "g": 0, "b": 0, "a": 0.0 }
+            },
+            "behavior": {
+              "visible": true,
+              "interactive": false,
+              "draggable": false,
+              "clickable": false,
+              "focusable": false,
+              "z_index": -1,
+              "position_control": "Layout"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

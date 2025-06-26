@@ -2,10 +2,9 @@ use bevy_asset::{AssetLoader, LoadContext};
 use bevy_ecs::prelude::*;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
-use serde::Deserialize;
-use crate::widgets::blueprint::{WidgetType, LayoutConfig, StyleConfig, BehaviorConfig};
+use crate::widgets::blueprint::WidgetType;
 
-use super::{WindowConfig, definitions::{UiDefinition, UiDefinitionError, WidgetNode, StyleOverrides, ActionBinding}, registry::{UiRegistry, UiRegistryError}};
+use super::{definitions::{UiDefinition, UiDefinitionError, WidgetNode, StyleOverrides}, registry::{UiRegistry, UiRegistryError}};
 
 /// Asset loader for hierarchical UI definitions
 #[derive(Default)]
@@ -16,8 +15,8 @@ pub struct UiDefinitionLoader;
 pub enum UiDefinitionLoaderError {
     #[error("Failed to read UI definition file: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Failed to parse TOML: {0}")]
-    TomlParse(#[from] toml::de::Error),
+    #[error("Failed to parse JSON: {0}")]
+    JsonParse(#[from] serde_json::Error),
     #[error("Validation failed: {0}")]
     Validation(#[from] UiDefinitionError),
     #[error("Registry validation failed: {0}")]
@@ -47,14 +46,14 @@ impl AssetLoader for UiDefinitionLoader {
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        let toml_str = std::str::from_utf8(&bytes)
+        let content_str = std::str::from_utf8(&bytes)
             .map_err(|e| UiDefinitionLoaderError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
 
-        // Parse the TOML directly into UiDefinition using serde
-        let ui_definition: UiDefinition = toml::from_str(toml_str)
+        // Parse the JSON directly into UiDefinition using serde
+        let ui_definition: UiDefinition = serde_json::from_str(content_str)
             .map_err(|e| {
-                bevy_log::error!("Failed to parse UI definition TOML: {}", e);
-                UiDefinitionLoaderError::TomlParse(e)
+                bevy_log::error!("Failed to parse UI definition JSON: {}", e);
+                UiDefinitionLoaderError::JsonParse(e)
             })?;
 
         bevy_log::info!("Successfully loaded UI definition with {} global styles and {} global actions", 
@@ -74,7 +73,7 @@ impl AssetLoader for UiDefinitionLoader {
     }
 
     fn extensions(&self) -> &[&str] {
-        &["toml"]
+        &["json"]
     }
 }
 
@@ -89,11 +88,15 @@ impl UiDefinitionLoader {
     ) -> Result<UiDefinition, UiDefinitionLoaderError> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        let toml_str = std::str::from_utf8(&bytes)
+        let content_str = std::str::from_utf8(&bytes)
             .map_err(|e| UiDefinitionLoaderError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
 
-        // Parse the TOML with error recovery
-        let ui_definition = self.parse_with_error_recovery(toml_str)?;
+        // Parse the JSON directly
+        let ui_definition: UiDefinition = serde_json::from_str(content_str)
+            .map_err(|e| {
+                bevy_log::error!("Failed to parse UI definition JSON: {}", e);
+                UiDefinitionLoaderError::JsonParse(e)
+            })?;
 
         bevy_log::info!("Successfully loaded UI definition with {} global styles and {} global actions", 
                         ui_definition.styles.as_ref().map(|s| s.len()).unwrap_or(0),
@@ -111,189 +114,11 @@ impl UiDefinitionLoader {
         Ok(ui_definition)
     }
 
-    /// Parse TOML with error recovery - attempts to parse valid parts and skip invalid nodes
-    fn parse_with_error_recovery(&self, toml_str: &str) -> Result<UiDefinition, UiDefinitionLoaderError> {
-        // First attempt: try to parse the entire TOML normally
-        match toml::from_str::<UiDefinition>(toml_str) {
-            Ok(ui_def) => {
-                bevy_log::info!("TOML parsed successfully on first attempt");
-                return Ok(ui_def);
-            }
-            Err(e) => {
-                bevy_log::warn!("Initial TOML parse failed, attempting error recovery: {}", e);
-            }
-        }
 
-        // Second attempt: parse as generic TOML value and manually construct UiDefinition
-        let toml_value: toml::Value = toml::from_str(toml_str)
-            .map_err(|e| {
-                bevy_log::error!("TOML is completely invalid: {}", e);
-                Self::create_detailed_parse_error(&e, toml_str)
-            })?;
 
-        let table = toml_value.as_table()
-            .ok_or_else(|| UiDefinitionLoaderError::InvalidConfiguration("Root must be a table".to_string()))?;
 
-        bevy_log::info!("TOML structure is valid, attempting manual parsing with error recovery");
 
-        // Parse each section with error recovery
-        let window = self.parse_window_section_safe(table.get("window"));
-        let styles = self.parse_styles_section_safe(table.get("styles"));
-        let actions = self.parse_actions_section_safe(table.get("actions"));
-        let root = self.parse_root_section_safe(table.get("root"), table)?;
 
-        let ui_definition = UiDefinition {
-            window,
-            root,
-            styles,
-            actions,
-        };
-
-        bevy_log::info!("Manual parsing with error recovery completed successfully");
-        Ok(ui_definition)
-    }
-
-    /// Parse window section with error recovery
-    fn parse_window_section_safe(&self, window_value: Option<&toml::Value>) -> Option<WindowConfig> {
-        match window_value {
-            Some(value) => {
-                match WindowConfig::deserialize(value.clone()) {
-                    Ok(config) => {
-                        bevy_log::debug!("Window configuration parsed successfully");
-                        Some(config)
-                    }
-                    Err(e) => {
-                        bevy_log::warn!("Failed to parse window configuration, using default: {}", e);
-                        Some(WindowConfig::default())
-                    }
-                }
-            }
-            None => {
-                bevy_log::debug!("No window configuration found, using default");
-                Some(WindowConfig::default())
-            }
-        }
-    }
-
-    /// Parse styles section with error recovery
-    fn parse_styles_section_safe(&self, styles_value: Option<&toml::Value>) -> Option<HashMap<String, StyleOverrides>> {
-        match styles_value {
-            Some(value) => {
-                if let Some(styles_table) = value.as_table() {
-                    let mut valid_styles = HashMap::new();
-                    let mut error_count = 0;
-
-                    for (style_name, style_value) in styles_table {
-                        match StyleOverrides::deserialize(style_value.clone()) {
-                            Ok(style_override) => {
-                                valid_styles.insert(style_name.clone(), style_override);
-                                bevy_log::debug!("Successfully parsed style: {}", style_name);
-                            }
-                            Err(e) => {
-                                error_count += 1;
-                                bevy_log::warn!("Failed to parse style '{}': {}", style_name, e);
-                            }
-                        }
-                    }
-
-                    if error_count > 0 {
-                        bevy_log::warn!("Parsed {} valid styles, skipped {} invalid styles", valid_styles.len(), error_count);
-                    }
-
-                    if valid_styles.is_empty() {
-                        None
-                    } else {
-                        Some(valid_styles)
-                    }
-                } else {
-                    bevy_log::warn!("Styles section is not a table, ignoring");
-                    None
-                }
-            }
-            None => None
-        }
-    }
-
-    /// Parse actions section with error recovery
-    fn parse_actions_section_safe(&self, actions_value: Option<&toml::Value>) -> Option<HashMap<String, ActionBinding>> {
-        match actions_value {
-            Some(value) => {
-                if let Some(actions_table) = value.as_table() {
-                    let mut valid_actions = HashMap::new();
-                    let mut error_count = 0;
-
-                    for (action_name, action_value) in actions_table {
-                        match ActionBinding::deserialize(action_value.clone()) {
-                            Ok(action_binding) => {
-                                valid_actions.insert(action_name.clone(), action_binding);
-                                bevy_log::debug!("Successfully parsed action: {}", action_name);
-                            }
-                            Err(e) => {
-                                error_count += 1;
-                                bevy_log::warn!("Failed to parse action '{}': {}", action_name, e);
-                            }
-                        }
-                    }
-
-                    if error_count > 0 {
-                        bevy_log::warn!("Parsed {} valid actions, skipped {} invalid actions", valid_actions.len(), error_count);
-                    }
-
-                    if valid_actions.is_empty() {
-                        None
-                    } else {
-                        Some(valid_actions)
-                    }
-                } else {
-                    bevy_log::warn!("Actions section is not a table, ignoring");
-                    None
-                }
-            }
-            None => None
-        }
-    }
-
-    /// Parse root section with error recovery
-    fn parse_root_section_safe(&self, root_value: Option<&toml::Value>, _table: &toml::value::Table) -> Result<WidgetNode, UiDefinitionLoaderError> {
-        match root_value {
-            Some(value) => {
-                match WidgetNode::deserialize(value.clone()) {
-                    Ok(root_node) => {
-                        bevy_log::debug!("Root widget parsed successfully");
-                        Ok(root_node)
-                    }
-                    Err(e) => {
-                        bevy_log::error!("Failed to parse root widget: {}", e);
-                        // Try to create a minimal valid root widget
-                        self.create_fallback_root_widget()
-                    }
-                }
-            }
-            None => {
-                bevy_log::warn!("No root widget found, creating fallback");
-                // Create a minimal fallback root widget
-                self.create_fallback_root_widget()
-            }
-        }
-    }
-
-    /// Create a fallback root widget when parsing fails
-    fn create_fallback_root_widget(&self) -> Result<WidgetNode, UiDefinitionLoaderError> {
-        bevy_log::warn!("Creating fallback root widget");
-        Ok(WidgetNode {
-            id: Some("fallback_root".to_string()),
-            widget_type: WidgetType::Container { 
-                direction: crate::widgets::blueprint::FlexDirection::Column 
-            },
-            layout: LayoutConfig::default(),
-            style: StyleConfig::default(),
-            behavior: BehaviorConfig::default(),
-            classes: None,
-            style_overrides: None,
-            bindings: None,
-            children: vec![],
-        })
-    }
 
     /// Comprehensive validation of the loaded UI definition with registry
     pub fn validate_with_comprehensive_checks(&self, ui_definition: &UiDefinition, registry: &UiRegistry) -> Result<(), UiDefinitionLoaderError> {
@@ -345,35 +170,6 @@ impl UiDefinitionLoader {
         Ok(())
     }
 
-    /// Create detailed parse error with context
-    fn create_detailed_parse_error(error: &toml::de::Error, toml_str: &str) -> UiDefinitionLoaderError {
-        let error_msg = if let Some(span) = error.span() {
-            let lines: Vec<&str> = toml_str.lines().collect();
-            let error_line = toml_str[..span.start].matches('\n').count();
-            let error_col = span.start - toml_str[..span.start].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
-            
-            let context_start = error_line.saturating_sub(2);
-            let context_end = (error_line + 3).min(lines.len());
-            
-            let mut context = String::new();
-            for (i, line) in lines[context_start..context_end].iter().enumerate() {
-                let line_num = context_start + i + 1;
-                if line_num - 1 == error_line {
-                    context.push_str(&format!("  > {}: {}\n", line_num, line));
-                    context.push_str(&format!("      {}{}\n", " ".repeat(error_col), "^"));
-                } else {
-                    context.push_str(&format!("    {}: {}\n", line_num, line));
-                }
-            }
-            
-            format!("Parse error at line {}, column {}: {}\n\nContext:\n{}", 
-                   error_line + 1, error_col + 1, error, context)
-        } else {
-            format!("Parse error: {}", error)
-        };
-
-        UiDefinitionLoaderError::InvalidConfiguration(error_msg)
-    }
 }
 
 /// Event to request loading and spawning a UI from a TOML asset

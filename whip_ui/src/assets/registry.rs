@@ -495,14 +495,14 @@ impl UiRegistry {
     }
 
     /// Validate a parameter value against its expected type
-    fn validate_parameter_type(&self, value: &toml::Value, expected_type: &str, param_name: &str, action_name: &str) -> Result<(), UiRegistryError> {
+    fn validate_parameter_type(&self, value: &serde_json::Value, expected_type: &str, param_name: &str, action_name: &str) -> Result<(), UiRegistryError> {
         let is_valid = match expected_type.to_lowercase().as_str() {
-            "string" => matches!(value, toml::Value::String(_)),
-            "integer" | "int" | "i32" | "i64" => matches!(value, toml::Value::Integer(_)),
-            "float" | "f32" | "f64" => matches!(value, toml::Value::Float(_)),
-            "boolean" | "bool" => matches!(value, toml::Value::Boolean(_)),
-            "array" => matches!(value, toml::Value::Array(_)),
-            "table" | "object" => matches!(value, toml::Value::Table(_)),
+            "string" => matches!(value, serde_json::Value::String(_)),
+            "integer" | "int" | "i32" | "i64" => matches!(value, serde_json::Value::Number(n) if n.is_i64()),
+            "float" | "f32" | "f64" => matches!(value, serde_json::Value::Number(n) if n.is_f64()),
+            "boolean" | "bool" => matches!(value, serde_json::Value::Bool(_)),
+            "array" => matches!(value, serde_json::Value::Array(_)),
+            "table" | "object" => matches!(value, serde_json::Value::Object(_)),
             _ => {
                 // Check if it's a registered state type
                 if self.is_state_type_registered(expected_type) {

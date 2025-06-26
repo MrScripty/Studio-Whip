@@ -85,7 +85,7 @@ pub struct ActionBinding {
     pub action: String,
     /// Optional parameters for the action
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<HashMap<String, toml::Value>>,
+    pub params: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl UiDefinition {

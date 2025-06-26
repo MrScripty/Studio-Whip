@@ -409,9 +409,9 @@ pub struct WidgetCollection {
 }
 
 impl WidgetCollection {
-    /// Load widget collection from TOML string
-    pub fn from_toml(toml_str: &str) -> Result<Self, toml::de::Error> {
-        toml::from_str(toml_str)
+    /// Load widget collection from JSON string
+    pub fn from_json(json_str: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json_str)
     }
 
     /// Get a widget blueprint by ID

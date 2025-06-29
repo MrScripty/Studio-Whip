@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 
 /// Component that tracks the current interaction state of a widget
-#[derive(Component, Debug, Clone, Default)]
+#[derive(Component, Debug, Clone, Default, Hash)]
 pub struct InteractionState {
     /// Whether the widget is currently being hovered
     pub hovered: bool,

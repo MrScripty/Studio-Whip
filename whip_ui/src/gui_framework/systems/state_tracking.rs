@@ -1,6 +1,43 @@
 use bevy_ecs::prelude::*;
-use bevy_log::debug;
+use bevy_log::{debug, trace};
+use bevy_utils::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use crate::gui_framework::components::{InteractionState, InteractionStateChanged, Interaction};
+
+/// Resource for tracking state changes and preventing duplicate logs
+#[derive(Resource, Default)]
+pub struct StateChangeTracker {
+    /// Hash of last logged state per entity
+    last_logged_states: HashMap<Entity, u64>,
+    /// Frame count to implement rate limiting  
+    frame_count: u64,
+}
+
+impl StateChangeTracker {
+    /// Check if a state change should be logged based on hash comparison
+    pub fn should_log_state_change(&mut self, entity: Entity, state: &InteractionState) -> bool {
+        let mut hasher = DefaultHasher::new();
+        state.hash(&mut hasher);
+        let current_hash = hasher.finish();
+        
+        let should_log = match self.last_logged_states.get(&entity) {
+            Some(&last_hash) if last_hash == current_hash => false, // No change, don't log
+            _ => true, // Changed or first time, should log
+        };
+        
+        if should_log {
+            self.last_logged_states.insert(entity, current_hash);
+        }
+        
+        should_log
+    }
+    
+    /// Increment frame count for rate limiting
+    pub fn next_frame(&mut self) {
+        self.frame_count = self.frame_count.wrapping_add(1);
+    }
+}
 
 /// System that tracks changes to interaction states and fires events
 pub fn interaction_state_tracking_system(
@@ -26,6 +63,7 @@ pub fn interaction_state_tracking_system(
 pub fn hover_detection_system(
     mut state_query: Query<(Entity, &mut InteractionState, &Interaction)>,
     mut state_change_events: EventWriter<InteractionStateChanged>,
+    mut tracker: ResMut<StateChangeTracker>,
     // TODO: Add cursor position and window query when integrating with input
 ) {
     for (entity, mut interaction_state, interaction) in state_query.iter_mut() {
@@ -42,7 +80,13 @@ pub fn hover_detection_system(
         let is_hovered = false; // This would be calculated from cursor position vs entity bounds
         
         if interaction_state.set_hovered(is_hovered) {
-            debug!("Hover state changed for entity {:?}: {}", entity, is_hovered);
+            #[cfg(feature = "debug_logging")]
+            if tracker.should_log_state_change(entity, &interaction_state) {
+                debug!("Hover state changed for entity {:?}: {}", entity, is_hovered);
+            }
+            
+            #[cfg(feature = "trace_logging")]
+            trace!("Hover detection processed for entity {:?}: {}", entity, is_hovered);
             
             state_change_events.send(InteractionStateChanged::new(
                 entity,
@@ -58,6 +102,7 @@ pub fn hover_detection_system(
 pub fn press_detection_system(
     mut state_query: Query<(Entity, &mut InteractionState, &Interaction)>,
     mut state_change_events: EventWriter<InteractionStateChanged>,
+    mut tracker: ResMut<StateChangeTracker>,
     // TODO: Add mouse button input when integrating with input
 ) {
     for (entity, mut interaction_state, interaction) in state_query.iter_mut() {
@@ -74,7 +119,13 @@ pub fn press_detection_system(
         let is_pressed = false; // This would be calculated from mouse button input + hover state
         
         if interaction_state.set_pressed(is_pressed) {
-            debug!("Press state changed for entity {:?}: {}", entity, is_pressed);
+            #[cfg(feature = "debug_logging")]
+            if tracker.should_log_state_change(entity, &interaction_state) {
+                debug!("Press state changed for entity {:?}: {}", entity, is_pressed);
+            }
+            
+            #[cfg(feature = "trace_logging")]
+            trace!("Press detection processed for entity {:?}: {}", entity, is_pressed);
             
             state_change_events.send(InteractionStateChanged::new(
                 entity,
@@ -90,6 +141,7 @@ pub fn press_detection_system(
 pub fn focus_detection_system(
     mut state_query: Query<(Entity, &mut InteractionState)>,
     mut state_change_events: EventWriter<InteractionStateChanged>,
+    mut tracker: ResMut<StateChangeTracker>,
     // TODO: Add focus manager resource when implementing focus system
 ) {
     for (entity, mut interaction_state) in state_query.iter_mut() {
@@ -102,7 +154,13 @@ pub fn focus_detection_system(
         let is_focused = false; // This would be calculated from focus manager state
         
         if interaction_state.set_focused(is_focused) {
-            debug!("Focus state changed for entity {:?}: {}", entity, is_focused);
+            #[cfg(feature = "debug_logging")]
+            if tracker.should_log_state_change(entity, &interaction_state) {
+                debug!("Focus state changed for entity {:?}: {}", entity, is_focused);
+            }
+            
+            #[cfg(feature = "trace_logging")]
+            trace!("Focus detection processed for entity {:?}: {}", entity, is_focused);
             
             state_change_events.send(InteractionStateChanged::new(
                 entity,
@@ -118,6 +176,7 @@ pub fn focus_detection_system(
 pub fn drag_detection_system(
     mut state_query: Query<(Entity, &mut InteractionState, &Interaction)>,
     mut state_change_events: EventWriter<InteractionStateChanged>,
+    mut tracker: ResMut<StateChangeTracker>,
     // TODO: Add mouse input and drag threshold when integrating with input
 ) {
     for (entity, mut interaction_state, interaction) in state_query.iter_mut() {
@@ -134,7 +193,13 @@ pub fn drag_detection_system(
         let is_dragged = false; // This would be calculated from mouse movement + press state
         
         if interaction_state.set_dragged(is_dragged) {
-            debug!("Drag state changed for entity {:?}: {}", entity, is_dragged);
+            #[cfg(feature = "debug_logging")]
+            if tracker.should_log_state_change(entity, &interaction_state) {
+                debug!("Drag state changed for entity {:?}: {}", entity, is_dragged);
+            }
+            
+            #[cfg(feature = "trace_logging")]
+            trace!("Drag detection processed for entity {:?}: {}", entity, is_dragged);
             
             state_change_events.send(InteractionStateChanged::new(
                 entity,
@@ -148,7 +213,9 @@ pub fn drag_detection_system(
 /// System that logs interaction state changes for debugging
 pub fn interaction_state_debug_system(
     mut state_change_events: EventReader<InteractionStateChanged>,
+    mut tracker: ResMut<StateChangeTracker>,
 ) {
+    #[cfg(feature = "debug_logging")]
     for event in state_change_events.read() {
         let changes = event.changed_states();
         if !changes.is_empty() {
@@ -158,6 +225,9 @@ pub fn interaction_state_debug_system(
             );
         }
     }
+    
+    // Update frame count for rate limiting
+    tracker.next_frame();
 }
 
 #[cfg(test)]

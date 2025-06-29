@@ -9,6 +9,7 @@ pub fn record_command_buffers(
     prepared_text_draws: &[PreparedTextDrawData],
     extent: vk::Extent2D,
 ) {
+    #[cfg(feature = "debug_logging")]
     info!("[record_command_buffers] Entered. Shape draws: {}, Text draws: {}", prepared_shape_draws.len(), prepared_text_draws.len());
 
     // --- Command Buffer Recording Loop ---
@@ -82,12 +83,14 @@ pub fn record_command_buffers(
 
         // --- Draw Text ---
         if !prepared_text_draws.is_empty() {
+            #[cfg(feature = "debug_logging")]
             info!("[record_command_buffers] Processing {} text draws.", prepared_text_draws.len());
             let text_pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing");
             let mut current_text_pipeline = vk::Pipeline::null();
 
             for (i, text_draw) in prepared_text_draws.iter().enumerate() { // Iterate with index and reference
                 if text_draw.vertex_count > 0 {
+                    #[cfg(feature = "trace_logging")]
                     info!("[record_command_buffers] Text Draw Index {}: Attempting to bind resources. VB: {:?}, Vertices: {}, DS0: {:?}, DS1: {:?}",
                         i,
                         text_draw.vertex_buffer,
@@ -97,9 +100,11 @@ pub fn record_command_buffers(
                     );
                     if text_draw.pipeline != current_text_pipeline {
                         device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, text_draw.pipeline);
+                        #[cfg(feature = "trace_logging")]
                         info!("[record_command_buffers] Text Draw Index {}: Bound NEW pipeline.", i);
                         current_text_pipeline = text_draw.pipeline;
                     } else {
+                        #[cfg(feature = "trace_logging")]
                         info!("[record_command_buffers] Text Draw Index {}: Reusing current pipeline.", i);
                     }
                     device.cmd_bind_descriptor_sets(
@@ -110,6 +115,7 @@ pub fn record_command_buffers(
                     );
                     let offsets = [0];
                     device.cmd_bind_vertex_buffers(command_buffer, 0, &[text_draw.vertex_buffer], &offsets);
+                    #[cfg(feature = "trace_logging")]
                     info!("[record_command_buffers] Text Draw Index {}: Bound vertex buffer.", i);
                     device.cmd_draw(
                         command_buffer,
@@ -118,6 +124,7 @@ pub fn record_command_buffers(
                         0, // firstVertex
                         0, // firstInstance
                     );
+                    #[cfg(feature = "trace_logging")]
                     info!("[record_command_buffers] Text Draw Index {}: Draw call executed.", i);
                 }
             }
@@ -128,5 +135,6 @@ pub fn record_command_buffers(
         // End command buffer recording
         device.end_command_buffer(command_buffer).expect("Failed to end command buffer recording");
     }
+    #[cfg(feature = "debug_logging")]
     info!("[record_command_buffers] Exited successfully.");
 }

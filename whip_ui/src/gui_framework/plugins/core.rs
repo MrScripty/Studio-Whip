@@ -37,7 +37,7 @@ use crate::gui_framework::systems::{
     interaction_state_tracking_system, hover_detection_system, press_detection_system,
     focus_detection_system, drag_detection_system, interaction_state_debug_system,
     style_resolution_system, apply_resolved_styles_system, style_resolution_debug_system,
-    StyleChanged
+    StyleChanged, StateChangeTracker
 };
 use crate::gui_framework::{
     context::vulkan_context::VulkanContext,
@@ -108,6 +108,7 @@ impl Plugin for GuiFrameworkCorePlugin {
 
         // --- Resource Registration ---
         app.init_resource::<ActionRegistry>();
+        app.init_resource::<StateChangeTracker>();
 
         // --- System Setup ---
         app

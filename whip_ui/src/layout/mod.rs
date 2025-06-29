@@ -331,23 +331,27 @@ fn apply_layout_to_entity(
             // Check if this is the red rectangle for detailed logging
             let is_red_rect = entity.index() == 8; // Based on logs showing 8v1#4294967304
             
+            #[cfg(feature = "debug_viz")]
             if is_red_rect {
-                bevy_log::info!("🔴 RED RECTANGLE LAYOUT DEBUG:");
-                bevy_log::info!("   Entity: {:?}", entity);
-                bevy_log::info!("   Taffy Node: {:?}", taffy_node);
-                bevy_log::info!("   Taffy layout.location: x={}, y={}", layout.location.x, layout.location.y);
-                bevy_log::info!("   Taffy layout.size: width={}, height={}", layout.size.width, layout.size.height);
-                bevy_log::info!("   Window height: {}", window_height);
-                bevy_log::info!("   Current transform.translation: {:?}", transform.translation);
+                bevy_log::debug!("🔴 RED RECTANGLE LAYOUT DEBUG:");
+                bevy_log::debug!("   Entity: {:?}", entity);
+                bevy_log::debug!("   Taffy Node: {:?}", taffy_node);
+                bevy_log::debug!("   Taffy layout.location: x={}, y={}", layout.location.x, layout.location.y);
+                bevy_log::debug!("   Taffy layout.size: width={}, height={}", layout.size.width, layout.size.height);
+                bevy_log::debug!("   Window height: {}", window_height);
+                bevy_log::debug!("   Current transform.translation: {:?}", transform.translation);
                 
                 // Log the Taffy style for this node
                 if let Ok(style) = tree.style(taffy_node) {
-                    bevy_log::info!("   Taffy style.position: {:?}", style.position);
-                    bevy_log::info!("   Taffy style.inset: {:?}", style.inset);
-                    bevy_log::info!("   Taffy style.size: {:?}", style.size);
+                    bevy_log::debug!("   Taffy style.position: {:?}", style.position);
+                    bevy_log::debug!("   Taffy style.inset: {:?}", style.inset);
+                    bevy_log::debug!("   Taffy style.size: {:?}", style.size);
                 }
-            } else {
-                bevy_log::debug!("Raw Taffy layout for entity {:?}: location=({}, {}), size=({}, {})", 
+            }
+            
+            #[cfg(feature = "trace_logging")]
+            if !is_red_rect {
+                bevy_log::trace!("Raw Taffy layout for entity {:?}: location=({}, {}), size=({}, {})", 
                     entity, layout.location.x, layout.location.y, layout.size.width, layout.size.height);
             }
             let control = position_control.unwrap_or(&PositionControl::Layout);
@@ -375,8 +379,9 @@ fn apply_layout_to_entity(
                         // Absolute positioned elements: convert Taffy coords to Bevy coords
                         // Taffy's layout.location is in Taffy coordinate space (top-left origin, Y down)
                         
+                        #[cfg(feature = "debug_viz")]
                         if is_red_rect {
-                            bevy_log::warn!("🔴 ABSOLUTE POSITIONING: Taffy layout.location = ({}, {})", 
+                            bevy_log::debug!("🔴 ABSOLUTE POSITIONING: Taffy layout.location = ({}, {})", 
                                 layout.location.x, layout.location.y);
                         }
                         
@@ -386,14 +391,18 @@ fn apply_layout_to_entity(
                         // Update the transform with the computed position
                         coordinate_system::update_ui_transform(&mut transform, bevy_coords);
                         
+                        #[cfg(feature = "debug_viz")]
                         if is_red_rect {
-                            bevy_log::info!("   🔄 ABSOLUTE COORDINATE CONVERSION:");
-                            bevy_log::info!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y);
-                            bevy_log::info!("      Window height: {}", window_height);
-                            bevy_log::info!("      Converted to Bevy coords: {:?}", bevy_coords.raw());
-                            bevy_log::info!("      Final transform.translation: {:?}", transform.translation);
-                        } else {
-                            bevy_log::debug!("Applied absolute layout to entity {:?}: Taffy pos=({}, {}) -> Bevy pos=({}, {}), size=({}, {})", 
+                            bevy_log::debug!("   🔄 ABSOLUTE COORDINATE CONVERSION:");
+                            bevy_log::debug!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y);
+                            bevy_log::debug!("      Window height: {}", window_height);
+                            bevy_log::debug!("      Converted to Bevy coords: {:?}", bevy_coords.raw());
+                            bevy_log::debug!("      Final transform.translation: {:?}", transform.translation);
+                        }
+                        
+                        #[cfg(feature = "trace_logging")]
+                        if !is_red_rect {
+                            bevy_log::trace!("Applied absolute layout to entity {:?}: Taffy pos=({}, {}) -> Bevy pos=({}, {}), size=({}, {})", 
                                 entity, layout.location.x, layout.location.y, bevy_coords.raw().x, bevy_coords.raw().y, layout.size.width, layout.size.height);
                         }
                     }
@@ -403,12 +412,16 @@ fn apply_layout_to_entity(
                         let final_position = Vec3::new(layout.location.x, layout.location.y, transform.translation.z);
                         transform.translation = final_position;
                         
+                        #[cfg(feature = "debug_viz")]
                         if is_red_rect {
-                            bevy_log::info!("   📐 GRID POSITIONING (no conversion):");
-                            bevy_log::info!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y);
-                            bevy_log::info!("      Direct position: {:?}", final_position);
-                        } else {
-                            bevy_log::debug!("Applied grid layout to entity {:?}: pos=({}, {}), size=({}, {})", 
+                            bevy_log::debug!("   📐 GRID POSITIONING (no conversion):");
+                            bevy_log::debug!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y);
+                            bevy_log::debug!("      Direct position: {:?}", final_position);
+                        }
+                        
+                        #[cfg(feature = "trace_logging")]
+                        if !is_red_rect {
+                            bevy_log::trace!("Applied grid layout to entity {:?}: pos=({}, {}), size=({}, {})", 
                                 entity, layout.location.x, layout.location.y, layout.size.width, layout.size.height);
                         }
                     }

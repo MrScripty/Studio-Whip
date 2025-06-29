@@ -20,6 +20,7 @@ pub struct TextRenderer {
     text_render_resources: HashMap<Entity, TextRenderData>,
     descriptor_pool: vk::DescriptorPool,
     per_entity_layout_set0: vk::DescriptorSetLayout,
+    frame_count: u32,
 }
 
 impl TextRenderer {
@@ -31,6 +32,7 @@ impl TextRenderer {
             text_render_resources: HashMap::new(),
             descriptor_pool,
             per_entity_layout_set0,
+            frame_count: 0,
         }
     }
 
@@ -44,10 +46,16 @@ impl TextRenderer {
         global_ubo_res: &GlobalProjectionUboResource,
         text_global_res: &TextRenderingResources,
     ) -> Vec<PreparedTextDrawData> {
-        info!("[TextRenderer::prepare_text_draws] Entered. text_layout_infos count: {}", text_layout_infos.len());
-        if !text_layout_infos.is_empty() {
-            let first_info = &text_layout_infos[0];
-            info!("[TextRenderer::prepare_text_draws] First entity: {:?}, glyph count: {}", first_info.entity, first_info.layout.glyphs.len());
+        self.frame_count += 1;
+        let should_log = self.frame_count <= 5 || self.frame_count % 120 == 0; // Log first 5 frames, then every 2 seconds at 60fps
+        
+        #[cfg(feature = "debug_logging")]
+        if should_log {
+            info!("[TextRenderer::prepare_text_draws] Entered. text_layout_infos count: {}", text_layout_infos.len());
+            if !text_layout_infos.is_empty() {
+                let first_info = &text_layout_infos[0];
+                info!("[TextRenderer::prepare_text_draws] First entity: {:?}, glyph count: {}", first_info.entity, first_info.layout.glyphs.len());
+            }
         }
         let mut prepared_text_draws: Vec<PreparedTextDrawData> = Vec::new();
 
@@ -57,7 +65,10 @@ impl TextRenderer {
             }
 
             let entity = layout_info.entity;
-            info!("[TextRenderer::prepare_text_draws] Processing entity: {:?}, visibility: {}", entity, layout_info.visibility.0);
+            #[cfg(feature = "trace_logging")]
+            if should_log {
+                info!("[TextRenderer::prepare_text_draws] Processing entity: {:?}, visibility: {}", entity, layout_info.visibility.0);
+            }
             let global_transform = layout_info.transform;
             let text_layout = &layout_info.layout;
 
@@ -78,7 +89,10 @@ impl TextRenderer {
                 relative_vertices.push(TextVertex { position: tr_rel.into(), uv: [uv_max[0], uv_min[1]] });
             }
             let vertex_count = relative_vertices.len() as u32;
-            info!("[TextRenderer::prepare_text_draws] Entity: {:?}, Calculated vertex_count: {}", entity, vertex_count);
+            #[cfg(feature = "trace_logging")]
+            if should_log {
+                info!("[TextRenderer::prepare_text_draws] Entity: {:?}, Calculated vertex_count: {}", entity, vertex_count);
+            }
 
             if vertex_count == 0 {
                 if let Some(mut removed_data) = self.text_render_resources.remove(&entity) {

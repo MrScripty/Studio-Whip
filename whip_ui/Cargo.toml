@@ -54,5 +54,12 @@ similar = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[features]
+default = []
+# Debug logging features for development builds
+debug_logging = []
+trace_logging = ["debug_logging"]
+debug_viz = ["debug_logging"]
+
 [build-dependencies]
 walkdir = { workspace = true }

@@ -174,7 +174,7 @@ pub fn build_taffy_tree_system(
                 let root_node = tree.new_with_children(window_style, &[]).unwrap();
                 window_root.node_id = Some(root_node);
                 window_root.update_size(window.width(), window.height());
-                bevy_log::info!("Created window root grid container: {}x{} (Display::Grid, align/justify: End)", 
+                bevy_log::debug!("Created window root grid container: {}x{} (Display::Grid, align/justify: End)", 
                     window.width(), window.height());
             }
         }
@@ -185,9 +185,9 @@ pub fn build_taffy_tree_system(
                 let is_red_rect = entity.index() == 8; // Based on logs showing 8v1#4294967304
                 
                 if is_red_rect {
-                    bevy_log::info!("🔴 RED RECTANGLE TAFFY TREE SETUP:");
-                    bevy_log::info!("   Entity: {:?}", entity);
-                    bevy_log::info!("   Taffy style being applied: {:?}", styleable.0);
+                    bevy_log::debug!("🔴 RED RECTANGLE TAFFY TREE SETUP:");
+                    bevy_log::debug!("   Entity: {:?}", entity);
+                    bevy_log::debug!("   Taffy style being applied: {:?}", styleable.0);
                 }
                 
                 // Create a new Taffy node for this entity

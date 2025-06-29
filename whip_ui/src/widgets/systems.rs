@@ -192,7 +192,7 @@ pub fn spawn_widget_entity_from_node(
     _parent_position: Option<Vec3>,
 ) -> Entity {
     let widget_id = node.id.clone().unwrap_or_else(|| "unnamed".to_string());
-    bevy_log::info!("🏗️  Spawning entity for widget '{}'", widget_id);
+    bevy_log::debug!("🏗️  Spawning entity for widget '{}'", widget_id);
     
     let layout = WidgetLayout::from(&node.layout);
     let style = WidgetStyle::from(&node.style);
@@ -229,7 +229,7 @@ pub fn spawn_widget_entity_from_node(
     
     // Create transform using typed coordinates
     let transform = create_ui_transform(initial_bevy_position);
-    bevy_log::info!("   🎯 Entity '{}' TOML position: {:?} -> Bevy position: {:?} -> Transform: {:?}", 
+    bevy_log::debug!("   🎯 Entity '{}' TOML position: {:?} -> Bevy position: {:?} -> Transform: {:?}", 
         widget_id, node.layout.position, initial_bevy_position.raw(), transform.translation);
     let visibility = Visibility(behavior.visible);
     let interaction = Interaction {
@@ -324,7 +324,7 @@ pub fn spawn_widget_entity_from_node(
             let entity_id = entity_commands.id();
             if let Ok(mut text_map) = yrs_res.text_map.lock() {
                 text_map.insert(entity_id, text_handle);
-                bevy_log::info!("Mapped Entity {:?} to YrsText '{}' (editable: {})", entity_id, widget_id, editable);
+                bevy_log::debug!("Mapped Entity {:?} to YrsText '{}' (editable: {})", entity_id, widget_id, editable);
             } else {
                 bevy_log::error!("Failed to lock text_map mutex for entity {:?}", entity_id);
             }
@@ -344,7 +344,7 @@ pub fn spawn_widget_entity_from_node(
             
             if let Some(bg_color) = background_color {
                 entity_commands.insert(ShapeData::new(vertices, bg_color));
-                bevy_log::info!("✓ Created Shape entity '{}' with background color {:?} and size {:?}", 
+                bevy_log::debug!("✓ Created Shape entity '{}' with background color {:?} and size {:?}", 
                     widget_id, bg_color, computed_size);
             } else {
                 bevy_log::error!("✗ Shape entity '{}' has no background color - will not be visible!", widget_id);
@@ -471,7 +471,7 @@ pub fn spawn_widget_entity(
             let entity_id = entity_commands.id();
             if let Ok(mut text_map) = yrs_res.text_map.lock() {
                 text_map.insert(entity_id, text_handle);
-                bevy_log::info!("Mapped Entity {:?} to YrsText '{}' (editable: {})", entity_id, blueprint.id, editable);
+                bevy_log::debug!("Mapped Entity {:?} to YrsText '{}' (editable: {})", entity_id, blueprint.id, editable);
             } else {
                 bevy_log::error!("Failed to lock text_map mutex for entity {:?}", entity_id);
             }
@@ -705,27 +705,27 @@ pub fn widget_action_system(
     mut action_events: EventReader<WidgetActionEvent>,
 ) {
     for event in action_events.read() {
-        bevy_log::info!("Widget action: {} from entity {:?}", event.action, event.entity);
+        bevy_log::debug!("Widget action: {} from entity {:?}", event.action, event.entity);
         
         // Handle different action types
         match event.action.as_str() {
             "navigate_home" => {
-                bevy_log::info!("Navigating to home");
+                bevy_log::debug!("Navigating to home");
             }
             "open_settings" => {
-                bevy_log::info!("Opening settings");
+                bevy_log::debug!("Opening settings");
             }
             "show_widgets" => {
-                bevy_log::info!("Showing widgets panel");
+                bevy_log::debug!("Showing widgets panel");
             }
             "show_examples" => {
-                bevy_log::info!("Showing examples panel");
+                bevy_log::debug!("Showing examples panel");
             }
             "show_docs" => {
-                bevy_log::info!("Showing documentation");
+                bevy_log::debug!("Showing documentation");
             }
             _ => {
-                bevy_log::info!("Unknown action: {}", event.action);
+                bevy_log::debug!("Unknown action: {}", event.action);
             }
         }
     }
@@ -741,19 +741,19 @@ pub fn debug_shape_visibility_system(
     
     // Log every 120 frames (2 seconds at 60fps) to reduce spam
     if *frame_count % 120 == 1 {
-        bevy_log::info!("=== SHAPE VISIBILITY DEBUG (Frame {}) ===", *frame_count);
+        bevy_log::debug!("=== SHAPE VISIBILITY DEBUG (Frame {}) ===", *frame_count);
         
         let widget_count = widget_query.iter().count();
         let shape_count = shape_query.iter().count();
         
-        bevy_log::info!("All widgets found: {}", widget_count);
+        bevy_log::debug!("All widgets found: {}", widget_count);
         for (entity, widget) in widget_query.iter() {
-            bevy_log::info!("  Widget '{}' (Entity {:?})", widget.id, entity);
+            bevy_log::debug!("  Widget '{}' (Entity {:?})", widget.id, entity);
         }
         
-        bevy_log::info!("All shapes found: {}", shape_count);
+        bevy_log::debug!("All shapes found: {}", shape_count);
         for (entity, shape, transform, visibility) in shape_query.iter() {
-            bevy_log::info!(
+            bevy_log::debug!(
                 "  Shape Entity {:?}: visible={}, pos={:?}, color={:?}, vertices={}",
                 entity,
                 visibility.0,
@@ -771,7 +771,7 @@ pub fn debug_shape_visibility_system(
             bevy_log::error!("❌ ONLY BACKGROUND SHAPE FOUND after {} frames - widget shapes missing ShapeData component", *frame_count);
         }
         
-        bevy_log::info!("=== END SHAPE DEBUG ===");
+        bevy_log::debug!("=== END SHAPE DEBUG ===");
     }
 }
 
@@ -791,18 +791,18 @@ pub fn debug_red_rectangle_position_system(
             // Check if position changed
             if let Some(last_pos) = *last_position {
                 if (current_position - last_pos).length() > 0.01 {
-                    bevy_log::warn!("🔴 RED RECTANGLE POSITION CHANGED (Frame {}):", *frame_count);
-                    bevy_log::warn!("   Entity: {:?}", entity);
-                    bevy_log::warn!("   Previous position: {:?}", last_pos);
-                    bevy_log::warn!("   Current position: {:?}", current_position);
-                    bevy_log::warn!("   Delta: {:?}", current_position - last_pos);
-                    bevy_log::warn!("   Position control: {:?}", position_control);
+                    bevy_log::debug!("🔴 RED RECTANGLE POSITION CHANGED (Frame {}):", *frame_count);
+                    bevy_log::debug!("   Entity: {:?}", entity);
+                    bevy_log::debug!("   Previous position: {:?}", last_pos);
+                    bevy_log::debug!("   Current position: {:?}", current_position);
+                    bevy_log::debug!("   Delta: {:?}", current_position - last_pos);
+                    bevy_log::debug!("   Position control: {:?}", position_control);
                 }
             } else {
-                bevy_log::info!("🔴 RED RECTANGLE INITIAL POSITION (Frame {}):", *frame_count);
-                bevy_log::info!("   Entity: {:?}", entity);
-                bevy_log::info!("   Position: {:?}", current_position);
-                bevy_log::info!("   Position control: {:?}", position_control);
+                bevy_log::debug!("🔴 RED RECTANGLE INITIAL POSITION (Frame {}):", *frame_count);
+                bevy_log::debug!("   Entity: {:?}", entity);
+                bevy_log::debug!("   Position: {:?}", current_position);
+                bevy_log::debug!("   Position control: {:?}", position_control);
             }
             
             *last_position = Some(current_position);
@@ -817,7 +817,7 @@ pub fn debug_widget_spawning_system(
     widget_query: Query<(Entity, &Widget, &Transform, &WidgetLayout), Added<Widget>>,
 ) {
     for (entity, widget, transform, layout) in widget_query.iter() {
-        bevy_log::info!(
+        bevy_log::debug!(
             "🔍 Widget '{}' spawned: Entity={:?}, TOML pos={:?}, Bevy pos={:?}, computed pos={:?}",
             widget.id,
             entity,
@@ -840,7 +840,7 @@ pub fn debug_widget_spawning_system(
                     actual_bevy.raw()
                 );
             } else {
-                bevy_log::info!("✅ Coordinate conversion correct for widget '{}'", widget.id);
+                bevy_log::debug!("✅ Coordinate conversion correct for widget '{}'", widget.id);
             }
         }
     }
@@ -860,29 +860,29 @@ pub fn debug_entity_components_system(
     
     // Only log on specific frames to avoid spam
     if *frame_count == 120 || *frame_count == 300 { // 2 seconds and 5 seconds
-        bevy_log::info!("🔧 ENTITY COMPONENT DEBUG (Frame {}):", *frame_count);
+        bevy_log::debug!("🔧 ENTITY COMPONENT DEBUG (Frame {}):", *frame_count);
         
         let widget_only_count = widget_only.iter().count();
         let shape_only_count = shape_only.iter().count();  
         let widget_and_shape_count = widget_and_shape.iter().count();
         let no_global_transform_count = no_global_transform.iter().count();
         
-        bevy_log::info!("   Widget-only entities: {}", widget_only_count);
-        bevy_log::info!("   Shape-only entities: {}", shape_only_count);
-        bevy_log::info!("   Widget+Shape entities: {}", widget_and_shape_count);
-        bevy_log::info!("   Missing GlobalTransform: {}", no_global_transform_count);
+        bevy_log::debug!("   Widget-only entities: {}", widget_only_count);
+        bevy_log::debug!("   Shape-only entities: {}", shape_only_count);
+        bevy_log::debug!("   Widget+Shape entities: {}", widget_and_shape_count);
+        bevy_log::debug!("   Missing GlobalTransform: {}", no_global_transform_count);
         
         if widget_only_count > 0 {
             bevy_log::warn!("⚠️  Found {} widgets without ShapeData - these won't render as shapes", widget_only_count);
             for (i, entity) in widget_only.iter().enumerate() {
                 if i < 3 {
-                    bevy_log::info!("     Widget-only entity: {:?}", entity);
+                    bevy_log::debug!("     Widget-only entity: {:?}", entity);
                 }
             }
         }
         
         if shape_only_count > 1 { // >1 because background is shape-only
-            bevy_log::info!("   Found {} shape-only entities (including background)", shape_only_count);
+            bevy_log::debug!("   Found {} shape-only entities (including background)", shape_only_count);
         }
         
         if no_global_transform_count > 0 {
@@ -890,7 +890,7 @@ pub fn debug_entity_components_system(
         }
         
         if widget_and_shape_count > 0 {
-            bevy_log::info!("✅ Found {} entities with both Widget and ShapeData", widget_and_shape_count);
+            bevy_log::debug!("✅ Found {} entities with both Widget and ShapeData", widget_and_shape_count);
         }
     }
 }
@@ -924,12 +924,12 @@ pub fn runtime_ui_verification_system(
         let global_transform_count = global_transform_query.iter().count();
         let render_ready_count = render_ready_query.iter().count();
         
-        bevy_log::info!("🧪 RUNTIME UI VERIFICATION (Frame {}):", *frame_count);
-        bevy_log::info!("   Widget entities: {}", widget_count);
-        bevy_log::info!("   Shape entities: {}", shape_count);
-        bevy_log::info!("   Text entities: {}", text_count);
-        bevy_log::info!("   GlobalTransform entities: {}", global_transform_count);
-        bevy_log::info!("   Render-ready entities: {}", render_ready_count);
+        bevy_log::debug!("🧪 RUNTIME UI VERIFICATION (Frame {}):", *frame_count);
+        bevy_log::debug!("   Widget entities: {}", widget_count);
+        bevy_log::debug!("   Shape entities: {}", shape_count);
+        bevy_log::debug!("   Text entities: {}", text_count);
+        bevy_log::debug!("   GlobalTransform entities: {}", global_transform_count);
+        bevy_log::debug!("   Render-ready entities: {}", render_ready_count);
         
         // Expected counts (without button): main_container + triangle + square + sample_text + test_red_rect
         let expected_widgets = 5;
@@ -941,7 +941,7 @@ pub fn runtime_ui_verification_system(
         } else if widget_count < expected_widgets {
             bevy_log::warn!("⚠️  Widget count lower than expected: {} < {}", widget_count, expected_widgets);
         } else {
-            bevy_log::info!("✅ Widget count looks good: {}", widget_count);
+            bevy_log::debug!("✅ Widget count looks good: {}", widget_count);
         }
         
         if shape_count <= 1 { // Only background
@@ -949,28 +949,28 @@ pub fn runtime_ui_verification_system(
         } else if shape_count < expected_shapes + 1 { // +1 for background
             bevy_log::warn!("⚠️  Shape count lower than expected: {} < {}", shape_count, expected_shapes + 1);
         } else {
-            bevy_log::info!("✅ Shape count looks good: {}", shape_count);
+            bevy_log::debug!("✅ Shape count looks good: {}", shape_count);
         }
         
         if render_ready_count <= 1 { // Only background
             bevy_log::error!("❌ CRITICAL: Only background entity render-ready - widgets missing required components");
-            bevy_log::info!("   Required for rendering: ShapeData + GlobalTransform + Visibility");
+            bevy_log::debug!("   Required for rendering: ShapeData + GlobalTransform + Visibility");
         } else {
-            bevy_log::info!("✅ Found {} render-ready entities", render_ready_count);
+            bevy_log::debug!("✅ Found {} render-ready entities", render_ready_count);
         }
         
         // Log first few entities for debugging
-        bevy_log::info!("   Widget entities:");
+        bevy_log::debug!("   Widget entities:");
         for (i, widget_entity) in widget_query.iter().enumerate() {
             if i < 3 { // Only first 3 to avoid spam
-                bevy_log::info!("     {:?}", widget_entity);
+                bevy_log::debug!("     {:?}", widget_entity);
             }
         }
         
-        bevy_log::info!("   Shape entities:");
+        bevy_log::debug!("   Shape entities:");
         for (i, (shape_entity, _, visibility)) in shape_query.iter().enumerate() {
             if i < 5 { // Only first 5 to avoid spam
-                bevy_log::info!("     {:?} (visible: {})", shape_entity, visibility.is_visible());
+                bevy_log::debug!("     {:?} (visible: {})", shape_entity, visibility.is_visible());
             }
         }
     }

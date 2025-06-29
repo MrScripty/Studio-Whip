@@ -74,10 +74,10 @@ fn spawn_ui_definition(
     yrs_res: &YrsDocResource,
     window_height: f32,
 ) {
-    info!("🎯 Spawning UI definition from: {}", request.asset_path);
-    info!("   Window height for coordinate conversion: {}", window_height);
-    info!("   Root widget type: {:?}", ui_definition.root.widget_type);
-    info!("   Root widget has {} children", ui_definition.root.children.len());
+    bevy_log::debug!("🎯 Spawning UI definition from: {}", request.asset_path);
+    bevy_log::debug!("   Window height for coordinate conversion: {}", window_height);
+    bevy_log::debug!("   Root widget type: {:?}", ui_definition.root.widget_type);
+    bevy_log::debug!("   Root widget has {} children", ui_definition.root.children.len());
     
     // Spawn the root widget and its hierarchy
     let widget_entity = spawn_widget_from_node(
@@ -96,7 +96,7 @@ fn spawn_ui_definition(
         }
     }
     
-    info!("✅ Successfully spawned UI definition root entity: {:?}", widget_entity);
+    bevy_log::debug!("✅ Successfully spawned UI definition root entity: {:?}", widget_entity);
 }
 
 /// Spawn a widget from a WidgetNode using unified architecture
@@ -111,10 +111,10 @@ fn spawn_widget_from_node(
     use crate::widgets::templates::expand_template_node;
     
     let widget_id = node.id.clone().unwrap_or_else(|| "unnamed".to_string());
-    info!("🔍 Processing widget node '{}' with type: {:?}", widget_id, node.widget_type);
-    info!("   Layout: position={:?}, size={:?}", node.layout.position, node.layout.size);
-    info!("   Style: bg_color={:?}", node.style.background_color);
-    info!("   Behavior: visible={:?}, clickable={:?}, z_index={:?}", 
+    bevy_log::debug!("🔍 Processing widget node '{}' with type: {:?}", widget_id, node.widget_type);
+    bevy_log::debug!("   Layout: position={:?}, size={:?}", node.layout.position, node.layout.size);
+    bevy_log::debug!("   Style: bg_color={:?}", node.style.background_color);
+    bevy_log::debug!("   Behavior: visible={:?}, clickable={:?}, z_index={:?}", 
         node.behavior.visible, node.behavior.clickable, node.behavior.z_index);
     
     // Check if this is a template widget and expand it directly
@@ -122,13 +122,13 @@ fn spawn_widget_from_node(
     
     let entity = if expanded_nodes.len() > 1 {
         // Template widget - spawn hierarchy from expansion
-        info!("🎯 Widget '{}' is a template widget, expanding into {} components", widget_id, expanded_nodes.len());
+        bevy_log::debug!("🎯 Widget '{}' is a template widget, expanding into {} components", widget_id, expanded_nodes.len());
         let shape_node = &expanded_nodes[0];
         let text_node = &expanded_nodes[1];
         
-        info!("   📦 Shape node: id={:?}, size={:?}, bg_color={:?}", 
+        bevy_log::debug!("   📦 Shape node: id={:?}, size={:?}, bg_color={:?}", 
             shape_node.id, shape_node.layout.size, shape_node.style.background_color);
-        info!("   📝 Text node: id={:?}, content={:?}, color={:?}", 
+        bevy_log::debug!("   📝 Text node: id={:?}, content={:?}, color={:?}", 
             text_node.id, 
             if let crate::widgets::blueprint::WidgetType::Text { content, .. } = &text_node.widget_type { 
                 Some(content) 
@@ -138,16 +138,16 @@ fn spawn_widget_from_node(
             text_node.style.text_color);
         
         // Debug position calculation
-        info!("   🎯 Original button position: {:?}", node.layout.position);
-        info!("   🎯 Shape node position after expansion: {:?}", shape_node.layout.position);
+        bevy_log::debug!("   🎯 Original button position: {:?}", node.layout.position);
+        bevy_log::debug!("   🎯 Shape node position after expansion: {:?}", shape_node.layout.position);
         
         // Spawn shape entity (background)
         let shape_entity = systems::spawn_widget_entity_from_node(commands, shape_node, yrs_res, window_height, None, None);
-        info!("   ✓ Shape entity created: {:?}", shape_entity);
+        bevy_log::debug!("   ✓ Shape entity created: {:?}", shape_entity);
         
         // Spawn text entity (label)
         let text_entity = systems::spawn_widget_entity_from_node(commands, text_node, yrs_res, window_height, Some(shape_entity), Some(shape_node.layout.position.unwrap_or(Vec3::ZERO)));
-        info!("   ✓ Text entity created: {:?}", text_entity);
+        bevy_log::debug!("   ✓ Text entity created: {:?}", text_entity);
         
         // Set up parent-child relationship for widget hierarchy
         commands.entity(shape_entity).insert(crate::widgets::components::WidgetHierarchy {
@@ -163,7 +163,7 @@ fn spawn_widget_from_node(
         // Set up Bevy's built-in parent-child relationship for Transform inheritance
         commands.entity(text_entity).set_parent(shape_entity);
         
-        info!("✓ Created template widget hierarchy: shape={:?}, text={:?}", shape_entity, text_entity);
+        bevy_log::debug!("✓ Created template widget hierarchy: shape={:?}, text={:?}", shape_entity, text_entity);
         shape_entity
     } else {
         // Regular widget - spawn directly
@@ -181,7 +181,7 @@ fn spawn_widget_from_node(
             if !child_position_control.is_manual() {
                 commands.entity(entity).add_child(child_entity);
             } else {
-                bevy_log::info!("🔓 Skipping parent-child relationship for Manual positioned widget '{:?}' to prevent transform inheritance", child_node.id);
+                bevy_log::debug!("🔓 Skipping parent-child relationship for Manual positioned widget '{:?}' to prevent transform inheritance", child_node.id);
             }
         }
         

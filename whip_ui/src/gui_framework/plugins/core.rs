@@ -1,7 +1,7 @@
 use bevy_app::{App, AppExit, Plugin, Startup, Update, Last};
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{SystemSet, common_conditions::{not, on_event}};
-use bevy_log::{info, error, warn};
+use bevy_log::{info, error, warn, trace};
 use bevy_window::{PrimaryWindow, Window};
 use bevy_winit::WinitWindows;
 use bevy_transform::prelude::{GlobalTransform, Transform};
@@ -1049,12 +1049,12 @@ fn rendering_system(
     // Debug: Log all entities with ShapeData for troubleshooting (reduced frequency)
     let all_shape_entities: Vec<_> = shape_query.iter().collect();
     if should_log {
-        info!("[rendering_system] Frame {}: Found {} entities with ShapeData+GlobalTransform", *frame_count, all_shape_entities.len());
+        trace!("[rendering_system] Frame {}: Found {} entities with ShapeData+GlobalTransform", *frame_count, all_shape_entities.len());
     }
     
     for (entity, global_transform, shape, visibility) in shape_query.iter() {
         if should_log {
-            info!("   Shape Entity {:?}: visible={}, pos={:?}, vertices={}", 
+            trace!("   Shape Entity {:?}: visible={}, pos={:?}, vertices={}", 
                 entity, visibility.is_visible(), global_transform.translation(), shape.vertices.len());
         }
             
@@ -1072,7 +1072,7 @@ fn rendering_system(
     }
     
     if should_log {
-        info!("[rendering_system] Collected {} visible shapes for rendering", shape_render_commands.len());
+        trace!("[rendering_system] Collected {} visible shapes for rendering", shape_render_commands.len());
         
         // Log a warning if no widgets are being rendered after startup
         if *frame_count > 60 && shape_render_commands.len() <= 1 {

@@ -8,9 +8,17 @@ pub fn record_command_buffers(
     prepared_shape_draws: &[PreparedDrawData],
     prepared_text_draws: &[PreparedTextDrawData],
     extent: vk::Extent2D,
+    debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
 ) {
     #[cfg(feature = "debug_logging")]
-    info!("[record_command_buffers] Entered. Shape draws: {}, Text draws: {}", prepared_shape_draws.len(), prepared_text_draws.len());
+    {
+        let message = format!("[record_command_buffers] Entered. Shape draws: {}, Text draws: {}", prepared_shape_draws.len(), prepared_text_draws.len());
+        if let Some(ref mut buffer) = debug_buffer {
+            buffer.add_rendering_context(message);
+        } else {
+            info!("{}", message);
+        }
+    }
 
     // --- Command Buffer Recording Loop ---
     let device = platform.device.as_ref().expect("Device not available for command buffer recording");
@@ -84,28 +92,56 @@ pub fn record_command_buffers(
         // --- Draw Text ---
         if !prepared_text_draws.is_empty() {
             #[cfg(feature = "debug_logging")]
-            info!("[record_command_buffers] Processing {} text draws.", prepared_text_draws.len());
+            {
+                let message = format!("[record_command_buffers] Processing {} text draws.", prepared_text_draws.len());
+                if let Some(ref mut buffer) = debug_buffer {
+                    buffer.add_rendering_context(message);
+                } else {
+                    info!("{}", message);
+                }
+            }
             let text_pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing");
             let mut current_text_pipeline = vk::Pipeline::null();
 
             for (i, text_draw) in prepared_text_draws.iter().enumerate() { // Iterate with index and reference
                 if text_draw.vertex_count > 0 {
                     #[cfg(feature = "trace_logging")]
-                    info!("[record_command_buffers] Text Draw Index {}: Attempting to bind resources. VB: {:?}, Vertices: {}, DS0: {:?}, DS1: {:?}",
-                        i,
-                        text_draw.vertex_buffer,
-                        text_draw.vertex_count,
-                        text_draw.projection_descriptor_set,
-                        text_draw.atlas_descriptor_set
-                    );
+                    {
+                        let message = format!("[record_command_buffers] Text Draw Index {}: Attempting to bind resources. VB: {:?}, Vertices: {}, DS0: {:?}, DS1: {:?}",
+                            i,
+                            text_draw.vertex_buffer,
+                            text_draw.vertex_count,
+                            text_draw.projection_descriptor_set,
+                            text_draw.atlas_descriptor_set
+                        );
+                        if let Some(ref mut buffer) = debug_buffer {
+                            buffer.add_rendering_context(message);
+                        } else {
+                            info!("{}", message);
+                        }
+                    }
                     if text_draw.pipeline != current_text_pipeline {
                         device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, text_draw.pipeline);
                         #[cfg(feature = "trace_logging")]
-                        info!("[record_command_buffers] Text Draw Index {}: Bound NEW pipeline.", i);
+                        {
+                            let message = format!("[record_command_buffers] Text Draw Index {}: Bound NEW pipeline.", i);
+                            if let Some(ref mut buffer) = debug_buffer {
+                                buffer.add_rendering_context(message);
+                            } else {
+                                info!("{}", message);
+                            }
+                        }
                         current_text_pipeline = text_draw.pipeline;
                     } else {
                         #[cfg(feature = "trace_logging")]
-                        info!("[record_command_buffers] Text Draw Index {}: Reusing current pipeline.", i);
+                        {
+                            let message = format!("[record_command_buffers] Text Draw Index {}: Reusing current pipeline.", i);
+                            if let Some(ref mut buffer) = debug_buffer {
+                                buffer.add_rendering_context(message);
+                            } else {
+                                info!("{}", message);
+                            }
+                        }
                     }
                     device.cmd_bind_descriptor_sets(
                         command_buffer, vk::PipelineBindPoint::GRAPHICS, text_pipeline_layout,
@@ -116,7 +152,14 @@ pub fn record_command_buffers(
                     let offsets = [0];
                     device.cmd_bind_vertex_buffers(command_buffer, 0, &[text_draw.vertex_buffer], &offsets);
                     #[cfg(feature = "trace_logging")]
-                    info!("[record_command_buffers] Text Draw Index {}: Bound vertex buffer.", i);
+                    {
+                        let message = format!("[record_command_buffers] Text Draw Index {}: Bound vertex buffer.", i);
+                        if let Some(ref mut buffer) = debug_buffer {
+                            buffer.add_rendering_context(message);
+                        } else {
+                            info!("{}", message);
+                        }
+                    }
                     device.cmd_draw(
                         command_buffer,
                         text_draw.vertex_count,
@@ -125,7 +168,14 @@ pub fn record_command_buffers(
                         0, // firstInstance
                     );
                     #[cfg(feature = "trace_logging")]
-                    info!("[record_command_buffers] Text Draw Index {}: Draw call executed.", i);
+                    {
+                        let message = format!("[record_command_buffers] Text Draw Index {}: Draw call executed.", i);
+                        if let Some(ref mut buffer) = debug_buffer {
+                            buffer.add_rendering_context(message);
+                        } else {
+                            info!("{}", message);
+                        }
+                    }
                 }
             }
         }
@@ -136,5 +186,12 @@ pub fn record_command_buffers(
         device.end_command_buffer(command_buffer).expect("Failed to end command buffer recording");
     }
     #[cfg(feature = "debug_logging")]
-    info!("[record_command_buffers] Exited successfully.");
+    {
+        let message = "[record_command_buffers] Exited successfully.".to_string();
+        if let Some(ref mut buffer) = debug_buffer {
+            buffer.add_rendering_context(message);
+        } else {
+            info!("{}", message);
+        }
+    }
 }

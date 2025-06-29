@@ -45,16 +45,28 @@ impl TextRenderer {
         text_layout_infos: &[TextLayoutInfo],
         global_ubo_res: &GlobalProjectionUboResource,
         text_global_res: &TextRenderingResources,
+        debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
     ) -> Vec<PreparedTextDrawData> {
         self.frame_count += 1;
         let should_log = self.frame_count <= 5 || self.frame_count % 120 == 0; // Log first 5 frames, then every 2 seconds at 60fps
         
         #[cfg(feature = "debug_logging")]
         if should_log {
-            info!("[TextRenderer::prepare_text_draws] Entered. text_layout_infos count: {}", text_layout_infos.len());
+            let message = format!("[TextRenderer::prepare_text_draws] Entered. text_layout_infos count: {}", text_layout_infos.len());
+            if let Some(ref mut buffer) = debug_buffer {
+                buffer.add_rendering_context(message);
+            } else {
+                info!("{}", message);
+            }
+            
             if !text_layout_infos.is_empty() {
                 let first_info = &text_layout_infos[0];
-                info!("[TextRenderer::prepare_text_draws] First entity: {:?}, glyph count: {}", first_info.entity, first_info.layout.glyphs.len());
+                let message = format!("[TextRenderer::prepare_text_draws] First entity: {:?}, glyph count: {}", first_info.entity, first_info.layout.glyphs.len());
+                if let Some(ref mut buffer) = debug_buffer {
+                    buffer.add_rendering_context(message);
+                } else {
+                    info!("{}", message);
+                }
             }
         }
         let mut prepared_text_draws: Vec<PreparedTextDrawData> = Vec::new();
@@ -67,7 +79,12 @@ impl TextRenderer {
             let entity = layout_info.entity;
             #[cfg(feature = "trace_logging")]
             if should_log {
-                info!("[TextRenderer::prepare_text_draws] Processing entity: {:?}, visibility: {}", entity, layout_info.visibility.0);
+                let message = format!("[TextRenderer::prepare_text_draws] Processing entity: {:?}, visibility: {}", entity, layout_info.visibility.0);
+                if let Some(ref mut buffer) = debug_buffer {
+                    buffer.add_rendering_context(message);
+                } else {
+                    info!("{}", message);
+                }
             }
             let global_transform = layout_info.transform;
             let text_layout = &layout_info.layout;
@@ -91,7 +108,12 @@ impl TextRenderer {
             let vertex_count = relative_vertices.len() as u32;
             #[cfg(feature = "trace_logging")]
             if should_log {
-                info!("[TextRenderer::prepare_text_draws] Entity: {:?}, Calculated vertex_count: {}", entity, vertex_count);
+                let message = format!("[TextRenderer::prepare_text_draws] Entity: {:?}, Calculated vertex_count: {}", entity, vertex_count);
+                if let Some(ref mut buffer) = debug_buffer {
+                    buffer.add_rendering_context(message);
+                } else {
+                    info!("{}", message);
+                }
             }
 
             if vertex_count == 0 {

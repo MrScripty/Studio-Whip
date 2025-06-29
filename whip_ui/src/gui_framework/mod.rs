@@ -8,6 +8,9 @@ pub mod events;
 pub mod plugins;
 pub mod systems;
 
+// Debug utilities module
+pub mod debug;
+
 // Keep interaction module *only* for hotkeys for now
 pub mod interaction;
 

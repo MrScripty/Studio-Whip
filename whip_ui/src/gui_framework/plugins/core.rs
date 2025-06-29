@@ -39,6 +39,9 @@ use crate::gui_framework::systems::{
     style_resolution_system, apply_resolved_styles_system, style_resolution_debug_system,
     StyleChanged, StateChangeTracker
 };
+use crate::gui_framework::debug::{DebugRingBuffer, update_debug_ring_buffer_system};
+#[cfg(feature = "debug_logging")]
+use crate::gui_framework::debug::log_buffer_stats_system;
 use crate::gui_framework::{
     context::vulkan_context::VulkanContext,
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
@@ -109,6 +112,7 @@ impl Plugin for GuiFrameworkCorePlugin {
         // --- Resource Registration ---
         app.init_resource::<ActionRegistry>();
         app.init_resource::<StateChangeTracker>();
+        app.init_resource::<DebugRingBuffer>();
 
         // --- System Setup ---
         app
@@ -197,7 +201,14 @@ impl Plugin for GuiFrameworkCorePlugin {
                 style_resolution_system.in_set(CoreSet::StyleResolution),
                 apply_resolved_styles_system.in_set(CoreSet::StyleResolution),
                 style_resolution_debug_system.in_set(CoreSet::StyleResolution),
+                // Debug systems
+                update_debug_ring_buffer_system.in_set(CoreSet::StateTracking),
             ));
+
+        #[cfg(feature = "debug_logging")]
+        app.add_systems(Update, (
+            log_buffer_stats_system.in_set(CoreSet::StateTracking),
+        ));
 
             // == Last Schedule Systems (This part is correct and remains unchanged) ==
             app.configure_sets(Last, (
@@ -1019,6 +1030,7 @@ fn rendering_system(
     buffer_manager_res_opt: Option<Res<BufferManagerResource>>,
     global_ubo_res_opt: Option<Res<GlobalProjectionUboResource>>,
     text_res_opt: Option<Res<TextRenderingResources>>, // Still need pipeline/atlas set
+    mut debug_buffer_opt: Option<ResMut<DebugRingBuffer>>,
 
     // Queries for scene data
     shape_query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility), (Without<TextLayoutOutput>, Or<(With<ShapeData>, With<CursorVisual>)>)>, // Query shapes/cursors without TextLayoutOutput
@@ -1108,6 +1120,7 @@ fn rendering_system(
             &text_layout_infos, // Still empty if text_layout_system disabled
             &global_ubo_res,
             text_res_opt.as_deref(), // Pass Option<&TextRenderingResources>
+            debug_buffer_opt.as_deref_mut(), // Pass debug buffer
         );
         // Guard dropped here
     } else {

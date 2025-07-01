@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use bevy_log::{debug, trace};
+// Removed unused imports
 use bevy_utils::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -63,7 +63,7 @@ pub fn interaction_state_tracking_system(
 pub fn hover_detection_system(
     mut state_query: Query<(Entity, &mut InteractionState, &Interaction)>,
     mut state_change_events: EventWriter<InteractionStateChanged>,
-    mut tracker: ResMut<StateChangeTracker>,
+    tracker: ResMut<StateChangeTracker>,
     // TODO: Add cursor position and window query when integrating with input
 ) {
     for (entity, mut interaction_state, interaction) in state_query.iter_mut() {
@@ -121,11 +121,11 @@ pub fn press_detection_system(
         if interaction_state.set_pressed(is_pressed) {
             #[cfg(feature = "debug_logging")]
             if tracker.should_log_state_change(entity, &interaction_state) {
-                debug!("Press state changed for entity {:?}: {}", entity, is_pressed);
+                bevy_log::debug!("Press state changed for entity {:?}: {}", entity, is_pressed);
             }
             
             #[cfg(feature = "trace_logging")]
-            trace!("Press detection processed for entity {:?}: {}", entity, is_pressed);
+            bevy_log::trace!("Press detection processed for entity {:?}: {}", entity, is_pressed);
             
             state_change_events.send(InteractionStateChanged::new(
                 entity,
@@ -156,11 +156,11 @@ pub fn focus_detection_system(
         if interaction_state.set_focused(is_focused) {
             #[cfg(feature = "debug_logging")]
             if tracker.should_log_state_change(entity, &interaction_state) {
-                debug!("Focus state changed for entity {:?}: {}", entity, is_focused);
+                bevy_log::debug!("Focus state changed for entity {:?}: {}", entity, is_focused);
             }
             
             #[cfg(feature = "trace_logging")]
-            trace!("Focus detection processed for entity {:?}: {}", entity, is_focused);
+            bevy_log::trace!("Focus detection processed for entity {:?}: {}", entity, is_focused);
             
             state_change_events.send(InteractionStateChanged::new(
                 entity,
@@ -195,11 +195,11 @@ pub fn drag_detection_system(
         if interaction_state.set_dragged(is_dragged) {
             #[cfg(feature = "debug_logging")]
             if tracker.should_log_state_change(entity, &interaction_state) {
-                debug!("Drag state changed for entity {:?}: {}", entity, is_dragged);
+                bevy_log::debug!("Drag state changed for entity {:?}: {}", entity, is_dragged);
             }
             
             #[cfg(feature = "trace_logging")]
-            trace!("Drag detection processed for entity {:?}: {}", entity, is_dragged);
+            bevy_log::trace!("Drag detection processed for entity {:?}: {}", entity, is_dragged);
             
             state_change_events.send(InteractionStateChanged::new(
                 entity,
@@ -212,14 +212,14 @@ pub fn drag_detection_system(
 
 /// System that logs interaction state changes for debugging
 pub fn interaction_state_debug_system(
-    mut state_change_events: EventReader<InteractionStateChanged>,
-    mut tracker: ResMut<StateChangeTracker>,
+    mut _state_change_events: EventReader<InteractionStateChanged>,
+    _tracker: ResMut<StateChangeTracker>,
 ) {
     #[cfg(feature = "debug_logging")]
-    for event in state_change_events.read() {
+    for event in _state_change_events.read() {
         let changes = event.changed_states();
         if !changes.is_empty() {
-            debug!("🎯 INTERACTION STATE: Entity {:?} changed: {}", 
+            bevy_log::debug!("🎯 INTERACTION STATE: Entity {:?} changed: {}", 
                 event.entity, 
                 changes.join(", ")
             );
@@ -227,7 +227,7 @@ pub fn interaction_state_debug_system(
     }
     
     // Update frame count for rate limiting
-    tracker.next_frame();
+    // _tracker.next_frame(); // Commented out since we're not using frame counting anymore
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 use bevy_ecs::prelude::*;
-use bevy_log::{debug, warn};
 
 /// A ring buffer for capturing debug context to prevent log overflow
 /// while preserving recent debugging information for analysis
@@ -14,8 +14,10 @@ pub struct DebugRingBuffer {
     general_buffer: VecDeque<String>,
     /// Maximum size for each buffer
     max_size: usize,
-    /// Frame counter for context
-    frame_count: u64,
+    /// Creation time for calculating elapsed time
+    created_at: Instant,
+    /// Last stats log time
+    last_stats_log: Instant,
 }
 
 impl Default for DebugRingBuffer {
@@ -27,23 +29,31 @@ impl Default for DebugRingBuffer {
 impl DebugRingBuffer {
     /// Create a new debug ring buffer with specified capacity
     pub fn new(max_size: usize) -> Self {
+        let now = Instant::now();
         Self {
             rendering_buffer: VecDeque::with_capacity(max_size),
             layout_buffer: VecDeque::with_capacity(max_size),
             general_buffer: VecDeque::with_capacity(max_size),
             max_size,
-            frame_count: 0,
+            created_at: now,
+            last_stats_log: now,
         }
     }
 
-    /// Increment frame counter (call once per frame)
-    pub fn next_frame(&mut self) {
-        self.frame_count += 1;
+    /// Update the last stats log time (called periodically)
+    pub fn update_stats_log_time(&mut self) {
+        self.last_stats_log = Instant::now();
+    }
+
+    /// Check if it's time to log stats (every 5 seconds)
+    pub fn should_log_stats(&self) -> bool {
+        self.last_stats_log.elapsed() >= Duration::from_secs(5)
     }
 
     /// Add a rendering debug message to the buffer
     pub fn add_rendering_context(&mut self, message: String) {
-        let timestamped_message = format!("[Frame {}] {}", self.frame_count, message);
+        let elapsed_secs = self.created_at.elapsed().as_secs_f32();
+        let timestamped_message = format!("[{:.2}s] {}", elapsed_secs, message);
         
         // Add to buffer, removing oldest if at capacity
         if self.rendering_buffer.len() >= self.max_size {
@@ -54,7 +64,8 @@ impl DebugRingBuffer {
 
     /// Add a layout debug message to the buffer
     pub fn add_layout_context(&mut self, message: String) {
-        let timestamped_message = format!("[Frame {}] {}", self.frame_count, message);
+        let elapsed_secs = self.created_at.elapsed().as_secs_f32();
+        let timestamped_message = format!("[{:.2}s] {}", elapsed_secs, message);
         
         // Add to buffer, removing oldest if at capacity
         if self.layout_buffer.len() >= self.max_size {
@@ -65,7 +76,8 @@ impl DebugRingBuffer {
 
     /// Add a general debug message to the buffer
     pub fn add_general_context(&mut self, message: String) {
-        let timestamped_message = format!("[Frame {}] {}", self.frame_count, message);
+        let elapsed_secs = self.created_at.elapsed().as_secs_f32();
+        let timestamped_message = format!("[{:.2}s] {}", elapsed_secs, message);
         
         // Add to buffer, removing oldest if at capacity
         if self.general_buffer.len() >= self.max_size {
@@ -113,27 +125,27 @@ impl DebugRingBuffer {
     pub fn dump_context(&self, category: &str) {
         match category {
             "rendering" => {
-                debug!("[DebugRingBuffer] Recent rendering context:");
+                bevy_log::debug!("[DebugRingBuffer] Recent rendering context:");
                 for msg in self.get_rendering_context(Some(20)) {
-                    debug!("  {}", msg);
+                    bevy_log::debug!("  {}", msg);
                 }
             }
             "layout" => {
-                debug!("[DebugRingBuffer] Recent layout context:");
+                bevy_log::debug!("[DebugRingBuffer] Recent layout context:");
                 for msg in self.get_layout_context(Some(20)) {
-                    debug!("  {}", msg);
+                    bevy_log::debug!("  {}", msg);
                 }
             }
             "all" => {
                 self.dump_context("rendering");
                 self.dump_context("layout");
-                debug!("[DebugRingBuffer] Recent general context:");
+                bevy_log::debug!("[DebugRingBuffer] Recent general context:");
                 for msg in self.get_general_context(Some(20)) {
-                    debug!("  {}", msg);
+                    bevy_log::debug!("  {}", msg);
                 }
             }
             _ => {
-                warn!("[DebugRingBuffer] Unknown category: {}", category);
+                bevy_log::warn!("[DebugRingBuffer] Unknown category: {}", category);
             }
         }
     }
@@ -145,7 +157,7 @@ impl DebugRingBuffer {
             layout_count: self.layout_buffer.len(),
             general_count: self.general_buffer.len(),
             max_size: self.max_size,
-            frame_count: self.frame_count,
+            elapsed_seconds: self.created_at.elapsed().as_secs_f32(),
         }
     }
 
@@ -156,7 +168,7 @@ impl DebugRingBuffer {
         self.general_buffer.clear();
         
         #[cfg(feature = "debug_logging")]
-        debug!("[DebugRingBuffer] Cleared all debug context buffers");
+        bevy_log::debug!("[DebugRingBuffer] Cleared all debug context buffers");
     }
 }
 
@@ -167,30 +179,32 @@ pub struct BufferStats {
     pub layout_count: usize,
     pub general_count: usize,
     pub max_size: usize,
-    pub frame_count: u64,
+    pub elapsed_seconds: f32,
 }
 
-/// System to update the frame counter each frame
+/// System to update debug ring buffer state each frame
 pub fn update_debug_ring_buffer_system(
-    mut debug_buffer: ResMut<DebugRingBuffer>,
+    _debug_buffer: ResMut<DebugRingBuffer>,
 ) {
-    debug_buffer.next_frame();
+    // No longer need to increment frame count, just exists for compatibility
+    // Could be used for future frame-based tracking if needed
 }
 
 /// System to periodically log buffer statistics (only with debug_logging feature)
 #[cfg(feature = "debug_logging")]
 pub fn log_buffer_stats_system(
-    debug_buffer: Res<DebugRingBuffer>,
+    mut debug_buffer: ResMut<DebugRingBuffer>,
 ) {
-    // Log stats every 300 frames (5 seconds at 60fps)
-    let stats = debug_buffer.get_stats();
-    if stats.frame_count % 300 == 0 {
-        debug!("[DebugRingBuffer] Stats - Rendering: {}/{}, Layout: {}/{}, General: {}/{}, Frame: {}", 
+    // Log stats every 5 seconds using time-based approach
+    if debug_buffer.should_log_stats() {
+        let stats = debug_buffer.get_stats();
+        bevy_log::debug!("[DebugRingBuffer] Stats - Rendering: {}/{}, Layout: {}/{}, General: {}/{}, Elapsed: {:.1}s", 
             stats.rendering_count, stats.max_size,
             stats.layout_count, stats.max_size,
             stats.general_count, stats.max_size,
-            stats.frame_count
+            stats.elapsed_seconds
         );
+        debug_buffer.update_stats_log_time();
     }
 }
 

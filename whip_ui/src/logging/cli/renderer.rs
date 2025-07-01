@@ -131,7 +131,7 @@ impl TerminalRenderer for BasicTerminalRenderer {
         
         // Calculate log display area
         let header_lines = 3; // header + status + separator
-        let footer_lines = 3; // input line + separator + help
+        let footer_lines = 4; // input box (3 lines) + help (1 line)
         let log_area_height = state.terminal_size.1.saturating_sub(header_lines + footer_lines);
         
         // Draw separator
@@ -171,24 +171,54 @@ impl TerminalRenderer for BasicTerminalRenderer {
             line_num += 1;
         }
         
-        // Draw footer separator
+        // Draw input area with borders
         let footer_start = state.terminal_size.1.saturating_sub(footer_lines);
+        let input_width = state.terminal_size.0 as usize;
+        
+        // Top border
         stdout.queue(MoveTo(0, footer_start))?;
-        stdout.queue(Print("─".repeat(state.terminal_size.0 as usize)))?;
+        stdout.queue(SetForegroundColor(Color::Cyan))?;
+        stdout.queue(Print("┌"))?;
+        stdout.queue(Print("─".repeat(7)))?; // " Input "
+        stdout.queue(Print(" Command Input "))?;
+        stdout.queue(Print("─".repeat(input_width.saturating_sub(22))))?;
+        stdout.queue(Print("┐"))?;
+        stdout.queue(ResetColor)?;
         
-        // Draw input line
+        // Input line with side borders
         stdout.queue(MoveTo(0, footer_start + 1))?;
-        stdout.queue(Print("> "))?;
+        stdout.queue(SetForegroundColor(Color::Cyan))?;
+        stdout.queue(Print("│"))?;
+        stdout.queue(ResetColor)?;
+        stdout.queue(Print(" > "))?;
+        stdout.queue(SetForegroundColor(Color::White))?;
         stdout.queue(Print(state.input_buffer))?;
+        stdout.queue(ResetColor)?;
         
-        // Draw help line
+        // Clear rest of line and add right border
+        let used_width = 4 + state.input_buffer.len(); // "│ > " + input text
+        let remaining = input_width.saturating_sub(used_width + 1);
+        stdout.queue(Print(" ".repeat(remaining)))?;
+        stdout.queue(SetForegroundColor(Color::Cyan))?;
+        stdout.queue(Print("│"))?;
+        stdout.queue(ResetColor)?;
+        
+        // Bottom border
         stdout.queue(MoveTo(0, footer_start + 2))?;
+        stdout.queue(SetForegroundColor(Color::Cyan))?;
+        stdout.queue(Print("└"))?;
+        stdout.queue(Print("─".repeat(input_width.saturating_sub(2))))?;
+        stdout.queue(Print("┘"))?;
+        stdout.queue(ResetColor)?;
+        
+        // Draw help line below the input box
+        stdout.queue(MoveTo(0, footer_start + 3))?;
         stdout.queue(SetForegroundColor(Color::DarkGrey))?;
         stdout.queue(Print("Commands: /quit, /filter <level>, /clear, /save <path> | ↑↓ Navigate | Enter: Details"))?;
         stdout.queue(ResetColor)?;
         
-        // Position cursor at the correct location in the input
-        let cursor_x = 2 + state.cursor_position; // 2 for "> " prefix
+        // Position cursor at the correct location in the input (inside the border)
+        let cursor_x = 4 + state.cursor_position; // 4 for "│ > " prefix
         stdout.queue(MoveTo(cursor_x as u16, footer_start + 1))?;
         
         stdout.flush()?;
@@ -326,7 +356,7 @@ impl RatatuiTerminalRenderer {
             .constraints([
                 Constraint::Length(3), // Header
                 Constraint::Min(1),    // Logs
-                Constraint::Length(3), // Input + Help
+                Constraint::Length(4), // Input box (3 lines) + Help (1 line)
             ])
             .split(frame.area());
         
@@ -355,13 +385,19 @@ impl RatatuiTerminalRenderer {
         let input_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Input area (needs more space for TextArea)
+                Constraint::Length(3), // Input area with borders
                 Constraint::Length(1), // Help line
             ])
             .split(chunks[2]);
         
         let input_widget = Paragraph::new(input_text)
-            .block(Block::default().borders(Borders::TOP));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Command Input ")
+                    .style(Style::default().fg(RatatuiColor::Cyan))
+            )
+            .style(Style::default().fg(RatatuiColor::White));
         frame.render_widget(input_widget, input_layout[0]);
         
         let help_widget = Paragraph::new(help_text)

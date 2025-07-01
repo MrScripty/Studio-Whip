@@ -325,45 +325,35 @@ fn save_logs_to_file(logs: &[LogData], path: &str) -> io::Result<usize> {
 
 /// Main CLI event loop
 fn cli_event_loop(receiver: Receiver<CliThreadCommand>) -> Result<(), Box<dyn std::error::Error>> {
-    println!("CLI: Starting event loop...");
-    
     // Initialize terminal session
     let _session = TerminalSession::new()?;
-    println!("CLI: Terminal session initialized");
     
     // Get log store reference
     let log_store = get_log_store()
         .ok_or("Log store not initialized")?;
-    println!("CLI: Log store retrieved");
     
     // Initialize renderer and state - try Ratatui first, fall back to Basic
     let mut renderer: Box<dyn TerminalRenderer> = match RatatuiTerminalRenderer::new() {
         Ok(ratatui_renderer) => {
-            println!("CLI: Using Ratatui Terminal Renderer");
             Box::new(ratatui_renderer)
         }
-        Err(e) => {
-            println!("CLI: Failed to initialize Ratatui renderer ({}), falling back to Basic", e);
+        Err(_e) => {
             Box::new(BasicTerminalRenderer::new())
         }
     };
     let mut state = CliState::new();
-    println!("CLI: Renderer and state initialized");
     
     // Initial log fetch
     state.update_logs(&log_store);
-    println!("CLI: Initial logs fetched, entering main loop...");
     
     // Main event loop
     loop {
         // Check for thread commands
         match receiver.try_recv() {
             Ok(CliThreadCommand::Shutdown) => {
-                println!("CLI: Received shutdown command");
                 break;
             }
             Err(TryRecvError::Disconnected) => {
-                println!("CLI: Channel disconnected");
                 break;
             }
             Err(TryRecvError::Empty) => {}
@@ -386,7 +376,6 @@ fn cli_event_loop(receiver: Receiver<CliThreadCommand>) -> Result<(), Box<dyn st
                     if key.kind == KeyEventKind::Press {
                         if let Some(command) = state.handle_key(key) {
                             if state.process_command(command, &log_store) {
-                                println!("CLI: Quit command received");
                                 break; // Quit command
                             }
                         }

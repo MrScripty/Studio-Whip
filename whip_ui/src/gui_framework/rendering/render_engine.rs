@@ -191,6 +191,19 @@ impl Renderer {
             error!("[Renderer::render] Error resetting fence: {:?}. Skipping frame.", e);
             return;
         }
+        
+        // --- Process pending deletions after fence wait ---
+        // This ensures GPU has finished with resources from previous frame
+        {
+            let mut buffer_manager_guard = match buffer_manager_res.0.lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    error!("[Renderer::render] Failed to lock BufferManager for pending deletions");
+                    return;
+                }
+            };
+            buffer_manager_guard.process_pending_deletions(&device, &allocator_arc);
+        }
 
         // --- 2. Acquire Swapchain Image ---
         // We use the initially fetched swapchain_loader and swapchain_khr.

@@ -23,6 +23,12 @@ struct EntityRenderResources {
     descriptor_set: vk::DescriptorSet, // Set 0 (Global UBO, Offset UBO)
 }
 
+// Resources pending deletion after GPU has finished using them
+struct PendingDeletion {
+    resources: EntityRenderResources,
+    frame_queued: u64, // Frame number when deletion was requested
+}
+
 // Key for caching pipelines. Currently only one shape pipeline exists.
 // Kept for potential future variations (e.g., blend modes, wireframe).
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
@@ -40,6 +46,8 @@ pub struct BufferManager {
     // REMOVED: shader_cache: HashMap<ShaderCacheKey, vk::ShaderModule>,
     per_entity_layout: vk::DescriptorSetLayout, // Layout for Set 0
     descriptor_pool: vk::DescriptorPool,
+    pending_deletions: Vec<PendingDeletion>, // Resources waiting to be deleted
+    current_frame: u64, // Frame counter for deferred deletion
 }
 
 impl BufferManager {
@@ -59,6 +67,8 @@ impl BufferManager {
             // REMOVED: shader_cache,
             per_entity_layout, // Store layout for per-entity sets
             descriptor_pool,       // Store pool for per-entity sets
+            pending_deletions: Vec::new(),
+            current_frame: 0,
         }
     }
 
@@ -291,33 +301,76 @@ impl BufferManager {
 
     /// Removes Vulkan resources associated with a specific entity.
     /// Called when an entity with ShapeData or CursorVisual is despawned.
+    /// Resources are queued for deferred deletion to ensure GPU has finished using them.
     pub fn remove_entity_resources(
         &mut self,
         entity: Entity,
+        _device: &ash::Device,
+        _allocator: &Arc<vk_mem::Allocator>,
+    ) {
+        if let Some(resources) = self.entity_resources.remove(&entity) {
+            info!("[BufferManager] Queueing resources for deferred deletion for entity {:?} (frame {})", entity, self.current_frame);
+            
+            // Queue resources for deferred deletion instead of immediately destroying them
+            self.pending_deletions.push(PendingDeletion {
+                resources,
+                frame_queued: self.current_frame,
+            });
+        } else {
+            // This might happen if cleanup is called multiple times for the same entity,
+            // or if the entity never had shape resources managed by BufferManager.
+            // It's not necessarily an error, so a warn! might be too noisy.
+            // A debug! log could be appropriate if needed for diagnostics.
+            // info!("[BufferManager] Attempted to remove resources for entity {:?}, but it was not found in cache.", entity);
+        }
+    }
+
+    /// Process pending deletions that have been queued for at least one frame.
+    /// This should be called after waiting for the fence in the render loop.
+    pub fn process_pending_deletions(
+        &mut self,
         device: &ash::Device,
         allocator: &Arc<vk_mem::Allocator>,
     ) {
-        if let Some(mut resources) = self.entity_resources.remove(&entity) {
-            info!("[BufferManager] Removing resources for despawned entity {:?}", entity);
+        // Increment frame counter
+        self.current_frame += 1;
+        
+        // Keep resources that are still too new (less than 1 frame old)
+        let mut remaining_deletions = Vec::new();
+        let mut sets_to_free: Vec<vk::DescriptorSet> = Vec::new();
+        
+        for pending in self.pending_deletions.drain(..) {
+            // Delete resources that have been pending for at least 1 frame
+            if self.current_frame > pending.frame_queued {
+                info!("[BufferManager] Processing deferred deletion from frame {} (current frame: {})", 
+                      pending.frame_queued, self.current_frame);
+                
+                unsafe {
+                    let mut resources = pending.resources;
+                    allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
+                    allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
+                    if resources.descriptor_set != vk::DescriptorSet::null() {
+                        sets_to_free.push(resources.descriptor_set);
+                    }
+                }
+            } else {
+                // Keep this deletion pending
+                remaining_deletions.push(pending);
+            }
+        }
+        
+        // Free descriptor sets in batch
+        if !sets_to_free.is_empty() {
             unsafe {
-                allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
-                allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
-                if resources.descriptor_set != vk::DescriptorSet::null() {
-                    // The descriptor_pool was created with FREE_DESCRIPTOR_SET flag
-                    if let Err(e) = device.free_descriptor_sets(self.descriptor_pool, &[resources.descriptor_set]) {
-                        error!("[BufferManager] Failed to free descriptor set for entity {:?}: {:?}", entity, e);
+                if let Err(e) = device.free_descriptor_sets(self.descriptor_pool, &sets_to_free) {
+                    error!("[BufferManager] Failed to free {} descriptor sets: {:?}", sets_to_free.len(), e);
                 } else {
-                    info!("[BufferManager] Freed descriptor set for entity {:?}", entity);
+                    info!("[BufferManager] Freed {} descriptor sets from deferred deletion", sets_to_free.len());
                 }
             }
         }
-    } else {
-        // This might happen if cleanup is called multiple times for the same entity,
-        // or if the entity never had shape resources managed by BufferManager.
-        // It's not necessarily an error, so a warn! might be too noisy.
-        // A debug! log could be appropriate if needed for diagnostics.
-        // info!("[BufferManager] Attempted to remove resources for entity {:?}, but it was not found in cache.", entity);
-        }
+        
+        self.pending_deletions = remaining_deletions;
     }
 
     // --- cleanup() function ---
@@ -335,6 +388,16 @@ impl BufferManager {
 
         let mut sets_to_free: Vec<vk::DescriptorSet> = Vec::new();
         unsafe {
+            // Cleanup pending deletions first
+            for pending in self.pending_deletions.drain(..) {
+                let mut resources = pending.resources;
+                allocator.destroy_buffer(resources.vertex_buffer, &mut resources.vertex_allocation);
+                allocator.destroy_buffer(resources.offset_uniform, &mut resources.offset_allocation);
+                if resources.descriptor_set != vk::DescriptorSet::null() {
+                    sets_to_free.push(resources.descriptor_set);
+                }
+            }
+            
             // Cleanup entity-specific resources
             let entity_count = self.entity_resources.len();
             for (_entity_id, mut resources) in self.entity_resources.drain() {
@@ -351,7 +414,8 @@ impl BufferManager {
                     info!("[BufferManager::cleanup] Freed {} descriptor sets during full cleanup.", sets_to_free.len());
                 }
             }
-            info!("[BufferManager::cleanup] Cleaned up resources for {} entities.", entity_count);
+            info!("[BufferManager::cleanup] Cleaned up resources for {} entities and {} pending deletions.", 
+                  entity_count, self.pending_deletions.len());
 
             // Cleanup cached pipelines
             let pipeline_count = self.pipeline_cache.len();

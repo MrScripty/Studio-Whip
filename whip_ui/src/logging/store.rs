@@ -248,9 +248,9 @@ impl CentralLogStore {
         all_logs.into_iter().skip(start).collect()
     }
     
-    /// Get logs by level
+    /// Get logs by level (exact level only)
     pub fn get_logs_by_level(&self, level: LogLevel) -> Vec<LogData> {
-        self.get_logs(LogFilter::for_level(level), 0, usize::MAX)
+        self.get_logs(LogFilter::for_exact_level(level), 0, usize::MAX)
     }
     
     /// Get statistics about the log store

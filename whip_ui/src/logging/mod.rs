@@ -9,10 +9,12 @@
 pub mod filter;
 pub mod store;
 pub mod types;
+pub mod tracing_layer;
 
 pub use filter::{LogFilter, FilterConfig};
 pub use store::CentralLogStore;
 pub use types::{LogData, LogLevel, LogMetadata};
+pub use tracing_layer::WhipUiTracingLayer;
 
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
@@ -35,6 +37,10 @@ pub fn get_log_store() -> Option<Arc<CentralLogStore>> {
 pub fn init_tracing() -> Result<(), Box<dyn std::error::Error>> {
     use tracing_subscriber::prelude::*;
     
+    // Create our custom layer that forwards to CentralLogStore
+    let whip_ui_layer = WhipUiTracingLayer::new();
+    
+    // Create fmt layer for console output (optional, can be disabled in production)
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_thread_ids(true)
@@ -42,7 +48,8 @@ pub fn init_tracing() -> Result<(), Box<dyn std::error::Error>> {
         .with_line_number(true);
     
     let subscriber = tracing_subscriber::registry()
-        .with(fmt_layer)
+        .with(whip_ui_layer)  // Our custom layer comes first
+        .with(fmt_layer)      // Console output layer
         .with(tracing_subscriber::EnvFilter::from_default_env());
     
     tracing::subscriber::set_global_default(subscriber)?;

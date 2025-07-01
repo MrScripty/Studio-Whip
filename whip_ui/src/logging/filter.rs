@@ -38,12 +38,13 @@ impl Default for FilterConfig {
 #[derive(Debug, Clone)]
 pub struct LogFilter {
     config: FilterConfig,
+    exact_level: Option<LogLevel>,
 }
 
 impl LogFilter {
     /// Create a new filter with the given configuration
     pub fn new(config: FilterConfig) -> Self {
-        Self { config }
+        Self { config, exact_level: None }
     }
     
     /// Create a filter with default configuration
@@ -53,9 +54,16 @@ impl LogFilter {
     
     /// Check if a log passes the filter
     pub fn should_include(&self, log: &LogData) -> bool {
-        // Check minimum level
-        if log.level < self.config.min_level {
-            return false;
+        // Check exact level first if specified
+        if let Some(exact_level) = self.exact_level {
+            if log.level != exact_level {
+                return false;
+            }
+        } else {
+            // Check minimum level
+            if log.level < self.config.min_level {
+                return false;
+            }
         }
         
         // Check target inclusion/exclusion
@@ -126,12 +134,22 @@ impl LogFilter {
         self.config.exclude_categories.clear();
     }
     
-    /// Create a filter for a specific level
+    /// Create a filter for a specific level (minimum level)
     pub fn for_level(level: LogLevel) -> Self {
         Self::new(FilterConfig {
             min_level: level,
             ..Default::default()
         })
+    }
+    
+    /// Create a filter for exactly this level only
+    pub fn for_exact_level(level: LogLevel) -> Self {
+        let mut filter = Self::new(FilterConfig {
+            min_level: LogLevel::Trace, // Allow all levels, we'll filter in should_include
+            ..Default::default()
+        });
+        filter.exact_level = Some(level);
+        filter
     }
     
     /// Create a filter for specific targets
@@ -153,7 +171,7 @@ impl LogFilter {
 
 impl Default for LogFilter {
     fn default() -> Self {
-        Self::default()
+        Self::new(FilterConfig::default())
     }
 }
 

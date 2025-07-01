@@ -67,6 +67,7 @@ pub use logging::{
     CentralLogStore,
     LogFilter,
     FilterConfig,
+    WhipUiTracingLayer,
     init_logging_service,
     get_log_store,
     init_tracing,

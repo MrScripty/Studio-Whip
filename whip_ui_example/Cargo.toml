@@ -39,5 +39,8 @@ taffy = { workspace = true }
 # TOML parsing
 toml = { workspace = true }
 
+# Logging (for testing the logging service)
+tracing = { workspace = true }
+
 [build-dependencies]
 walkdir = { workspace = true }

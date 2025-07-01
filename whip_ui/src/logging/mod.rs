@@ -10,6 +10,7 @@ pub mod filter;
 pub mod store;
 pub mod types;
 pub mod tracing_layer;
+pub mod cli;
 
 pub use filter::{LogFilter, FilterConfig};
 pub use store::CentralLogStore;

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// Configuration for log filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FilterConfig {
     /// Minimum log level to include
     pub min_level: LogLevel,
@@ -19,6 +19,8 @@ pub struct FilterConfig {
     pub exclude_categories: HashSet<String>,
     /// Maximum number of logs to keep in memory
     pub max_logs: usize,
+    /// Simple target filter (contains match)
+    pub target_filter: Option<String>,
 }
 
 impl Default for FilterConfig {
@@ -30,12 +32,13 @@ impl Default for FilterConfig {
             include_categories: HashSet::new(),
             exclude_categories: HashSet::new(),
             max_logs: 10000,
+            target_filter: None,
         }
     }
 }
 
 /// Log filter for determining which logs to keep and display
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LogFilter {
     config: FilterConfig,
     exact_level: Option<LogLevel>,
@@ -62,6 +65,13 @@ impl LogFilter {
         } else {
             // Check minimum level
             if log.level < self.config.min_level {
+                return false;
+            }
+        }
+        
+        // Check simple target filter first
+        if let Some(ref filter) = self.config.target_filter {
+            if !log.metadata.target.contains(filter) {
                 return false;
             }
         }

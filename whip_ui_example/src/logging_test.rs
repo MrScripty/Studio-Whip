@@ -129,6 +129,7 @@ pub fn test_filtering() {
             include_categories: HashSet::new(),
             exclude_categories: HashSet::new(),
             max_logs: 1000,
+            target_filter: None,
         };
         
         let filter = LogFilter::new(filter_config);

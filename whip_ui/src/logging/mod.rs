@@ -10,7 +10,6 @@ pub mod filter;
 pub mod store;
 pub mod types;
 pub mod tracing_layer;
-pub mod cli;
 
 pub use filter::{LogFilter, FilterConfig};
 pub use store::CentralLogStore;
@@ -41,16 +40,10 @@ pub fn init_tracing() -> Result<(), Box<dyn std::error::Error>> {
     // Create our custom layer that forwards to CentralLogStore
     let whip_ui_layer = WhipUiTracingLayer::new();
     
-    // Create fmt layer for console output (optional, can be disabled in production)
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_file(true)
-        .with_line_number(true);
-    
+    // Note: We don't use the fmt layer here because it bypasses our CLI state control.
+    // All console output is handled by CentralLogStore.forward_to_console() which respects CLI state.
     let subscriber = tracing_subscriber::registry()
-        .with(whip_ui_layer)  // Our custom layer comes first
-        .with(fmt_layer)      // Console output layer
+        .with(whip_ui_layer)  // Our custom layer handles all logging
         .with(tracing_subscriber::EnvFilter::from_default_env());
     
     tracing::subscriber::set_global_default(subscriber)?;

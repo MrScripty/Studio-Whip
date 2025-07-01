@@ -214,7 +214,7 @@ impl TerminalRenderer for BasicTerminalRenderer {
         // Draw help line below the input box
         stdout.queue(MoveTo(0, footer_start + 3))?;
         stdout.queue(SetForegroundColor(Color::DarkGrey))?;
-        stdout.queue(Print("Commands: /quit, /filter <level>, /clear, /save <path> | ↑↓ Navigate | Enter: Details"))?;
+        stdout.queue(Print("Commands: /quit, /filter <level>, /clear, /save <path>, /copy | ↑↓ Navigate | Enter: Details"))?;
         stdout.queue(ResetColor)?;
         
         // Position cursor at the correct location in the input (inside the border)
@@ -289,8 +289,8 @@ impl TerminalRenderer for RatatuiTerminalRenderer {
             // Set cursor position in the input area
             #[allow(clippy::cast_possible_truncation)]
             f.set_cursor_position(Position::new(
-                // Add 2 for "> " prefix, then add cursor position
-                input_area.x + cursor_position as u16 + 2,
+                // Add 1 for border, 2 for "> " prefix, then add cursor position
+                input_area.x + 1 + cursor_position as u16 + 2,
                 // Move one line down from the border to the input line
                 input_area.y + 1,
             ));
@@ -380,7 +380,7 @@ impl RatatuiTerminalRenderer {
         frame.render_stateful_widget(logs_widget, chunks[1], list_state);
         
         // Draw input area
-        let help_text = "Commands: /quit, /filter <level>, /clear, /save <path> | ↑↓ Navigate | Enter: Details";
+        let help_text = "Commands: /quit, /filter <level>, /clear, /save <path>, /copy | ↑↓ Navigate | Enter: Details";
         
         let input_layout = Layout::default()
             .direction(Direction::Vertical)

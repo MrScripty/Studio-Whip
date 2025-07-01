@@ -1,10 +1,10 @@
 //! CLI plugin and main event loop
 
+use crate::cli::{
+    BasicTerminalRenderer, RatatuiTerminalRenderer, CliCommand, CliFrameState, CommandParser, TerminalRenderer,
+    TerminalSession,
+};
 use crate::logging::{
-    cli::{
-        BasicTerminalRenderer, RatatuiTerminalRenderer, CliCommand, CliFrameState, CommandParser, TerminalRenderer,
-        TerminalSession,
-    },
     filter::{FilterConfig, LogFilter},
     get_log_store,
     LogData,
@@ -21,6 +21,7 @@ use std::{
     thread,
     time::Duration,
 };
+use arboard::Clipboard;
 
 /// Commands sent to the CLI thread
 #[derive(Debug)]
@@ -304,8 +305,19 @@ impl CliState {
                 }
                 self.needs_redraw = true;
             }
+            CliCommand::Copy => {
+                match copy_logs_to_clipboard(&self.cached_logs) {
+                    Ok(count) => {
+                        self.status_message = format!("Copied {} logs to clipboard", count);
+                    }
+                    Err(e) => {
+                        self.status_message = format!("Failed to copy to clipboard: {}", e);
+                    }
+                }
+                self.needs_redraw = true;
+            }
             CliCommand::Help => {
-                self.status_message = "Commands: /quit, /filter <level|target>, /clear, /save <path>".to_string();
+                self.status_message = "Commands: /quit, /filter <level|target>, /clear, /save <path>, /copy".to_string();
                 self.needs_redraw = true;
             }
             _ => {}
@@ -323,6 +335,20 @@ fn save_logs_to_file(logs: &[LogData], path: &str) -> io::Result<usize> {
     Ok(logs.len())
 }
 
+/// Copy logs to clipboard
+fn copy_logs_to_clipboard(logs: &[LogData]) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut clipboard = Clipboard::new()?;
+    
+    let mut content = String::new();
+    for log in logs {
+        content.push_str(&log.format_display());
+        content.push('\n');
+    }
+    
+    clipboard.set_text(content)?;
+    Ok(logs.len())
+}
+
 /// Main CLI event loop
 fn cli_event_loop(receiver: Receiver<CliThreadCommand>) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal session
@@ -331,6 +357,9 @@ fn cli_event_loop(receiver: Receiver<CliThreadCommand>) -> Result<(), Box<dyn st
     // Get log store reference
     let log_store = get_log_store()
         .ok_or("Log store not initialized")?;
+    
+    // Notify log store that CLI is now active
+    log_store.set_cli_active(true);
     
     // Initialize renderer and state - try Ratatui first, fall back to Basic
     let mut renderer: Box<dyn TerminalRenderer> = match RatatuiTerminalRenderer::new() {
@@ -425,6 +454,9 @@ fn cli_event_loop(receiver: Receiver<CliThreadCommand>) -> Result<(), Box<dyn st
         }
     }
     
+    // Notify log store that CLI is no longer active
+    log_store.set_cli_active(false);
+    
     Ok(())
 }
 
@@ -447,18 +479,17 @@ impl bevy_app::Plugin for CliPlugin {
 }
 
 /// Launch the CLI in a separate thread
-pub fn launch_cli() -> Result<thread::JoinHandle<()>, Box<dyn std::error::Error>> {
+/// Returns both the thread handle and a sender channel for controlling the CLI
+pub fn launch_cli() -> Result<(thread::JoinHandle<()>, Sender<CliThreadCommand>), Box<dyn std::error::Error>> {
     let (sender, receiver) = bounded(10);
     
     let handle = thread::spawn(move || {
-        // Keep sender alive by moving it into the thread
-        let _sender = sender;
         if let Err(e) = cli_event_loop(receiver) {
             eprintln!("CLI error: {}", e);
         }
     });
     
-    Ok(handle)
+    Ok((handle, sender))
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ pub mod widgets;
 pub mod layout;
 pub mod assets;
 pub mod logging;
+pub mod cli;
 pub mod whip_ui_plugin;
 
 // Re-export commonly used types and components
@@ -71,6 +72,13 @@ pub use logging::{
     init_logging_service,
     get_log_store,
     init_tracing,
+};
+
+// Re-export CLI system
+pub use cli::{
+    launch_cli,
+    CliPlugin,
+    CliThreadCommand,
 };
 
 // Re-export main plugin

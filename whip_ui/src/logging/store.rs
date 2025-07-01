@@ -37,6 +37,7 @@ enum LogStoreMessage {
         response: crossbeam_channel::Sender<LogStoreStats>,
     },
     UpdateFilter(FilterConfig),
+    SetCliActive(bool),
     Clear,
     Shutdown,
 }
@@ -57,6 +58,7 @@ struct LogStoreWorker {
     logs_dropped: u64,
     filter: LogFilter,
     last_cleanup: SystemTime,
+    cli_active: bool,
 }
 
 impl LogStoreWorker {
@@ -70,6 +72,7 @@ impl LogStoreWorker {
             logs_dropped: 0,
             filter: LogFilter::default(),
             last_cleanup: SystemTime::now(),
+            cli_active: false,
         }
     }
     
@@ -78,6 +81,11 @@ impl LogStoreWorker {
         
         // Set unique ID
         log.id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        
+        // Forward to console if CLI is not active
+        if !self.cli_active {
+            self.forward_to_console(&log);
+        }
         
         // Check for duplicates (only check recent logs for performance)
         let check_count = std::cmp::min(self.logs.len(), 100);
@@ -162,6 +170,39 @@ impl LogStoreWorker {
             self.logs_dropped += removed as u64;
         }
     }
+    
+    fn set_cli_active(&mut self, active: bool) {
+        self.cli_active = active;
+    }
+    
+    fn forward_to_console(&self, log: &LogData) {
+        // Forward log to standard console output
+        // This mimics what the fmt layer would do
+        let timestamp = log.metadata.timestamp
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        let hours = (timestamp / 3600) % 24;
+        let minutes = (timestamp / 60) % 60;
+        let seconds = timestamp % 60;
+        let time_str = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
+        
+        let level_str = match log.level {
+            LogLevel::Trace => "TRACE",
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Info => " INFO",
+            LogLevel::Warn => " WARN",
+            LogLevel::Error => "ERROR",
+        };
+        
+        // Only output to stderr for errors and warnings, stdout for others
+        if log.level >= LogLevel::Warn {
+            eprintln!("{} {} {}: {}", time_str, level_str, log.metadata.target, log.message);
+        } else {
+            println!("{} {} {}: {}", time_str, level_str, log.metadata.target, log.message);
+        }
+    }
 }
 
 impl CentralLogStore {
@@ -187,6 +228,9 @@ impl CentralLogStore {
                     }
                     Ok(LogStoreMessage::UpdateFilter(config)) => {
                         worker.update_filter(config);
+                    }
+                    Ok(LogStoreMessage::SetCliActive(active)) => {
+                        worker.set_cli_active(active);
                     }
                     Ok(LogStoreMessage::Clear) => {
                         worker.clear();
@@ -286,6 +330,13 @@ impl CentralLogStore {
     /// Clear all logs
     pub fn clear(&self) {
         let _ = self.sender.try_send(LogStoreMessage::Clear);
+    }
+    
+    /// Set whether the CLI is currently active
+    /// When CLI is active, logs are not forwarded to console
+    /// When CLI is inactive, logs are forwarded to console for display
+    pub fn set_cli_active(&self, active: bool) {
+        let _ = self.sender.try_send(LogStoreMessage::SetCliActive(active));
     }
 }
 

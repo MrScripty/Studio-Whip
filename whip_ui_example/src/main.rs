@@ -24,10 +24,10 @@ fn run_gui_mode(enable_cli: bool) {
     info!("Starting whip_ui example...");
 
     // Launch CLI if requested
-    let _cli_handle = if enable_cli {
+    let cli_control = if enable_cli {
         println!("Launching CLI log viewer alongside GUI...");
-        match whip_ui::logging::cli::launch_cli() {
-            Ok(handle) => {
+        match whip_ui::launch_cli() {
+            Ok((handle, sender)) => {
                 println!("CLI launched. Use /quit to exit CLI (GUI will continue running).");
                 
                 // Generate some logs periodically for demonstration
@@ -59,7 +59,7 @@ fn run_gui_mode(enable_cli: bool) {
                     }
                 });
                 
-                Some(handle)
+                Some((handle, sender))
             }
             Err(e) => {
                 eprintln!("Failed to launch CLI: {}", e);
@@ -81,7 +81,22 @@ fn run_gui_mode(enable_cli: bool) {
         .add_plugins(WhipUiPlugin::new("ui/layouts/main.json"))
         .run();
         
-    // Note: CLI handle is dropped here, but the CLI thread continues running independently
+    // Clean up CLI when GUI exits
+    if let Some((handle, sender)) = cli_control {
+        println!("GUI exiting, shutting down CLI...");
+        
+        // Send shutdown signal to CLI
+        if let Err(e) = sender.send(whip_ui::CliThreadCommand::Shutdown) {
+            eprintln!("Failed to send shutdown signal to CLI: {}", e);
+        }
+        
+        // Wait for CLI thread to exit cleanly
+        if let Err(e) = handle.join() {
+            eprintln!("CLI thread did not exit cleanly: {:?}", e);
+        } else {
+            println!("CLI shut down cleanly.");
+        }
+    }
 }
 
 /// Test the advanced logging service integration

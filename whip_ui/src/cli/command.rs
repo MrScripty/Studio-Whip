@@ -19,6 +19,8 @@ pub enum CliCommand {
     Save {
         path: String,
     },
+    /// Copy logs to clipboard
+    Copy,
     /// Navigate up
     Up,
     /// Navigate down
@@ -84,6 +86,7 @@ impl CommandParser {
                         None
                     }
                 }
+                "copy" | "cp" => Some(CliCommand::Copy),
                 _ => None,
             }
         } else {
@@ -160,6 +163,13 @@ mod tests {
                 path: "/tmp/my logs.txt".to_string(),
             })
         );
+    }
+    
+    #[test]
+    fn test_copy_command() {
+        assert_eq!(CommandParser::parse("/copy"), Some(CliCommand::Copy));
+        assert_eq!(CommandParser::parse("/cp"), Some(CliCommand::Copy));
+        assert_eq!(CommandParser::parse("  /copy  "), Some(CliCommand::Copy));
     }
     
     #[test]

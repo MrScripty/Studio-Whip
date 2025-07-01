@@ -14,6 +14,7 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     terminal,
 };
+use tui_textarea::TextArea;
 use std::{
     fs::File,
     io::{self, Write},
@@ -30,8 +31,8 @@ pub enum CliThreadCommand {
 
 /// State of the CLI application
 struct CliState {
-    /// Current input buffer
-    input_buffer: String,
+    /// Command input text area
+    input_area: TextArea<'static>,
     /// Current status message
     status_message: String,
     /// Current scroll offset
@@ -51,8 +52,11 @@ struct CliState {
 impl CliState {
     fn new() -> Self {
         let terminal_size = terminal::size().unwrap_or((80, 24));
+        let mut input_area = TextArea::default();
+        input_area.set_placeholder_text("Type commands here (e.g., /filter info, /clear, /quit)");
+        
         Self {
-            input_buffer: String::new(),
+            input_area,
             status_message: "Ready. Type /help for commands.".to_string(),
             scroll_offset: 0,
             selected_index: None,
@@ -76,9 +80,11 @@ impl CliState {
     fn handle_key(&mut self, key: KeyEvent) -> Option<CliCommand> {
         match key.code {
             KeyCode::Enter => {
-                if self.input_buffer.starts_with('/') {
-                    let command = CommandParser::parse(&self.input_buffer);
-                    self.input_buffer.clear();
+                let input_text = self.input_area.lines().join("");
+                if input_text.starts_with('/') {
+                    let command = CommandParser::parse(&input_text);
+                    self.input_area.delete_line_by_head();
+                    self.input_area.delete_line_by_end();
                     self.needs_redraw = true;
                     return command;
                 } else if self.selected_index.is_some() {
@@ -93,25 +99,24 @@ impl CliState {
                     }
                 }
             }
-            KeyCode::Char(c) => {
-                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
-                    return Some(CliCommand::Quit);
-                }
-                self.input_buffer.push(c);
-                self.needs_redraw = true;
-            }
-            KeyCode::Backspace => {
-                self.input_buffer.pop();
-                self.needs_redraw = true;
-            }
             KeyCode::Up => {
-                if self.scroll_offset > 0 {
+                // Check if input area is focused and has content
+                if !self.input_area.is_empty() {
+                    // Input area handles this
+                    self.input_area.input(key);
+                    self.needs_redraw = true;
+                } else if self.scroll_offset > 0 {
                     self.scroll_offset -= 1;
                     self.needs_redraw = true;
                 }
             }
             KeyCode::Down => {
-                if self.scroll_offset < self.cached_logs.len().saturating_sub(1) {
+                // Check if input area is focused and has content
+                if !self.input_area.is_empty() {
+                    // Input area handles this
+                    self.input_area.input(key);
+                    self.needs_redraw = true;
+                } else if self.scroll_offset < self.cached_logs.len().saturating_sub(1) {
                     self.scroll_offset += 1;
                     self.needs_redraw = true;
                 }
@@ -147,14 +152,25 @@ impl CliState {
                 }
             }
             KeyCode::Esc => {
-                let changed = self.selected_index.is_some() || !self.input_buffer.is_empty();
+                let had_input = !self.input_area.is_empty();
+                let had_selection = self.selected_index.is_some();
+                
                 self.selected_index = None;
-                self.input_buffer.clear();
-                if changed {
+                self.input_area.delete_line_by_head();
+                self.input_area.delete_line_by_end();
+                
+                if had_input || had_selection {
                     self.needs_redraw = true;
                 }
             }
-            _ => {}
+            _ => {
+                // Let TextArea handle other input
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                    return Some(CliCommand::Quit);
+                }
+                self.input_area.input(key);
+                self.needs_redraw = true;
+            }
         }
         None
     }
@@ -321,9 +337,10 @@ fn cli_event_loop(receiver: Receiver<CliThreadCommand>) -> Result<(), Box<dyn st
         
         // Render frame only if needed
         if state.needs_redraw {
+            let input_text = state.input_area.lines().join("");
             let frame_state = CliFrameState {
                 logs: &state.cached_logs,
-                input_buffer: &state.input_buffer,
+                input_buffer: &input_text,
                 status_message: &state.status_message,
                 scroll_offset: state.scroll_offset,
                 terminal_size: state.terminal_size,

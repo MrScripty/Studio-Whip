@@ -14,7 +14,6 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     terminal,
 };
-use tui_textarea::TextArea;
 use std::{
     fs::File,
     io::{self, Write},
@@ -31,8 +30,10 @@ pub enum CliThreadCommand {
 
 /// State of the CLI application
 struct CliState {
-    /// Command input text area
-    input_area: TextArea<'static>,
+    /// Command input text buffer
+    input_buffer: String,
+    /// Current cursor position in input buffer
+    cursor_position: usize,
     /// Current status message
     status_message: String,
     /// Current scroll offset
@@ -52,11 +53,10 @@ struct CliState {
 impl CliState {
     fn new() -> Self {
         let terminal_size = terminal::size().unwrap_or((80, 24));
-        let mut input_area = TextArea::default();
-        input_area.set_placeholder_text("Type commands here (e.g., /filter info, /clear, /quit)");
         
         Self {
-            input_area,
+            input_buffer: String::new(),
+            cursor_position: 0,
             status_message: "Ready. Type /help for commands.".to_string(),
             scroll_offset: 0,
             selected_index: None,
@@ -76,15 +76,70 @@ impl CliState {
         }
     }
     
+    /// Move cursor left (character-based, not byte-based)
+    fn move_cursor_left(&mut self) {
+        let cursor_moved_left = self.cursor_position.saturating_sub(1);
+        self.cursor_position = self.clamp_cursor(cursor_moved_left);
+    }
+
+    /// Move cursor right (character-based, not byte-based)
+    fn move_cursor_right(&mut self) {
+        let cursor_moved_right = self.cursor_position.saturating_add(1);
+        self.cursor_position = self.clamp_cursor(cursor_moved_right);
+    }
+
+    /// Insert character at cursor position
+    fn enter_char(&mut self, new_char: char) {
+        let index = self.byte_index();
+        self.input_buffer.insert(index, new_char);
+        self.move_cursor_right();
+    }
+
+    /// Returns the byte index based on the character position
+    fn byte_index(&self) -> usize {
+        self.input_buffer
+            .char_indices()
+            .map(|(i, _)| i)
+            .nth(self.cursor_position)
+            .unwrap_or(self.input_buffer.len())
+    }
+
+    /// Delete character before cursor (backspace)
+    fn delete_char(&mut self) {
+        let is_not_cursor_leftmost = self.cursor_position != 0;
+        if is_not_cursor_leftmost {
+            let current_index = self.cursor_position;
+            let from_left_to_current_index = current_index - 1;
+
+            // Getting all characters before the selected character
+            let before_char_to_delete = self.input_buffer.chars().take(from_left_to_current_index);
+            // Getting all characters after selected character
+            let after_char_to_delete = self.input_buffer.chars().skip(current_index);
+
+            // Put all characters together except the selected one
+            self.input_buffer = before_char_to_delete.chain(after_char_to_delete).collect();
+            self.move_cursor_left();
+        }
+    }
+
+    /// Clamp cursor position to valid range
+    fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
+        new_cursor_pos.clamp(0, self.input_buffer.chars().count())
+    }
+
+    /// Reset cursor to beginning
+    fn reset_cursor(&mut self) {
+        self.cursor_position = 0;
+    }
+
     /// Handle keyboard input
     fn handle_key(&mut self, key: KeyEvent) -> Option<CliCommand> {
         match key.code {
             KeyCode::Enter => {
-                let input_text = self.input_area.lines().join("");
-                if input_text.starts_with('/') {
-                    let command = CommandParser::parse(&input_text);
-                    self.input_area.delete_line_by_head();
-                    self.input_area.delete_line_by_end();
+                if self.input_buffer.starts_with('/') {
+                    let command = CommandParser::parse(&self.input_buffer);
+                    self.input_buffer.clear();
+                    self.reset_cursor();
                     self.needs_redraw = true;
                     return command;
                 } else if self.selected_index.is_some() {
@@ -100,76 +155,105 @@ impl CliState {
                 }
             }
             KeyCode::Up => {
-                // Check if input area is focused and has content
-                if !self.input_area.is_empty() {
-                    // Input area handles this
-                    self.input_area.input(key);
-                    self.needs_redraw = true;
-                } else if self.scroll_offset > 0 {
+                // Only navigate logs when input is empty
+                if self.input_buffer.is_empty() && self.scroll_offset > 0 {
                     self.scroll_offset -= 1;
                     self.needs_redraw = true;
                 }
             }
             KeyCode::Down => {
-                // Check if input area is focused and has content
-                if !self.input_area.is_empty() {
-                    // Input area handles this
-                    self.input_area.input(key);
-                    self.needs_redraw = true;
-                } else if self.scroll_offset < self.cached_logs.len().saturating_sub(1) {
+                // Only navigate logs when input is empty
+                if self.input_buffer.is_empty() && self.scroll_offset < self.cached_logs.len().saturating_sub(1) {
                     self.scroll_offset += 1;
                     self.needs_redraw = true;
                 }
             }
-            KeyCode::PageUp => {
-                let page_size = self.terminal_size.1.saturating_sub(6) as usize;
-                let new_offset = self.scroll_offset.saturating_sub(page_size);
-                if new_offset != self.scroll_offset {
-                    self.scroll_offset = new_offset;
-                    self.needs_redraw = true;
-                }
+            KeyCode::Left => {
+                self.move_cursor_left();
+                self.needs_redraw = true;
             }
-            KeyCode::PageDown => {
-                let page_size = self.terminal_size.1.saturating_sub(6) as usize;
-                let new_offset = (self.scroll_offset + page_size)
-                    .min(self.cached_logs.len().saturating_sub(1));
-                if new_offset != self.scroll_offset {
-                    self.scroll_offset = new_offset;
-                    self.needs_redraw = true;
-                }
+            KeyCode::Right => {
+                self.move_cursor_right();
+                self.needs_redraw = true;
             }
             KeyCode::Home => {
-                if self.scroll_offset != 0 {
+                if !self.input_buffer.is_empty() {
+                    self.cursor_position = 0;
+                    self.needs_redraw = true;
+                } else if self.scroll_offset != 0 {
                     self.scroll_offset = 0;
                     self.needs_redraw = true;
                 }
             }
             KeyCode::End => {
-                let new_offset = self.cached_logs.len().saturating_sub(1);
-                if self.scroll_offset != new_offset {
-                    self.scroll_offset = new_offset;
+                if !self.input_buffer.is_empty() {
+                    self.cursor_position = self.input_buffer.chars().count();
+                    self.needs_redraw = true;
+                } else {
+                    let new_offset = self.cached_logs.len().saturating_sub(1);
+                    if self.scroll_offset != new_offset {
+                        self.scroll_offset = new_offset;
+                        self.needs_redraw = true;
+                    }
+                }
+            }
+            KeyCode::PageUp => {
+                if self.input_buffer.is_empty() {
+                    let page_size = self.terminal_size.1.saturating_sub(6) as usize;
+                    let new_offset = self.scroll_offset.saturating_sub(page_size);
+                    if new_offset != self.scroll_offset {
+                        self.scroll_offset = new_offset;
+                        self.needs_redraw = true;
+                    }
+                }
+            }
+            KeyCode::PageDown => {
+                if self.input_buffer.is_empty() {
+                    let page_size = self.terminal_size.1.saturating_sub(6) as usize;
+                    let new_offset = (self.scroll_offset + page_size)
+                        .min(self.cached_logs.len().saturating_sub(1));
+                    if new_offset != self.scroll_offset {
+                        self.scroll_offset = new_offset;
+                        self.needs_redraw = true;
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                self.delete_char();
+                self.needs_redraw = true;
+            }
+            KeyCode::Delete => {
+                if self.cursor_position < self.input_buffer.chars().count() {
+                    // Move cursor right then delete to simulate delete key
+                    self.move_cursor_right();
+                    self.delete_char();
                     self.needs_redraw = true;
                 }
             }
             KeyCode::Esc => {
-                let had_input = !self.input_area.is_empty();
+                let had_input = !self.input_buffer.is_empty();
                 let had_selection = self.selected_index.is_some();
                 
+                self.input_buffer.clear();
+                self.reset_cursor();
                 self.selected_index = None;
-                self.input_area.delete_line_by_head();
-                self.input_area.delete_line_by_end();
                 
                 if had_input || had_selection {
                     self.needs_redraw = true;
                 }
             }
-            _ => {
-                // Let TextArea handle other input
-                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            KeyCode::Char(c) => {
+                // Handle regular character input
+                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
                     return Some(CliCommand::Quit);
                 }
-                self.input_area.input(key);
+                
+                // Insert character at cursor position
+                self.enter_char(c);
                 self.needs_redraw = true;
+            }
+            _ => {
+                // Ignore other key codes
             }
         }
         None
@@ -337,10 +421,10 @@ fn cli_event_loop(receiver: Receiver<CliThreadCommand>) -> Result<(), Box<dyn st
         
         // Render frame only if needed
         if state.needs_redraw {
-            let input_text = state.input_area.lines().join("");
             let frame_state = CliFrameState {
                 logs: &state.cached_logs,
-                input_buffer: &input_text,
+                input_buffer: &state.input_buffer,
+                cursor_position: state.cursor_position,
                 status_message: &state.status_message,
                 scroll_offset: state.scroll_offset,
                 terminal_size: state.terminal_size,
@@ -396,6 +480,7 @@ mod tests {
     fn test_cli_state_creation() {
         let state = CliState::new();
         assert!(state.input_buffer.is_empty());
+        assert_eq!(state.cursor_position, 0);
         assert_eq!(state.scroll_offset, 0);
         assert!(state.selected_index.is_none());
     }

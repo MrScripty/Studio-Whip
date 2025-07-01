@@ -9,7 +9,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Position},
     style::{Color as RatatuiColor, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
@@ -24,6 +24,8 @@ pub struct CliFrameState<'a> {
     pub logs: &'a [LogData],
     /// Current input buffer content
     pub input_buffer: &'a str,
+    /// Current cursor position in input buffer (character-based)
+    pub cursor_position: usize,
     /// Status message to display
     pub status_message: &'a str,
     /// Current scroll offset
@@ -177,7 +179,7 @@ impl TerminalRenderer for BasicTerminalRenderer {
         // Draw input line
         stdout.queue(MoveTo(0, footer_start + 1))?;
         stdout.queue(Print("> "))?;
-        stdout.queue(Print(&state.input_buffer))?;
+        stdout.queue(Print(state.input_buffer))?;
         
         // Draw help line
         stdout.queue(MoveTo(0, footer_start + 2))?;
@@ -185,8 +187,9 @@ impl TerminalRenderer for BasicTerminalRenderer {
         stdout.queue(Print("Commands: /quit, /filter <level>, /clear, /save <path> | ↑↓ Navigate | Enter: Details"))?;
         stdout.queue(ResetColor)?;
         
-        // Position cursor at input
-        stdout.queue(MoveTo((2 + state.input_buffer.len()) as u16, footer_start + 1))?;
+        // Position cursor at the correct location in the input
+        let cursor_x = 2 + state.cursor_position; // 2 for "> " prefix
+        stdout.queue(MoveTo(cursor_x as u16, footer_start + 1))?;
         
         stdout.flush()?;
         Ok(())
@@ -248,9 +251,19 @@ impl TerminalRenderer for RatatuiTerminalRenderer {
         
         let input_text = format!("> {}", state.input_buffer);
         let status_message = state.status_message.to_string();
+        let cursor_position = state.cursor_position;
         
         self.terminal.draw(|f| {
-            Self::draw_ui_static(f, &mut self.list_state, &log_items, &input_text, &status_message);
+            let input_area = Self::draw_ui_static(f, &mut self.list_state, &log_items, &input_text, &status_message);
+            
+            // Set cursor position in the input area
+            #[allow(clippy::cast_possible_truncation)]
+            f.set_cursor_position(Position::new(
+                // Add 2 for "> " prefix, then add cursor position
+                input_area.x + cursor_position as u16 + 2,
+                // Move one line down from the border to the input line
+                input_area.y + 1,
+            ));
         })?;
         
         Ok(())
@@ -299,13 +312,14 @@ impl RatatuiTerminalRenderer {
     }
     
     /// Draw the UI using ratatui widgets (static version to avoid borrowing issues)
+    /// Returns the input area Rect for cursor positioning
     fn draw_ui_static(
         frame: &mut Frame, 
         list_state: &mut ListState, 
         log_items: &[ListItem], 
         input_text: &str, 
-        status_message: &str
-    ) {
+        status_message: &str,
+    ) -> ratatui::layout::Rect {
         // Create main layout
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -341,7 +355,7 @@ impl RatatuiTerminalRenderer {
         let input_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // Input line  
+                Constraint::Length(3), // Input area (needs more space for TextArea)
                 Constraint::Length(1), // Help line
             ])
             .split(chunks[2]);
@@ -353,6 +367,9 @@ impl RatatuiTerminalRenderer {
         let help_widget = Paragraph::new(help_text)
             .style(Style::default().fg(RatatuiColor::Gray));
         frame.render_widget(help_widget, input_layout[1]);
+        
+        // Return the input area for cursor positioning
+        input_layout[0]
     }
 }
 

@@ -4,6 +4,8 @@ use bevy_ecs::schedule::{SystemSet, common_conditions::{not, on_event}};
 use bevy_log::{info, error, warn, trace};
 use bevy_window::{PrimaryWindow, Window};
 use bevy_winit::WinitWindows;
+#[cfg(feature = "debug_logging")]
+use bevy_diagnostic::{DiagnosticsPlugin, FrameTimeDiagnosticsPlugin, EntityCountDiagnosticsPlugin};
 use bevy_transform::prelude::{GlobalTransform, Transform};
 use std::sync::{Arc, Mutex};
 use std::collections::{HashMap, HashSet};
@@ -42,6 +44,10 @@ use crate::gui_framework::systems::{
 use crate::gui_framework::debug::{DebugRingBuffer, update_debug_ring_buffer_system};
 #[cfg(feature = "debug_logging")]
 use crate::gui_framework::debug::log_buffer_stats_system;
+// Temporarily comment out custom diagnostics until we get the basic ones working
+// use crate::gui_framework::diagnostics::{UiDiagnosticsPlugin, UiDiagnosticsTimer};
+// #[cfg(feature = "debug_logging")]
+// use crate::gui_framework::diagnostics::ui_diagnostics_log_system;
 use crate::gui_framework::{
     context::vulkan_context::VulkanContext,
     context::vulkan_setup::{setup_vulkan, cleanup_vulkan},
@@ -90,6 +96,16 @@ pub struct GuiFrameworkCorePlugin;
 
 impl Plugin for GuiFrameworkCorePlugin {
     fn build(&self, app: &mut App) {
+        // --- Diagnostics Plugins ---
+        #[cfg(feature = "debug_logging")]
+        {
+            app.add_plugins((
+                DiagnosticsPlugin,
+                FrameTimeDiagnosticsPlugin,
+                EntityCountDiagnosticsPlugin,
+            ));
+        }
+
         // --- Type Registration ---
         app.register_type::<ShapeData>();
         app.register_type::<Visibility>();

@@ -1,22 +1,21 @@
 use ash::vk;
 use crate::gui_framework::context::vulkan_context::VulkanContext;
 use crate::{PreparedDrawData, PreparedTextDrawData};
-use bevy_log::info;
 
 pub fn record_command_buffers(
     platform: &VulkanContext,
     prepared_shape_draws: &[PreparedDrawData],
     prepared_text_draws: &[PreparedTextDrawData],
     extent: vk::Extent2D,
-    debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
+    mut _debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
 ) {
     #[cfg(feature = "debug_logging")]
     {
         let message = format!("[record_command_buffers] Entered. Shape draws: {}, Text draws: {}", prepared_shape_draws.len(), prepared_text_draws.len());
-        if let Some(ref mut buffer) = debug_buffer {
+        if let Some(ref mut buffer) = _debug_buffer {
             buffer.add_rendering_context(message);
         } else {
-            info!("{}", message);
+            bevy_log::info!("{}", message);
         }
     }
 
@@ -94,52 +93,52 @@ pub fn record_command_buffers(
             #[cfg(feature = "debug_logging")]
             {
                 let message = format!("[record_command_buffers] Processing {} text draws.", prepared_text_draws.len());
-                if let Some(ref mut buffer) = debug_buffer {
+                if let Some(ref mut buffer) = _debug_buffer {
                     buffer.add_rendering_context(message);
                 } else {
-                    info!("{}", message);
+                    bevy_log::info!("{}", message);
                 }
             }
             let text_pipeline_layout = platform.text_pipeline_layout.expect("Text pipeline layout missing");
             let mut current_text_pipeline = vk::Pipeline::null();
 
-            for (i, text_draw) in prepared_text_draws.iter().enumerate() { // Iterate with index and reference
+            for (_i, text_draw) in prepared_text_draws.iter().enumerate() { // Iterate with index and reference
                 if text_draw.vertex_count > 0 {
                     #[cfg(feature = "trace_logging")]
                     {
                         let message = format!("[record_command_buffers] Text Draw Index {}: Attempting to bind resources. VB: {:?}, Vertices: {}, DS0: {:?}, DS1: {:?}",
-                            i,
+                            _i,
                             text_draw.vertex_buffer,
                             text_draw.vertex_count,
                             text_draw.projection_descriptor_set,
                             text_draw.atlas_descriptor_set
                         );
-                        if let Some(ref mut buffer) = debug_buffer {
+                        if let Some(ref mut buffer) = _debug_buffer {
                             buffer.add_rendering_context(message);
                         } else {
-                            info!("{}", message);
+                            bevy_log::info!("{}", message);
                         }
                     }
                     if text_draw.pipeline != current_text_pipeline {
                         device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, text_draw.pipeline);
                         #[cfg(feature = "trace_logging")]
                         {
-                            let message = format!("[record_command_buffers] Text Draw Index {}: Bound NEW pipeline.", i);
-                            if let Some(ref mut buffer) = debug_buffer {
+                            let message = format!("[record_command_buffers] Text Draw Index {}: Bound NEW pipeline.", _i);
+                            if let Some(ref mut buffer) = _debug_buffer {
                                 buffer.add_rendering_context(message);
                             } else {
-                                info!("{}", message);
+                                bevy_log::info!("{}", message);
                             }
                         }
                         current_text_pipeline = text_draw.pipeline;
                     } else {
                         #[cfg(feature = "trace_logging")]
                         {
-                            let message = format!("[record_command_buffers] Text Draw Index {}: Reusing current pipeline.", i);
-                            if let Some(ref mut buffer) = debug_buffer {
+                            let message = format!("[record_command_buffers] Text Draw Index {}: Reusing current pipeline.", _i);
+                            if let Some(ref mut buffer) = _debug_buffer {
                                 buffer.add_rendering_context(message);
                             } else {
-                                info!("{}", message);
+                                bevy_log::info!("{}", message);
                             }
                         }
                     }
@@ -153,11 +152,11 @@ pub fn record_command_buffers(
                     device.cmd_bind_vertex_buffers(command_buffer, 0, &[text_draw.vertex_buffer], &offsets);
                     #[cfg(feature = "trace_logging")]
                     {
-                        let message = format!("[record_command_buffers] Text Draw Index {}: Bound vertex buffer.", i);
-                        if let Some(ref mut buffer) = debug_buffer {
+                        let message = format!("[record_command_buffers] Text Draw Index {}: Bound vertex buffer.", _i);
+                        if let Some(ref mut buffer) = _debug_buffer {
                             buffer.add_rendering_context(message);
                         } else {
-                            info!("{}", message);
+                            bevy_log::info!("{}", message);
                         }
                     }
                     device.cmd_draw(
@@ -169,11 +168,11 @@ pub fn record_command_buffers(
                     );
                     #[cfg(feature = "trace_logging")]
                     {
-                        let message = format!("[record_command_buffers] Text Draw Index {}: Draw call executed.", i);
-                        if let Some(ref mut buffer) = debug_buffer {
+                        let message = format!("[record_command_buffers] Text Draw Index {}: Draw call executed.", _i);
+                        if let Some(ref mut buffer) = _debug_buffer {
                             buffer.add_rendering_context(message);
                         } else {
-                            info!("{}", message);
+                            bevy_log::info!("{}", message);
                         }
                     }
                 }
@@ -188,10 +187,10 @@ pub fn record_command_buffers(
     #[cfg(feature = "debug_logging")]
     {
         let message = "[record_command_buffers] Exited successfully.".to_string();
-        if let Some(ref mut buffer) = debug_buffer {
+        if let Some(ref mut buffer) = _debug_buffer {
             buffer.add_rendering_context(message);
         } else {
-            info!("{}", message);
+            bevy_log::info!("{}", message);
         }
     }
 }

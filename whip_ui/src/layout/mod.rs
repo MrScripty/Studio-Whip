@@ -136,7 +136,7 @@ pub fn build_taffy_tree_system(
     window_query: Query<&bevy_window::Window, bevy_ecs::query::With<bevy_window::PrimaryWindow>>,
     _children_query: Query<&Children>,
     _parent_query: Query<&Parent>,
-    mut debug_buffer: Option<ResMut<crate::gui_framework::debug::DebugRingBuffer>>,
+    mut _debug_buffer: Option<ResMut<crate::gui_framework::debug::DebugRingBuffer>>,
 ) {
     taffy_resource.with_tree(|tree| {
         // Create window root container if it doesn't exist
@@ -183,9 +183,9 @@ pub fn build_taffy_tree_system(
         // Process newly added UI nodes - REVERT TO ORIGINAL: Add all to window root for now
         for (entity, mut ui_node, styleable) in ui_node_query.iter_mut() {
             if let Some(root_node) = window_root.node_id {
-                let is_red_rect = entity.index() == 8; // Based on logs showing 8v1#4294967304
+                let _is_red_rect = entity.index() == 8; // Based on logs showing 8v1#4294967304
                 
-                if is_red_rect {
+                if _is_red_rect {
                     #[cfg(feature = "debug_viz")]
                     {
                         let messages = vec![
@@ -194,7 +194,7 @@ pub fn build_taffy_tree_system(
                             format!("   Taffy style being applied: {:?}", styleable.0),
                         ];
                         
-                        if let Some(ref mut buffer) = debug_buffer {
+                        if let Some(ref mut buffer) = _debug_buffer {
                             for message in messages {
                                 buffer.add_layout_context(message);
                             }
@@ -215,7 +215,7 @@ pub fn build_taffy_tree_system(
                 ui_node.taffy_node = Some(taffy_node);
                 ui_node.needs_layout = true;
                 
-                if is_red_rect {
+                if _is_red_rect {
                     #[cfg(feature = "debug_viz")]
                     {
                         let messages = vec![
@@ -223,7 +223,7 @@ pub fn build_taffy_tree_system(
                             format!("   Added as child of window root: {:?}", root_node),
                         ];
                         
-                        if let Some(ref mut buffer) = debug_buffer {
+                        if let Some(ref mut buffer) = _debug_buffer {
                             for message in messages {
                                 buffer.add_layout_context(message);
                             }
@@ -248,7 +248,7 @@ pub fn compute_and_apply_layout_system(
     mut commands: Commands,
     _children_query: Query<&Children>,
     window_query: Query<&bevy_window::Window, bevy_ecs::query::With<bevy_window::PrimaryWindow>>,
-    mut debug_buffer: Option<ResMut<crate::gui_framework::debug::DebugRingBuffer>>,
+    mut _debug_buffer: Option<ResMut<crate::gui_framework::debug::DebugRingBuffer>>,
 ) {
     taffy_resource.with_tree(|tree| {
         // Get window dimensions for coordinate conversion
@@ -281,7 +281,7 @@ pub fn compute_and_apply_layout_system(
                 
                 // Phase 2: Apply layout updates (mutable borrow)
                 for (entity, taffy_node) in entities_to_update {
-                    apply_layout_to_entity(tree, taffy_node, entity, &mut ui_node_query, &mut commands, window_height, debug_buffer.as_deref_mut());
+                    apply_layout_to_entity(tree, taffy_node, entity, &mut ui_node_query, &mut commands, window_height, _debug_buffer.as_deref_mut());
                 }
             }
         }
@@ -356,15 +356,15 @@ fn apply_layout_to_entity(
     ui_node_query: &mut Query<(Entity, &mut UiNode, &mut Transform, Option<&PositionControl>, Option<&mut LayoutPositioned>), With<Styleable>>,
     commands: &mut Commands,
     window_height: f32,
-    debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
+    mut _debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
 ) {
     if let Ok((_, mut ui_node, mut transform, position_control, layout_positioned)) = ui_node_query.get_mut(entity) {
         if let Ok(layout) = tree.layout(taffy_node) {
             // Check if this is the red rectangle for detailed logging
-            let is_red_rect = entity.index() == 8; // Based on logs showing 8v1#4294967304
+            let _is_red_rect = entity.index() == 8; // Based on logs showing 8v1#4294967304
             
             #[cfg(feature = "debug_viz")]
-            if is_red_rect {
+            if _is_red_rect {
                 let mut messages = vec![
                     "🔴 RED RECTANGLE LAYOUT DEBUG:".to_string(),
                     format!("   Entity: {:?}", entity),
@@ -404,7 +404,7 @@ fn apply_layout_to_entity(
             }
             
             #[cfg(feature = "trace_logging")]
-            if !is_red_rect {
+            if !_is_red_rect {
                 bevy_log::trace!("Raw Taffy layout for entity {:?}: location=({}, {}), size=({}, {})", 
                     entity, layout.location.x, layout.location.y, layout.size.width, layout.size.height);
             }
@@ -434,9 +434,9 @@ fn apply_layout_to_entity(
                         // Taffy's layout.location is in Taffy coordinate space (top-left origin, Y down)
                         
                         #[cfg(feature = "debug_viz")]
-                        if is_red_rect {
+                        if _is_red_rect {
                             let message = format!("🔴 ABSOLUTE POSITIONING: Taffy layout.location = ({}, {})", layout.location.x, layout.location.y);
-                            if let Some(ref mut buffer) = debug_buffer {
+                            if let Some(ref mut buffer) = _debug_buffer {
                                 buffer.add_layout_context(message);
                             } else {
                                 bevy_log::debug!("{}", message);
@@ -450,7 +450,7 @@ fn apply_layout_to_entity(
                         coordinate_system::update_ui_transform(&mut transform, bevy_coords);
                         
                         #[cfg(feature = "debug_viz")]
-                        if is_red_rect {
+                        if _is_red_rect {
                             let messages = vec![
                                 "   🔄 ABSOLUTE COORDINATE CONVERSION:".to_string(),
                                 format!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y),
@@ -459,7 +459,7 @@ fn apply_layout_to_entity(
                                 format!("      Final transform.translation: {:?}", transform.translation),
                             ];
                             
-                            if let Some(ref mut buffer) = debug_buffer {
+                            if let Some(ref mut buffer) = _debug_buffer {
                                 for message in messages {
                                     buffer.add_layout_context(message);
                                 }
@@ -473,7 +473,7 @@ fn apply_layout_to_entity(
                         }
                         
                         #[cfg(feature = "trace_logging")]
-                        if !is_red_rect {
+                        if !_is_red_rect {
                             bevy_log::trace!("Applied absolute layout to entity {:?}: Taffy pos=({}, {}) -> Bevy pos=({}, {}), size=({}, {})", 
                                 entity, layout.location.x, layout.location.y, bevy_coords.raw().x, bevy_coords.raw().y, layout.size.width, layout.size.height);
                         }
@@ -485,14 +485,14 @@ fn apply_layout_to_entity(
                         transform.translation = final_position;
                         
                         #[cfg(feature = "debug_viz")]
-                        if is_red_rect {
+                        if _is_red_rect {
                             let messages = vec![
                                 "   📐 GRID POSITIONING (no conversion):".to_string(),
                                 format!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y),
                                 format!("      Direct position: {:?}", final_position),
                             ];
                             
-                            if let Some(ref mut buffer) = debug_buffer {
+                            if let Some(ref mut buffer) = _debug_buffer {
                                 for message in messages {
                                     buffer.add_layout_context(message);
                                 }
@@ -504,7 +504,7 @@ fn apply_layout_to_entity(
                         }
                         
                         #[cfg(feature = "trace_logging")]
-                        if !is_red_rect {
+                        if !_is_red_rect {
                             bevy_log::trace!("Applied grid layout to entity {:?}: pos=({}, {}), size=({}, {})", 
                                 entity, layout.location.x, layout.location.y, layout.size.width, layout.size.height);
                         }

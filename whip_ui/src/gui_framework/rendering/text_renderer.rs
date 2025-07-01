@@ -20,7 +20,6 @@ pub struct TextRenderer {
     text_render_resources: HashMap<Entity, TextRenderData>,
     descriptor_pool: vk::DescriptorPool,
     per_entity_layout_set0: vk::DescriptorSetLayout,
-    frame_count: u32,
 }
 
 impl TextRenderer {
@@ -32,7 +31,6 @@ impl TextRenderer {
             text_render_resources: HashMap::new(),
             descriptor_pool,
             per_entity_layout_set0,
-            frame_count: 0,
         }
     }
 
@@ -45,15 +43,12 @@ impl TextRenderer {
         text_layout_infos: &[TextLayoutInfo],
         global_ubo_res: &GlobalProjectionUboResource,
         text_global_res: &TextRenderingResources,
-        debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
+        mut _debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
     ) -> Vec<PreparedTextDrawData> {
-        self.frame_count += 1;
-        let should_log = self.frame_count <= 5 || self.frame_count % 120 == 0; // Log first 5 frames, then every 2 seconds at 60fps
-        
         #[cfg(feature = "debug_logging")]
-        if should_log {
+        {
             let message = format!("[TextRenderer::prepare_text_draws] Entered. text_layout_infos count: {}", text_layout_infos.len());
-            if let Some(ref mut buffer) = debug_buffer {
+            if let Some(ref mut buffer) = _debug_buffer {
                 buffer.add_rendering_context(message);
             } else {
                 info!("{}", message);
@@ -62,7 +57,7 @@ impl TextRenderer {
             if !text_layout_infos.is_empty() {
                 let first_info = &text_layout_infos[0];
                 let message = format!("[TextRenderer::prepare_text_draws] First entity: {:?}, glyph count: {}", first_info.entity, first_info.layout.glyphs.len());
-                if let Some(ref mut buffer) = debug_buffer {
+                if let Some(ref mut buffer) = _debug_buffer {
                     buffer.add_rendering_context(message);
                 } else {
                     info!("{}", message);

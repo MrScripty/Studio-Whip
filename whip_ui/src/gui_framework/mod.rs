@@ -11,6 +11,9 @@ pub mod systems;
 // Debug utilities module
 pub mod debug;
 
+// Diagnostics module (temporarily disabled due to API issues)
+// pub mod diagnostics;
+
 // Keep interaction module *only* for hotkeys for now
 pub mod interaction;
 

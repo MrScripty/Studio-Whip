@@ -54,7 +54,11 @@ pub fn load_widget_collection_system(
         // In a real implementation, this would load from files
         // For now, we'll just register the collection if not already loaded
         if !registry.collections.contains_key(&event.collection_id) {
-            bevy_log::info!("Widget collection '{}' not found in registry", event.collection_id);
+            tracing::info!(
+                target: "whip_ui::widgets::collections",
+                collection_id = %event.collection_id,
+                "Widget collection not found in registry"
+            );
         }
     }
 }
@@ -192,7 +196,11 @@ pub fn spawn_widget_entity_from_node(
     _parent_position: Option<Vec3>,
 ) -> Entity {
     let widget_id = node.id.clone().unwrap_or_else(|| "unnamed".to_string());
-    bevy_log::debug!("🏗️  Spawning entity for widget '{}'", widget_id);
+    tracing::debug!(
+        target: "whip_ui::widgets::spawning",
+        widget_id = %widget_id,
+        "Spawning entity for widget"
+    );
     
     let layout = WidgetLayout::from(&node.layout);
     let style = WidgetStyle::from(&node.style);
@@ -292,7 +300,11 @@ pub fn spawn_widget_entity_from_node(
         
         WidgetType::Button { .. } => {
             // Button templates should be expanded before reaching this point
-            bevy_log::error!("Button template was not expanded before entity spawning for widget '{}'", widget_id);
+            tracing::error!(
+                target: "whip_ui::widgets::templates",
+                widget_id = %widget_id,
+                "Button template was not expanded before entity spawning"
+            );
         }
         
         WidgetType::Text { content, editable } => {
@@ -326,7 +338,11 @@ pub fn spawn_widget_entity_from_node(
                 text_map.insert(entity_id, text_handle);
                 bevy_log::debug!("Mapped Entity {:?} to YrsText '{}' (editable: {})", entity_id, widget_id, editable);
             } else {
-                bevy_log::error!("Failed to lock text_map mutex for entity {:?}", entity_id);
+                tracing::error!(
+                    target: "whip_ui::widgets::text_editing",
+                    entity = ?entity_id,
+                    "Failed to lock text_map mutex"
+                );
             }
             
             // Only editable text gets the EditableText component for user interaction
@@ -473,7 +489,11 @@ pub fn spawn_widget_entity(
                 text_map.insert(entity_id, text_handle);
                 bevy_log::debug!("Mapped Entity {:?} to YrsText '{}' (editable: {})", entity_id, blueprint.id, editable);
             } else {
-                bevy_log::error!("Failed to lock text_map mutex for entity {:?}", entity_id);
+                tracing::error!(
+                    target: "whip_ui::widgets::text_editing",
+                    entity = ?entity_id,
+                    "Failed to lock text_map mutex"
+                );
             }
             
             // Only editable text gets the EditableText component for user interaction
@@ -705,7 +725,12 @@ pub fn widget_action_system(
     mut action_events: EventReader<WidgetActionEvent>,
 ) {
     for event in action_events.read() {
-        bevy_log::debug!("Widget action: {} from entity {:?}", event.action, event.entity);
+        tracing::debug!(
+            target: "whip_ui::widgets::actions",
+            action = %event.action,
+            entity = ?event.entity,
+            "Widget action triggered"
+        );
         
         // Handle different action types
         match event.action.as_str() {
@@ -1024,6 +1049,6 @@ mod tests {
             assert_eq!(*editable, false);
         }
         
-        println!("Button template expansion test passed!");
+        // Test passed - assertions above verify correctness
     }
 }

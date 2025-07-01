@@ -136,7 +136,7 @@ pub fn build_taffy_tree_system(
     window_query: Query<&bevy_window::Window, bevy_ecs::query::With<bevy_window::PrimaryWindow>>,
     _children_query: Query<&Children>,
     _parent_query: Query<&Parent>,
-    mut _debug_buffer: Option<ResMut<crate::gui_framework::debug::DebugRingBuffer>>,
+    // debug_buffer parameter removed - using tracing instead
 ) {
     taffy_resource.with_tree(|tree| {
         // Create window root container if it doesn't exist
@@ -194,15 +194,12 @@ pub fn build_taffy_tree_system(
                             format!("   Taffy style being applied: {:?}", styleable.0),
                         ];
                         
-                        if let Some(ref mut buffer) = _debug_buffer {
-                            for message in messages {
-                                buffer.add_layout_context(message);
-                            }
-                        } else {
-                            bevy_log::debug!("🔴 RED RECTANGLE TAFFY TREE SETUP:");
-                            bevy_log::debug!("   Entity: {:?}", entity);
-                            bevy_log::debug!("   Taffy style being applied: {:?}", styleable.0);
-                        }
+                        tracing::debug!(
+                            target: "whip_ui::layout::taffy",
+                            entity = ?entity,
+                            taffy_style = ?styleable.0,
+                            "Red rectangle taffy tree setup"
+                        );
                     }
                 }
                 
@@ -223,14 +220,12 @@ pub fn build_taffy_tree_system(
                             format!("   Added as child of window root: {:?}", root_node),
                         ];
                         
-                        if let Some(ref mut buffer) = _debug_buffer {
-                            for message in messages {
-                                buffer.add_layout_context(message);
-                            }
-                        } else {
-                            bevy_log::info!("   Created Taffy node: {:?}", taffy_node);
-                            bevy_log::info!("   Added as child of window root: {:?}", root_node);
-                        }
+                        tracing::info!(
+                            target: "whip_ui::layout::taffy",
+                            taffy_node = ?taffy_node,
+                            root_node = ?root_node,
+                            "Created Taffy node and added as child of window root"
+                        );
                     }
                 } else {
                     bevy_log::debug!("Created Taffy node for entity {:?} as child of window root", entity);
@@ -248,7 +243,7 @@ pub fn compute_and_apply_layout_system(
     mut commands: Commands,
     _children_query: Query<&Children>,
     window_query: Query<&bevy_window::Window, bevy_ecs::query::With<bevy_window::PrimaryWindow>>,
-    mut _debug_buffer: Option<ResMut<crate::gui_framework::debug::DebugRingBuffer>>,
+    // debug_buffer parameter removed - using tracing instead
 ) {
     taffy_resource.with_tree(|tree| {
         // Get window dimensions for coordinate conversion
@@ -281,7 +276,7 @@ pub fn compute_and_apply_layout_system(
                 
                 // Phase 2: Apply layout updates (mutable borrow)
                 for (entity, taffy_node) in entities_to_update {
-                    apply_layout_to_entity(tree, taffy_node, entity, &mut ui_node_query, &mut commands, window_height, _debug_buffer.as_deref_mut());
+                    apply_layout_to_entity(tree, taffy_node, entity, &mut ui_node_query, &mut commands, window_height);
                 }
             }
         }
@@ -356,7 +351,7 @@ fn apply_layout_to_entity(
     ui_node_query: &mut Query<(Entity, &mut UiNode, &mut Transform, Option<&PositionControl>, Option<&mut LayoutPositioned>), With<Styleable>>,
     commands: &mut Commands,
     window_height: f32,
-    mut _debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
+    // debug_buffer parameter removed - using tracing instead
 ) {
     if let Ok((_, mut ui_node, mut transform, position_control, layout_positioned)) = ui_node_query.get_mut(entity) {
         if let Ok(layout) = tree.layout(taffy_node) {
@@ -436,11 +431,12 @@ fn apply_layout_to_entity(
                         #[cfg(feature = "debug_viz")]
                         if _is_red_rect {
                             let message = format!("🔴 ABSOLUTE POSITIONING: Taffy layout.location = ({}, {})", layout.location.x, layout.location.y);
-                            if let Some(ref mut buffer) = _debug_buffer {
-                                buffer.add_layout_context(message);
-                            } else {
-                                bevy_log::debug!("{}", message);
-                            }
+                            tracing::debug!(
+                                target: "whip_ui::layout::positioning",
+                                x = layout.location.x,
+                                y = layout.location.y,
+                                "Absolute positioning: Taffy layout location"
+                            );
                         }
                         
                         let taffy_coords = coordinate_system::TaffyCoords::new(layout.location.x, layout.location.y, transform.translation.z);
@@ -459,17 +455,15 @@ fn apply_layout_to_entity(
                                 format!("      Final transform.translation: {:?}", transform.translation),
                             ];
                             
-                            if let Some(ref mut buffer) = _debug_buffer {
-                                for message in messages {
-                                    buffer.add_layout_context(message);
-                                }
-                            } else {
-                                bevy_log::debug!("   🔄 ABSOLUTE COORDINATE CONVERSION:");
-                                bevy_log::debug!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y);
-                                bevy_log::debug!("      Window height: {}", window_height);
-                                bevy_log::debug!("      Converted to Bevy coords: {:?}", bevy_coords.raw());
-                                bevy_log::debug!("      Final transform.translation: {:?}", transform.translation);
-                            }
+                            tracing::debug!(
+                                target: "whip_ui::layout::positioning",
+                                taffy_x = layout.location.x,
+                                taffy_y = layout.location.y,
+                                window_height = window_height,
+                                bevy_coords = ?bevy_coords.raw(),
+                                final_translation = ?transform.translation,
+                                "Absolute coordinate conversion details"
+                            );
                         }
                         
                         #[cfg(feature = "trace_logging")]
@@ -492,15 +486,13 @@ fn apply_layout_to_entity(
                                 format!("      Direct position: {:?}", final_position),
                             ];
                             
-                            if let Some(ref mut buffer) = _debug_buffer {
-                                for message in messages {
-                                    buffer.add_layout_context(message);
-                                }
-                            } else {
-                                bevy_log::debug!("   📐 GRID POSITIONING (no conversion):");
-                                bevy_log::debug!("      Taffy layout.location: ({}, {})", layout.location.x, layout.location.y);
-                                bevy_log::debug!("      Direct position: {:?}", final_position);
-                            }
+                            tracing::debug!(
+                                target: "whip_ui::layout::positioning",
+                                taffy_x = layout.location.x,
+                                taffy_y = layout.location.y,
+                                final_position = ?final_position,
+                                "Grid positioning (no conversion needed)"
+                            );
                         }
                         
                         #[cfg(feature = "trace_logging")]

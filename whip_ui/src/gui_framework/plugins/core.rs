@@ -41,9 +41,7 @@ use crate::gui_framework::systems::{
     style_resolution_system, apply_resolved_styles_system, style_resolution_debug_system,
     StyleChanged, StateChangeTracker
 };
-use crate::gui_framework::debug::{DebugRingBuffer, update_debug_ring_buffer_system};
-#[cfg(feature = "debug_logging")]
-use crate::gui_framework::debug::log_buffer_stats_system;
+// DebugRingBuffer system removed - replaced by CentralLogStore
 // Temporarily comment out custom diagnostics until we get the basic ones working
 // use crate::gui_framework::diagnostics::{UiDiagnosticsPlugin, UiDiagnosticsTimer};
 // #[cfg(feature = "debug_logging")]
@@ -128,7 +126,7 @@ impl Plugin for GuiFrameworkCorePlugin {
         // --- Resource Registration ---
         app.init_resource::<ActionRegistry>();
         app.init_resource::<StateChangeTracker>();
-        app.init_resource::<DebugRingBuffer>();
+        // DebugRingBuffer resource removed - replaced by CentralLogStore
 
         // --- System Setup ---
         app
@@ -218,12 +216,12 @@ impl Plugin for GuiFrameworkCorePlugin {
                 apply_resolved_styles_system.in_set(CoreSet::StyleResolution),
                 style_resolution_debug_system.in_set(CoreSet::StyleResolution),
                 // Debug systems
-                update_debug_ring_buffer_system.in_set(CoreSet::StateTracking),
+                // update_debug_ring_buffer_system removed - replaced by CentralLogStore
             ));
 
         #[cfg(feature = "debug_logging")]
         app.add_systems(Update, (
-            log_buffer_stats_system.in_set(CoreSet::StateTracking),
+            // log_buffer_stats_system removed - replaced by CentralLogStore
         ));
 
             // == Last Schedule Systems (This part is correct and remains unchanged) ==
@@ -1046,7 +1044,7 @@ fn rendering_system(
     buffer_manager_res_opt: Option<Res<BufferManagerResource>>,
     global_ubo_res_opt: Option<Res<GlobalProjectionUboResource>>,
     text_res_opt: Option<Res<TextRenderingResources>>, // Still need pipeline/atlas set
-    mut debug_buffer_opt: Option<ResMut<DebugRingBuffer>>,
+    // debug_buffer_opt removed - replaced by tracing
 
     // Queries for scene data
     shape_query: Query<(Entity, &GlobalTransform, &ShapeData, &Visibility), (Without<TextLayoutOutput>, Or<(With<ShapeData>, With<CursorVisual>)>)>, // Query shapes/cursors without TextLayoutOutput
@@ -1136,7 +1134,7 @@ fn rendering_system(
             &text_layout_infos, // Still empty if text_layout_system disabled
             &global_ubo_res,
             text_res_opt.as_deref(), // Pass Option<&TextRenderingResources>
-            debug_buffer_opt.as_deref_mut(), // Pass debug buffer
+            // debug_buffer_opt removed - using tracing instead
         );
         // Guard dropped here
     } else {

@@ -12,8 +12,8 @@ impl UiDiagnosticsId {
     /// State tracking overhead per frame (in milliseconds)  
     pub const STATE_TRACKING_TIME: DiagnosticId = DiagnosticId::from_u128(101);
     
-    /// Ring buffer usage statistics (percentage full)
-    pub const RING_BUFFER_USAGE: DiagnosticId = DiagnosticId::from_u128(102);
+    /// Central log store usage statistics (percentage full)
+    pub const LOG_STORE_USAGE: DiagnosticId = DiagnosticId::from_u128(102);
     
     /// Number of UI nodes processed per frame
     pub const UI_NODES_COUNT: DiagnosticId = DiagnosticId::from_u128(103);
@@ -87,7 +87,7 @@ impl bevy_app::Plugin for UiDiagnosticsPlugin {
                     .with_suffix(" ms")
             )
             .register_diagnostic(
-                Diagnostic::new(UiDiagnosticsId::RING_BUFFER_USAGE, "ring_buffer_usage_percent", 120)
+                Diagnostic::new(UiDiagnosticsId::LOG_STORE_USAGE, "log_store_usage_percent", 120)
                     .with_suffix("%")
             )
             .register_diagnostic(
@@ -109,7 +109,6 @@ impl bevy_app::Plugin for UiDiagnosticsPlugin {
 fn ui_diagnostics_update_system(
     mut diagnostics: ResMut<Diagnostics>,
     timer: Res<UiDiagnosticsTimer>,
-    debug_buffer: Option<Res<crate::gui_framework::debug::DebugRingBuffer>>,
 ) {
     // Update UI node count
     diagnostics.add_measurement(&UiDiagnosticsId::UI_NODES_COUNT, timer.ui_nodes_processed as f64);
@@ -117,18 +116,25 @@ fn ui_diagnostics_update_system(
     // Update text layout count  
     diagnostics.add_measurement(&UiDiagnosticsId::TEXT_LAYOUT_COUNT, timer.text_layouts_processed as f64);
     
-    // Update ring buffer usage if available
-    if let Some(buffer) = debug_buffer {
-        let stats = buffer.get_stats();
-        let total_used = stats.rendering_count + stats.layout_count + stats.general_count;
-        let total_capacity = stats.max_size * 3; // 3 buffers
-        let usage_percent = if total_capacity > 0 {
-            (total_used as f64 / total_capacity as f64) * 100.0
+    // Update log store usage if available
+    if let Some(log_store) = crate::logging::get_log_store() {
+        let stats = log_store.get_stats();
+        let usage_percent = if stats.capacity > 0 {
+            (stats.current_logs as f64 / stats.capacity as f64) * 100.0
         } else {
             0.0
         };
         
-        diagnostics.add_measurement(&UiDiagnosticsId::RING_BUFFER_USAGE, usage_percent);
+        diagnostics.add_measurement(&UiDiagnosticsId::LOG_STORE_USAGE, usage_percent);
+        
+        // Also log performance metrics to our central log store
+        tracing::debug!(
+            target: "whip_ui::diagnostics::performance",
+            ui_nodes_processed = timer.ui_nodes_processed,
+            text_layouts_processed = timer.text_layouts_processed,
+            log_store_usage_percent = usage_percent,
+            "UI performance metrics"
+        );
     }
 }
 
@@ -139,62 +145,71 @@ fn ui_diagnostics_reset_system(
     timer.reset_frame_counters();
 }
 
-/// System that logs UI diagnostics when debug_logging is enabled
+/// Enhanced system that periodically logs comprehensive UI diagnostics using tracing
 #[cfg(feature = "debug_logging")]
 pub fn ui_diagnostics_log_system(
     diagnostics: Res<Diagnostics>,
-    mut debug_buffer: Option<ResMut<crate::gui_framework::debug::DebugRingBuffer>>,
+    time: Option<Res<bevy_time::Time>>,
 ) {
-    use bevy_log::debug;
-    use bevy_time::Time;
+    // Use Bevy's time system if available, otherwise fall back to system time
+    let should_log = if let Some(time) = time {
+        // Log every 5 seconds using Bevy's time system
+        time.elapsed_seconds() as u64 % 5 == 0 && time.delta_seconds() < 0.1
+    } else {
+        // Fallback to system time
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        current_time % 5 == 0
+    };
     
-    // Simple periodic logging based on time instead of frame count
-    // This avoids the frame count diagnostic path issue for now
-    let current_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    
-    // Log every 5 seconds
-    if current_time % 5 == 0 {
-        let mut diagnostic_messages = Vec::new();
-        diagnostic_messages.push("[UI Diagnostics] Performance Summary:".to_string());
+    if should_log {
+        // Create a structured diagnostic summary
+        let mut fps = None;
+        let mut ui_nodes = None;
+        let mut text_layouts = None;
+        let mut log_store_usage = None;
         
-        // Frame time info
+        // Gather diagnostic data
         if let Some(fps_diag) = diagnostics.get(&bevy_diagnostic::FrameTimeDiagnosticsPlugin::FPS) {
-            if let Some(fps) = fps_diag.smoothed() {
-                diagnostic_messages.push(format!("  FPS: {:.1}", fps));
-            }
+            fps = fps_diag.smoothed();
         }
         
-        // UI specific metrics
         if let Some(nodes_diag) = diagnostics.get(&UiDiagnosticsId::UI_NODES_COUNT) {
-            if let Some(count) = nodes_diag.smoothed() {
-                diagnostic_messages.push(format!("  UI nodes processed: {:.0}", count));
-            }
+            ui_nodes = nodes_diag.smoothed();
         }
         
         if let Some(text_diag) = diagnostics.get(&UiDiagnosticsId::TEXT_LAYOUT_COUNT) {
-            if let Some(count) = text_diag.smoothed() {
-                diagnostic_messages.push(format!("  Text layouts: {:.0}", count));
-            }
+            text_layouts = text_diag.smoothed();
         }
         
-        if let Some(buffer_diag) = diagnostics.get(&UiDiagnosticsId::RING_BUFFER_USAGE) {
-            if let Some(usage) = buffer_diag.smoothed() {
-                diagnostic_messages.push(format!("  Ring buffer usage: {:.1}%", usage));
-            }
+        if let Some(log_diag) = diagnostics.get(&UiDiagnosticsId::LOG_STORE_USAGE) {
+            log_store_usage = log_diag.smoothed();
         }
         
-        // Output to ring buffer or log
-        if let Some(ref mut buffer) = debug_buffer {
-            for message in diagnostic_messages {
-                buffer.add_general_context(message);
-            }
-        } else {
-            for message in diagnostic_messages {
-                debug!("{}", message);
-            }
+        // Log comprehensive performance summary using structured tracing
+        tracing::info!(
+            target: "whip_ui::diagnostics::summary",
+            fps = fps,
+            ui_nodes_processed = ui_nodes.map(|n| n as u32),
+            text_layouts_processed = text_layouts.map(|n| n as u32),
+            log_store_usage_percent = log_store_usage,
+            "UI Performance Summary"
+        );
+        
+        // Also log to CentralLogStore if available for CLI access
+        if let Some(log_store) = crate::logging::get_log_store() {
+            let stats = log_store.get_stats();
+            tracing::info!(
+                target: "whip_ui::diagnostics::log_store",
+                total_logs = stats.total_logs,
+                current_logs = stats.current_logs,
+                duplicates_detected = stats.duplicates_detected,
+                logs_dropped = stats.logs_dropped,
+                capacity = stats.capacity,
+                "Log Store Statistics"
+            );
         }
     }
 }

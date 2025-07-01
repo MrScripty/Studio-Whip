@@ -43,26 +43,22 @@ impl TextRenderer {
         text_layout_infos: &[TextLayoutInfo],
         global_ubo_res: &GlobalProjectionUboResource,
         text_global_res: &TextRenderingResources,
-        mut _debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
+        // debug_buffer parameter removed - using tracing instead
     ) -> Vec<PreparedTextDrawData> {
-        #[cfg(feature = "debug_logging")]
-        {
-            let message = format!("[TextRenderer::prepare_text_draws] Entered. text_layout_infos count: {}", text_layout_infos.len());
-            if let Some(ref mut buffer) = _debug_buffer {
-                buffer.add_rendering_context(message);
-            } else {
-                info!("{}", message);
-            }
-            
-            if !text_layout_infos.is_empty() {
-                let first_info = &text_layout_infos[0];
-                let message = format!("[TextRenderer::prepare_text_draws] First entity: {:?}, glyph count: {}", first_info.entity, first_info.layout.glyphs.len());
-                if let Some(ref mut buffer) = _debug_buffer {
-                    buffer.add_rendering_context(message);
-                } else {
-                    info!("{}", message);
-                }
-            }
+        tracing::debug!(
+            target: "whip_ui::rendering::text", 
+            text_layout_count = text_layout_infos.len(),
+            "TextRenderer::prepare_text_draws entered"
+        );
+        
+        if !text_layout_infos.is_empty() {
+            let first_info = &text_layout_infos[0];
+            tracing::debug!(
+                target: "whip_ui::rendering::text",
+                entity = ?first_info.entity,
+                glyph_count = first_info.layout.glyphs.len(),
+                "First text layout info details"
+            );
         }
         let mut prepared_text_draws: Vec<PreparedTextDrawData> = Vec::new();
 

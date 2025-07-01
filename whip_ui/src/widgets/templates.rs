@@ -437,13 +437,7 @@ mod tests {
         assert_eq!(text_node.behavior.interactive, Some(false)); // Text is not interactive
         assert_eq!(text_node.behavior.z_index, Some(1)); // Above shape
         
-        println!("✓ Button template expansion test passed!");
-        println!("  - Shape: id={:?}, size={:?}, bg_color={:?}", 
-            shape_node.id, shape_node.layout.size, shape_node.style.background_color);
-        println!("  - Text: id={:?}, content={:?}, color={:?}", 
-            text_node.id, 
-            if let WidgetType::Text { content, .. } = &text_node.widget_type { Some(content) } else { None },
-            text_node.style.text_color);
+        // Test passed - assertions above verify correctness
     }
 
     #[test]

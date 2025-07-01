@@ -7,17 +7,14 @@ pub fn record_command_buffers(
     prepared_shape_draws: &[PreparedDrawData],
     prepared_text_draws: &[PreparedTextDrawData],
     extent: vk::Extent2D,
-    mut _debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
+    // debug_buffer parameter removed - using tracing instead
 ) {
-    #[cfg(feature = "debug_logging")]
-    {
-        let message = format!("[record_command_buffers] Entered. Shape draws: {}, Text draws: {}", prepared_shape_draws.len(), prepared_text_draws.len());
-        if let Some(ref mut buffer) = _debug_buffer {
-            buffer.add_rendering_context(message);
-        } else {
-            bevy_log::info!("{}", message);
-        }
-    }
+    tracing::debug!(
+        target: "whip_ui::rendering::command_buffers",
+        shape_draws = prepared_shape_draws.len(),
+        text_draws = prepared_text_draws.len(),
+        "Recording command buffers"
+    );
 
     // --- Command Buffer Recording Loop ---
     let device = platform.device.as_ref().expect("Device not available for command buffer recording");

@@ -21,11 +21,11 @@ pub fn generate_test_logs() {
     info!("Starting logging system test");
     
     // Test different log levels
-    trace!(component = "renderer", "Trace level message - very detailed");
-    debug!(frame_time = 16.67, "Debug: Frame rendered in {}ms", 16.67);
-    info!(user_action = "button_click", "User clicked the save button");
-    warn!(memory_usage = 85, "Memory usage is getting high: {}%", 85);
-    error!(error_code = 404, "Failed to load asset: file not found");
+    trace!(component = "renderer", "TEST: Trace level message - very detailed");
+    debug!(frame_time = 16.67, "TEST: Frame rendered in {}ms", 16.67);
+    info!(user_action = "button_click", "TEST: User clicked the save button");
+    warn!(memory_usage = 85, "TEST: Memory usage is getting high: {}%", 85);
+    error!(error_code = 404, "TEST: Simulated asset load failure");
     
     // Test repeated messages (should be deduplicated)
     for i in 0..5 {
@@ -39,29 +39,32 @@ pub fn generate_test_logs() {
     log_from_different_modules();
     
     info!("Logging test completed");
+    
+    // Wait a bit longer for the background worker to process all logs
+    std::thread::sleep(std::time::Duration::from_millis(50));
 }
 
 /// Simulate logs from different modules to test categorization
 fn log_from_different_modules() {
     // Simulate rendering logs
-    tracing::info!(target: "whip_ui::rendering::vulkan", "Vulkan command buffer recorded");
-    tracing::warn!(target: "whip_ui::rendering::buffer", gpu_memory = "512MB", "GPU memory usage high");
+    tracing::info!(target: "whip_ui::rendering::vulkan", "TEST: Vulkan command buffer recorded");
+    tracing::warn!(target: "whip_ui::rendering::buffer", gpu_memory = "512MB", "TEST: GPU memory usage high");
     
     // Simulate layout logs  
-    tracing::debug!(target: "whip_ui::layout::taffy", "Layout tree updated");
-    tracing::trace!(target: "whip_ui::layout::positioning", x = 100, y = 200, "Element positioned");
+    tracing::debug!(target: "whip_ui::layout::taffy", "TEST: Layout tree updated");
+    tracing::trace!(target: "whip_ui::layout::positioning", x = 100, y = 200, "TEST: Element positioned");
     
     // Simulate input logs
-    tracing::info!(target: "whip_ui::input::events", "Mouse click detected");
-    tracing::debug!(target: "whip_ui::interaction::hotkeys", key = "Ctrl+S", "Hotkey triggered");
+    tracing::info!(target: "whip_ui::input::events", "TEST: Mouse click detected");
+    tracing::debug!(target: "whip_ui::interaction::hotkeys", key = "Ctrl+S", "TEST: Hotkey triggered");
     
     // Simulate widget logs
-    tracing::info!(target: "whip_ui::widgets::button", id = "save_btn", "Button state changed");
-    tracing::warn!(target: "whip_ui::widgets::text", "Text overflow detected");
+    tracing::info!(target: "whip_ui::widgets::button", id = "save_btn", "TEST: Button state changed");
+    tracing::warn!(target: "whip_ui::widgets::text", "TEST: Text overflow detected");
     
     // Simulate asset logs
-    tracing::info!(target: "whip_ui::assets::loader", file = "ui/main.toml", "UI asset loaded");
-    tracing::error!(target: "whip_ui::assets::registry", "Failed to find asset handle");
+    tracing::info!(target: "whip_ui::assets::loader", file = "ui/main.toml", "TEST: UI asset loaded");
+    tracing::error!(target: "whip_ui::assets::registry", "TEST: Simulated asset registry error");
 }
 
 /// Print statistics about the current log store

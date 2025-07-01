@@ -152,7 +152,7 @@ impl Renderer {
         text_layout_infos: &[TextLayoutInfo],
         global_ubo_res: &GlobalProjectionUboResource,
         text_global_res: Option<&TextRenderingResources>, // TEMP: Accept Option
-        mut debug_buffer: Option<&mut crate::gui_framework::debug::DebugRingBuffer>,
+        // debug_buffer parameter removed - using tracing instead
     ) {
         // --- Get essential handles that are relatively stable or cloneable ---
         // These are fetched once to avoid repeated locking if possible.
@@ -251,7 +251,7 @@ impl Renderer {
                     text_layout_infos,
                     global_ubo_res,
                     text_res, // Pass the unwrapped &TextRenderingResources
-                    debug_buffer.as_deref_mut(),
+                    // debug_buffer removed - using tracing
                 )
             }
             None => Vec::new(), // Return empty if no text resources
@@ -269,7 +269,7 @@ impl Renderer {
             &prepared_shape_draws,
             &prepared_text_draws,
             platform_guard.current_swap_extent, // Get current extent from context
-            debug_buffer,
+            // debug_buffer removed - using tracing
         );
 
         // --- 6. Submit Queue ---

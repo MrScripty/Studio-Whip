@@ -95,7 +95,7 @@ pub fn set_debug_object_name<T: vk::Handle>(
     // Suppress unused variable warnings in release builds
     #[cfg(not(debug_assertions))]
     {
-        let _ = debug_utils_loader;
+        let _ = debug_device_ext;
         let _ = object_handle;
         let _ = object_type;
         let _ = name;

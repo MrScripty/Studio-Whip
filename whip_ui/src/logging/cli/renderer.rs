@@ -7,6 +7,14 @@ use crossterm::{
     terminal::{self, Clear, ClearType},
     ExecutableCommand, QueueableCommand,
 };
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color as RatatuiColor, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    Frame, Terminal,
+};
 use std::io::{self, Write};
 
 /// Frame state passed to the renderer
@@ -186,6 +194,165 @@ impl TerminalRenderer for BasicTerminalRenderer {
     
     fn resize(&mut self, width: u16, height: u16) {
         self.terminal_size = (width, height);
+    }
+}
+
+/// Ratatui-based terminal renderer for better UI and event handling
+pub struct RatatuiTerminalRenderer {
+    /// Ratatui terminal instance
+    terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    /// List state for log scrolling
+    list_state: ListState,
+}
+
+impl RatatuiTerminalRenderer {
+    /// Create a new ratatui terminal renderer
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let backend = CrosstermBackend::new(io::stdout());
+        let terminal = Terminal::new(backend)?;
+        
+        Ok(Self {
+            terminal,
+            list_state: ListState::default(),
+        })
+    }
+    
+    /// Get ratatui color for log level
+    fn level_color(level: LogLevel) -> RatatuiColor {
+        match level {
+            LogLevel::Trace => RatatuiColor::Gray,
+            LogLevel::Debug => RatatuiColor::Cyan,
+            LogLevel::Info => RatatuiColor::Green,
+            LogLevel::Warn => RatatuiColor::Yellow,
+            LogLevel::Error => RatatuiColor::Red,
+        }
+    }
+    
+}
+
+impl TerminalRenderer for RatatuiTerminalRenderer {
+    fn draw(&mut self, state: CliFrameState) -> Result<(), Box<dyn std::error::Error>> {
+        // Update list state for selection
+        if let Some(selected) = state.selected_index {
+            self.list_state.select(Some(selected.saturating_sub(state.scroll_offset)));
+        } else {
+            self.list_state.select(None);
+        }
+        
+        // Pre-format log items to avoid borrowing issues
+        let log_items: Vec<ListItem> = state.logs
+            .iter()
+            .skip(state.scroll_offset)
+            .map(|log| Self::format_log_item_static(log))
+            .collect();
+        
+        let input_text = format!("> {}", state.input_buffer);
+        let status_message = state.status_message.to_string();
+        
+        self.terminal.draw(|f| {
+            Self::draw_ui_static(f, &mut self.list_state, &log_items, &input_text, &status_message);
+        })?;
+        
+        Ok(())
+    }
+    
+    fn resize(&mut self, _width: u16, _height: u16) {
+        // Ratatui handles resize automatically
+    }
+}
+
+impl RatatuiTerminalRenderer {
+    /// Format a log entry as a ListItem (static version to avoid borrowing issues)
+    fn format_log_item_static(log: &LogData) -> ListItem {
+        let timestamp = log.metadata.timestamp
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        // Simple time formatting
+        let hours = (timestamp / 3600) % 24;
+        let minutes = (timestamp / 60) % 60;
+        let seconds = timestamp % 60;
+        let time_str = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
+        
+        let level_str = format!("{:5}", log.level.to_string());
+        let target = &log.metadata.target;
+        
+        let dup_indicator = if log.duplicate_count > 0 {
+            format!(" (x{})", log.duplicate_count + 1)
+        } else {
+            String::new()
+        };
+        
+        let line = Line::from(vec![
+            Span::styled(time_str, Style::default().fg(RatatuiColor::Gray)),
+            Span::raw(" "),
+            Span::styled(level_str, Style::default().fg(Self::level_color(log.level))),
+            Span::raw(" "),
+            Span::styled(target, Style::default().fg(RatatuiColor::Blue)),
+            Span::raw(" "),
+            Span::raw(&log.message),
+            Span::styled(dup_indicator, Style::default().fg(RatatuiColor::DarkGray)),
+        ]);
+        
+        ListItem::new(line)
+    }
+    
+    /// Draw the UI using ratatui widgets (static version to avoid borrowing issues)
+    fn draw_ui_static(
+        frame: &mut Frame, 
+        list_state: &mut ListState, 
+        log_items: &[ListItem], 
+        input_text: &str, 
+        status_message: &str
+    ) {
+        // Create main layout
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Header
+                Constraint::Min(1),    // Logs
+                Constraint::Length(3), // Input + Help
+            ])
+            .split(frame.area());
+        
+        // Draw header
+        let header = Paragraph::new("Whip UI Log Viewer")
+            .style(Style::default().fg(RatatuiColor::Blue))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL));
+        frame.render_widget(header, chunks[0]);
+        
+        // Draw logs
+        let logs_widget = List::new(log_items.to_vec())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(status_message)
+            )
+            .highlight_style(Style::default().bg(RatatuiColor::DarkGray))
+            .highlight_symbol("► ");
+        
+        frame.render_stateful_widget(logs_widget, chunks[1], list_state);
+        
+        // Draw input area
+        let help_text = "Commands: /quit, /filter <level>, /clear, /save <path> | ↑↓ Navigate | Enter: Details";
+        
+        let input_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Input line  
+                Constraint::Length(1), // Help line
+            ])
+            .split(chunks[2]);
+        
+        let input_widget = Paragraph::new(input_text)
+            .block(Block::default().borders(Borders::TOP));
+        frame.render_widget(input_widget, input_layout[0]);
+        
+        let help_widget = Paragraph::new(help_text)
+            .style(Style::default().fg(RatatuiColor::Gray));
+        frame.render_widget(help_widget, input_layout[1]);
     }
 }
 

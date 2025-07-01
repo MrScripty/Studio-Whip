@@ -64,6 +64,7 @@ once_cell = { workspace = true }
 # CLI
 crossterm = { workspace = true }
 ratatui = { workspace = true }
+tui-textarea = { workspace = true }
 tokio = { workspace = true }
 
 [features]

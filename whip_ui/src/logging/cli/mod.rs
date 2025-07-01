@@ -8,7 +8,7 @@ pub mod command;
 pub mod session;
 pub mod plugin;
 
-pub use renderer::{TerminalRenderer, BasicTerminalRenderer, CliFrameState};
+pub use renderer::{TerminalRenderer, BasicTerminalRenderer, RatatuiTerminalRenderer, CliFrameState};
 pub use command::{CliCommand, CommandParser};
 pub use session::TerminalSession;
 pub use plugin::{launch_cli, CliPlugin};

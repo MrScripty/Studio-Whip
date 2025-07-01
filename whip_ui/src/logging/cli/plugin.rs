@@ -2,7 +2,7 @@
 
 use crate::logging::{
     cli::{
-        BasicTerminalRenderer, CliCommand, CliFrameState, CommandParser, TerminalRenderer,
+        BasicTerminalRenderer, RatatuiTerminalRenderer, CliCommand, CliFrameState, CommandParser, TerminalRenderer,
         TerminalSession,
     },
     filter::{FilterConfig, LogFilter},
@@ -236,8 +236,17 @@ fn cli_event_loop(receiver: Receiver<CliThreadCommand>) -> Result<(), Box<dyn st
         .ok_or("Log store not initialized")?;
     println!("CLI: Log store retrieved");
     
-    // Initialize renderer and state
-    let mut renderer = BasicTerminalRenderer::new();
+    // Initialize renderer and state - try Ratatui first, fall back to Basic
+    let mut renderer: Box<dyn TerminalRenderer> = match RatatuiTerminalRenderer::new() {
+        Ok(ratatui_renderer) => {
+            println!("CLI: Using Ratatui Terminal Renderer");
+            Box::new(ratatui_renderer)
+        }
+        Err(e) => {
+            println!("CLI: Failed to initialize Ratatui renderer ({}), falling back to Basic", e);
+            Box::new(BasicTerminalRenderer::new())
+        }
+    };
     let mut state = CliState::new();
     println!("CLI: Renderer and state initialized");
     

@@ -1,3 +1,5 @@
+2026 Update! This project will be undergoing an overhaul after a release is made for the Linux-CoumfyUI-Launcher repo. There have been significant tech developments in the last year since Studio Whip began that will be bringing major improvements to the entirety of the project.
+
 # Studio-Whip
 AI-enhanced collaborative content production suite for movies, comics, and interactive visual novels. Create compelling stories with seamlessly integrated tools designed to enhance your creative talents.
 

@@ -1,4 +1,4 @@
-2026 Update! This project will be undergoing an overhaul after a release is made for the Linux-CoumfyUI-Launcher repo. There have been significant tech developments in the last year since Studio Whip began that will be bringing major improvements to the entirety of the project.
+2026 Update! This project is undergoing an overhaul. There are libraries in active development for this project accross multiple repos such as Pumas-library (ai model managment), Pantograph (functional node graphs and ai inferencing), and Pentimento (native 3D viewport and 2D svelte hybrid). There have been significant tech developments in the last year since Studio Whip began that will be bringing major improvements to the entirety of the project.
 
 # Studio-Whip
 AI-enhanced collaborative content production suite for movies, comics, and interactive visual novels. Create compelling stories with seamlessly integrated tools designed to enhance your creative talents.
@@ -85,3 +85,4 @@ Check out the [architecture overview](https://github.com/MrScripty/Studio-Whip/b
 ## Is This Production Ready?
 
 No. This is a complex early development software with partial and unimplemented features. It will take at least a year to enter plausable production use.
+
